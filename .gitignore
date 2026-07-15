@@ -1,12 +1,39 @@
+# macOS
 .DS_Store
+
+# Python
 __pycache__/
 *.py[cod]
-.env
 .venv/
 venv/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+backend/.env
+frontend/.env
+mobile/.env
+
+# Node
 node_modules/
 dist/
 build/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Python cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Uploads
 backend/app/uploads/invoices/*
 backend/app/uploads/products/*
 !backend/app/uploads/invoices/.gitkeep
