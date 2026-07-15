@@ -1,0 +1,37 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional
+from uuid import UUID, uuid4
+
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql import func
+
+from app.database.base import Base
+from app.models.enums import StockMovementType
+
+
+class StockHistory(Base):
+    __tablename__ = "stock_history"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    product_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
+    store_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("stores.id", ondelete="SET NULL"))
+    movement_type: Mapped[StockMovementType] = mapped_column(Enum(StockMovementType, name="stock_movement_type"), nullable=False, index=True)
+    qty: Mapped[int] = mapped_column(Integer, nullable=False)
+    before_stock: Mapped[int] = mapped_column(Integer, nullable=False)
+    after_stock: Mapped[int] = mapped_column(Integer, nullable=False)
+    reference: Mapped[Optional[str]] = mapped_column(String(180))
+    purchase_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("purchases.id", ondelete="SET NULL"))
+    purchase_item_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("purchase_items.id", ondelete="SET NULL"))
+    created_by: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    movement_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    product = relationship("Product", back_populates="stock_movements")
+    store = relationship("Store", back_populates="stock_movements")
+    purchase = relationship("Purchase", back_populates="stock_movements")
+    purchase_item = relationship("PurchaseItem", back_populates="stock_movements")
+    created_by_user = relationship("User", back_populates="stock_movements")

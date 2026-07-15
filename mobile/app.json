@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Rainbow Inventory",
+    "slug": "rainbow-inventory",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "platforms": ["android"],
+    "scheme": "rainbowinventory",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "com.rainbowfashions.inventory",
+      "permissions": ["CAMERA"]
+    },
+    "extra": {
+      "apiBaseUrl": "http://192.168.0.110:8000/api/v1"
+    }
+  }
+}

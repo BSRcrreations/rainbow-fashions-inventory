@@ -1,0 +1,7 @@
+Supplier: GGL
+Invoice Number: GGL-2026-204
+Date: 2026-07-14
+Items:
+Jockey | Panties | Cotton Panties | L | White | 10 | 90.00 | 149.00 | 900.00
+Prisma | Leggins | Cotton Leggins | L | Black | 8 | 185.00 | 369.00 | 1480.00
+Total: 2380.00

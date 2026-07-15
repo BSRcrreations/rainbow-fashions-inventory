@@ -1,0 +1,19 @@
+{
+  "name": "Rainbow Fashions Inventory",
+  "short_name": "Rainbow Inventory",
+  "description": "Inventory management for Rainbow fashions.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f6f8fb",
+  "theme_color": "#0f766e",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
