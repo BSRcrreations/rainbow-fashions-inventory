@@ -1,18 +1,21 @@
-import { BarChart3, Boxes, ClipboardList, Layers3, LogOut, PackageSearch, Tags } from "lucide-react";
+import { BarChart3, Boxes, ClipboardList, Layers3, LogOut, PackageSearch, ShoppingCart, Tags } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 
 const navItems = [
-  { to: "/", label: "Dashboard", icon: BarChart3 },
-  { to: "/products", label: "Products", icon: PackageSearch },
-  { to: "/categories", label: "Categories", icon: Layers3 },
-  { to: "/brands", label: "Brands", icon: Tags },
-  { to: "/purchases", label: "Purchases", icon: ClipboardList },
-  { to: "/stock", label: "Stock", icon: Boxes }
+  { to: "/", label: "Dashboard", icon: BarChart3, roles: ["OWNER", "MANAGER", "STAFF"] },
+  { to: "/products", label: "Products", icon: PackageSearch, roles: ["OWNER", "MANAGER", "STAFF"] },
+  { to: "/categories", label: "Categories", icon: Layers3, roles: ["OWNER", "MANAGER"] },
+  { to: "/brands", label: "Brands", icon: Tags, roles: ["OWNER", "MANAGER"] },
+  { to: "/purchases", label: "Purchases", icon: ClipboardList, roles: ["OWNER", "MANAGER"] },
+  { to: "/stock", label: "Stock", icon: Boxes, roles: ["OWNER", "MANAGER", "STAFF"] },
+  { to: "/sales", label: "Sales", icon: ShoppingCart, roles: ["OWNER", "MANAGER"] }
 ];
 
 export default function AppLayout() {
   const { user, logout } = useAuth();
+
+  const visibleNav = navItems.filter((item) => !item.roles || item.roles.includes(user?.role ?? ""));
 
   return (
     <div className="min-h-screen bg-canvas text-ink">
@@ -22,7 +25,7 @@ export default function AppLayout() {
           <div className="mt-1 text-xs font-medium text-primary-100">{user?.role}</div>
         </div>
         <nav className="space-y-1 px-3 py-4">
-          {navItems.map((item) => {
+          {visibleNav.map((item) => {
             const Icon = item.icon;
             return (
               <NavLink
@@ -67,8 +70,11 @@ export default function AppLayout() {
         <main className="px-4 py-6 pb-24 lg:px-8 lg:pb-6">
           <Outlet />
         </main>
-        <nav className="fixed inset-x-0 bottom-0 z-50 grid h-[4.5rem] grid-cols-6 border-t border-line bg-surface pb-safe shadow-[0_-2px_10px_rgba(15,41,51,0.06)] lg:hidden">
-          {navItems.map((item) => {
+        <nav
+          className="fixed inset-x-0 bottom-0 z-50 grid h-[4.5rem] border-t border-line bg-surface pb-safe shadow-[0_-2px_10px_rgba(15,41,51,0.06)] lg:hidden"
+          style={{ gridTemplateColumns: `repeat(${Math.min(visibleNav.length, 7)}, minmax(0, 1fr))` }}
+        >
+          {visibleNav.map((item) => {
             const Icon = item.icon;
             return (
               <NavLink

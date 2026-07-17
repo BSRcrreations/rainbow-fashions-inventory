@@ -8,6 +8,7 @@ import CategoriesPage from "./pages/CategoriesPage";
 import BrandsPage from "./pages/BrandsPage";
 import PurchasesPage from "./pages/PurchasesPage";
 import StockPage from "./pages/StockPage";
+import SalesPage from "./pages/SalesPage";
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="/brands" element={<BrandsPage />} />
           <Route path="/purchases" element={<PurchasesPage />} />
           <Route path="/stock" element={<StockPage />} />
+          <Route path="/sales" element={<SalesPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

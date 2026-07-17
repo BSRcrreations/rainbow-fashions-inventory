@@ -17,6 +17,12 @@ class StockAdjustmentCreate(BaseModel):
     reference: Optional[str] = Field(default=None, max_length=180)
 
 
+class StockSaleCreate(BaseModel):
+    product_id: UUID
+    qty: int = Field(gt=0)
+    reference: Optional[str] = Field(default=None, max_length=180)
+
+
 class StockHistoryRead(ORMBaseModel):
     id: UUID
     product_id: UUID

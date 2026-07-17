@@ -12,7 +12,7 @@ from app.models.product_inventory import ProductInventory
 from app.models.stock_history import StockHistory
 from app.models.user import User
 from app.repositories.stock import StockHistoryRepository
-from app.schemas.stock import StockAdjustmentCreate
+from app.schemas.stock import StockAdjustmentCreate, StockSaleCreate
 
 
 class StockService:
@@ -20,8 +20,15 @@ class StockService:
         self.db = db
         self.repo = StockHistoryRepository(db)
 
-    def history(self, skip: int = 0, limit: int = 100) -> list[StockHistory]:
-        return self.repo.list_recent(skip, limit)
+    def history(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        movement_type: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+    ) -> list[StockHistory]:
+        return self.repo.list_recent(skip, limit, movement_type=movement_type, from_date=from_date, to_date=to_date)
 
     def adjust(self, payload: StockAdjustmentCreate, current_user: User) -> StockHistory:
         product = self.db.get(Product, payload.product_id)
@@ -44,6 +51,35 @@ class StockService:
             product_id=product.id,
             store_id=current_user.store_id,
             movement_type=StockMovementType.ADJUSTMENT,
+            qty=payload.qty,
+            before_stock=before_stock,
+            after_stock=after_stock,
+            reference=payload.reference,
+            created_by=current_user.id,
+        )
+        self.db.add(movement)
+        self.db.commit()
+        self.db.refresh(movement)
+        return movement
+
+    def sell(self, payload: StockSaleCreate, current_user: User) -> StockHistory:
+        product = self.db.get(Product, payload.product_id)
+        if not product:
+            raise not_found("Product")
+
+        before_stock = product.current_stock
+        after_stock = before_stock - payload.qty
+        if after_stock < 0:
+            raise bad_request("Stock cannot become negative")
+
+        product.current_stock = after_stock
+        inventory = self._get_or_create_inventory(product.id, current_user.store_id)
+        inventory.current_stock = after_stock
+
+        movement = StockHistory(
+            product_id=product.id,
+            store_id=current_user.store_id,
+            movement_type=StockMovementType.SALE,
             qty=payload.qty,
             before_stock=before_stock,
             after_stock=after_stock,

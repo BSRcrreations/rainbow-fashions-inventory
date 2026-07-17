@@ -99,6 +99,25 @@ export interface StockHistory {
   movement_date: string;
 }
 
+export interface TodaySaleItem {
+  id: string;
+  product_id: string;
+  product_name: string;
+  size: string;
+  color: string;
+  qty: number;
+  before_stock: number;
+  after_stock: number;
+  reference?: string | null;
+  movement_date: string;
+}
+
+export interface TodaySalesReport {
+  total_count: number;
+  total_qty: number;
+  sales: TodaySaleItem[];
+}
+
 export interface DashboardSummary {
   total_products: number;
   total_stock: number;
@@ -116,6 +135,7 @@ export interface DashboardSummary {
   }>;
   recent_purchases: Purchase[];
   recent_stock_changes: StockHistory[];
+  today_sales?: TodaySalesReport | null;
 }
 
 export interface PurchaseUploadResponse {

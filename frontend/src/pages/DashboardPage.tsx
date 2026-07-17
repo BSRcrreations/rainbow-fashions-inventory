@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Boxes, IndianRupee, Package, Shuffle } from "lucide-react";
+import { AlertTriangle, Boxes, IndianRupee, Package, Receipt, Shuffle } from "lucide-react";
 import { api } from "../api/client";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
@@ -7,10 +7,12 @@ import { SkeletonRows } from "../components/LoadingState";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import StatusBadge from "../components/StatusBadge";
+import { useAuth } from "../hooks/useAuth";
 import type { DashboardSummary } from "../types";
 import { money, shortDate } from "../utils/format";
 
 export default function DashboardPage() {
+  const { user } = useAuth();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -75,6 +77,35 @@ export default function DashboardPage() {
               </div>
             </section>
           </div>
+          {user?.role === "OWNER" && summary.today_sales ? (
+            <section className="mt-6 rounded-md border border-line bg-white">
+              <div className="border-b border-line px-4 py-3 font-semibold">Today's sales</div>
+              <div className="grid gap-4 px-4 py-3 sm:grid-cols-2">
+                <div className="rounded-md bg-slate-50 p-3">
+                  <div className="text-xs text-slate-500">Transactions</div>
+                  <div className="text-xl font-bold text-slate-900">{summary.today_sales.total_count}</div>
+                </div>
+                <div className="rounded-md bg-slate-50 p-3">
+                  <div className="text-xs text-slate-500">Items sold</div>
+                  <div className="text-xl font-bold text-slate-900">{summary.today_sales.total_qty}</div>
+                </div>
+              </div>
+              <div className="divide-y divide-line">
+                {summary.today_sales.sales.map((sale) => (
+                  <div key={sale.id} className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-slate-900">{sale.product_name} / {sale.size} / {sale.color}</div>
+                      <div className="truncate text-slate-500">{shortDate(sale.movement_date)} {sale.reference ? `· ${sale.reference}` : ""}</div>
+                    </div>
+                    <div className="font-semibold text-slate-700 sm:text-right">-{sale.qty} pcs</div>
+                  </div>
+                ))}
+                {!summary.today_sales.sales.length ? (
+                  <EmptyState icon={Receipt} title="No sales today" description="Sales recorded on the Sales page will appear here." />
+                ) : null}
+              </div>
+            </section>
+          ) : null}
         </>
       )}
     </>
