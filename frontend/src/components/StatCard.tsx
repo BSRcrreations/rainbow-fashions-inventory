@@ -23,7 +23,7 @@ export default function StatCard({ label, value, tone, icon: Icon }: StatCardPro
           <Icon size={18} />
         </div>
       </div>
-      <div className="mt-3 text-2xl font-semibold text-slate-950">{value}</div>
+      <div className="mt-3 text-xl font-semibold text-slate-950 md:text-2xl">{value}</div>
     </div>
   );
 }

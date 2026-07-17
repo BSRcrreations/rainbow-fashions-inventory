@@ -26,3 +26,8 @@ textarea {
 .focus-ring {
   @apply focus:outline-none focus:ring-2 focus:ring-teal-600 focus:ring-offset-2;
 }
+
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
