@@ -1,19 +1,29 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
   color: #1f2933;
-  background: #f6f8fb;
+  background: #f4f7fb;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
   min-width: 320px;
+}
+
+::selection {
+  background: rgba(20, 184, 166, 0.2);
 }
 
 button,
@@ -23,11 +33,52 @@ textarea {
   font: inherit;
 }
 
+button:not(:disabled):active,
+[role="button"]:not(:disabled):active {
+  transform: scale(0.98);
+}
+
 .focus-ring {
-  @apply focus:outline-none focus:ring-2 focus:ring-teal-600 focus:ring-offset-2;
+  @apply focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2;
 }
 
 .overflow-x-auto {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
+}
+
+/* rich table headers and hover rows */
+table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background-color: rgba(248, 250, 252, 0.95);
+  backdrop-filter: blur(4px);
+}
+
+table tbody tr {
+  transition: background-color 150ms ease;
+}
+
+table tbody tr:hover {
+  background-color: rgba(248, 250, 252, 0.7);
+}
+
+/* custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }

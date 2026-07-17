@@ -6,17 +6,17 @@ import { cn } from "../../lib/utils";
 
 
 const buttonVariants = cva(
-  "focus-ring inline-flex items-center justify-center gap-2 rounded-md text-sm font-semibold transition disabled:pointer-events-none disabled:opacity-50",
+  "focus-ring inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold transition disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98]",
   {
     variants: {
       variant: {
-        default: "bg-teal-700 text-white hover:bg-teal-800",
-        secondary: "border border-line bg-white text-slate-700 hover:bg-slate-50",
-        destructive: "bg-rose-700 text-white hover:bg-rose-800",
+        default: "bg-primary-700 text-white shadow-sm hover:bg-primary-800 hover:shadow-md",
+        secondary: "border border-line bg-surface text-slate-700 shadow-sm hover:bg-slate-50",
+        destructive: "bg-rose-700 text-white shadow-sm hover:bg-rose-800",
         ghost: "text-slate-700 hover:bg-slate-100",
       },
       size: {
-        default: "h-10 px-4",
+        default: "h-11 px-4",
         sm: "h-9 px-3",
         icon: "h-9 w-9",
       },
