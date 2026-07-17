@@ -21,6 +21,8 @@ interface ProductFormState {
   selling_price: string;
   pricing_type: PricingType;
   mrp: string;
+  gst_rate: string;
+  hsn_code: string;
   current_stock: string;
   minimum_stock: string;
   barcode: string;
@@ -37,6 +39,8 @@ const emptyForm: ProductFormState = {
   selling_price: "",
   pricing_type: "OWN_PRICE",
   mrp: "",
+  gst_rate: "",
+  hsn_code: "",
   current_stock: "0",
   minimum_stock: "0",
   barcode: "",
@@ -54,6 +58,8 @@ function formFromProduct(product: Product): ProductFormState {
     selling_price: String(product.selling_price),
     pricing_type: product.pricing_type,
     mrp: product.mrp ? String(product.mrp) : "",
+    gst_rate: product.gst_rate ? String(product.gst_rate) : "",
+    hsn_code: product.hsn_code ?? "",
     current_stock: String(product.current_stock),
     minimum_stock: String(product.minimum_stock),
     barcode: product.barcode ?? "",
@@ -145,6 +151,8 @@ export default function ProductsPage() {
     const mrp = form.mrp ? Number(form.mrp) : null;
     if (!Number.isFinite(purchasePrice) || purchasePrice < 0) return "Cost must be zero or greater";
     if (!Number.isFinite(sellingPrice) || sellingPrice < 0) return "Price must be zero or greater";
+    const gst = form.gst_rate ? Number(form.gst_rate) : null;
+    if (gst !== null && (!Number.isFinite(gst) || gst < 0 || gst > 100)) return "GST rate must be between 0 and 100";
     if (!Number.isInteger(currentStock) || currentStock < 0) return "Quantity must be a whole number zero or greater";
     if (!Number.isInteger(minimumStock) || minimumStock < 0) return "Minimum stock must be a whole number zero or greater";
     if (form.pricing_type === "MRP" && (mrp === null || !Number.isFinite(mrp) || mrp < 0)) return "MRP is required for MRP pricing";
@@ -160,6 +168,8 @@ export default function ProductsPage() {
       purchase_price: Number(form.purchase_price),
       selling_price: Number(form.selling_price),
       mrp: form.mrp ? Number(form.mrp) : null,
+      gst_rate: form.gst_rate ? Number(form.gst_rate) : null,
+      hsn_code: form.hsn_code.trim() || null,
       current_stock: Number(form.current_stock),
       minimum_stock: Number(form.minimum_stock),
       barcode: form.barcode.trim() || null,
@@ -295,6 +305,8 @@ export default function ProductsPage() {
           <option value="MRP">MRP</option>
         </select>
         <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="MRP" type="number" min="0" step="0.01" value={form.mrp} onChange={(event) => setForm({ ...form, mrp: event.target.value })} disabled={pending} />
+        <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="GST %" type="number" min="0" max="100" step="0.01" value={form.gst_rate} onChange={(event) => setForm({ ...form, gst_rate: event.target.value })} disabled={pending} />
+        <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="HSN code" value={form.hsn_code} onChange={(event) => setForm({ ...form, hsn_code: event.target.value })} disabled={pending} />
         <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="Quantity" type="number" min="0" value={form.current_stock} onChange={(event) => setForm({ ...form, current_stock: event.target.value })} disabled={pending || Boolean(editing)} />
         <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="Minimum stock" type="number" min="0" value={form.minimum_stock} onChange={(event) => setForm({ ...form, minimum_stock: event.target.value })} disabled={pending} />
         <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="Barcode" value={form.barcode} onChange={(event) => setForm({ ...form, barcode: event.target.value })} disabled={pending} />
@@ -325,6 +337,7 @@ export default function ProductsPage() {
               <tr>
                 <th className="px-4 py-3">Product</th>
                 <th className="px-4 py-3">Variant</th>
+                <th className="px-4 py-3">GST / HSN</th>
                 <th className="px-4 py-3">Price</th>
                 <th className="px-4 py-3">Stock</th>
                 <th className="px-4 py-3">Barcode</th>
@@ -345,6 +358,7 @@ export default function ProductsPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3">{product.size} / {product.color}</td>
+                  <td className="px-4 py-3">{product.gst_rate ? `${product.gst_rate}%` : "-"} {product.hsn_code ? `· ${product.hsn_code}` : ""}</td>
                   <td className="px-4 py-3">{money(product.selling_price)}</td>
                   <td className="px-4 py-3">{product.current_stock}</td>
                   <td className="px-4 py-3">{product.barcode ?? "-"}</td>

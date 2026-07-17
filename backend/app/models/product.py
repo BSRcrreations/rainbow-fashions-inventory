@@ -30,6 +30,8 @@ class Product(Base):
     selling_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     pricing_type: Mapped[PricingType] = mapped_column(Enum(PricingType, name="pricing_type"), nullable=False)
     mrp: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))
+    gst_rate: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
+    hsn_code: Mapped[Optional[str]] = mapped_column(String(20))
     current_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     minimum_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     barcode: Mapped[Optional[str]] = mapped_column(String(80), unique=True, index=True)

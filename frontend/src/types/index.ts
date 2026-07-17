@@ -47,6 +47,8 @@ export interface Product {
   selling_price: string;
   pricing_type: PricingType;
   mrp?: string | null;
+  gst_rate?: string | null;
+  hsn_code?: string | null;
   current_stock: number;
   minimum_stock: number;
   barcode?: string | null;
