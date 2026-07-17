@@ -64,7 +64,7 @@ function formFromProduct(product: Product): ProductFormState {
 function imageSrc(imageUrl?: string | null) {
   if (!imageUrl) return "";
   if (imageUrl.startsWith("http")) return imageUrl;
-  return `${window.location.protocol}//${window.location.hostname}:8000${imageUrl}`;
+  return `${window.location.protocol}//${window.location.host}${imageUrl}`;
 }
 
 export default function ProductsPage() {

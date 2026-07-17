@@ -1,6 +1,6 @@
 import type { AuthResponse } from "../types";
 
-const defaultApiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/v1`;
+const defaultApiBaseUrl = `${window.location.protocol}//${window.location.host}/api/v1`;
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || defaultApiBaseUrl;
 const TOKEN_KEY = "rainbow_inventory_token";
 
