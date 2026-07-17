@@ -1,15 +1,24 @@
 # Module Status
 
-## Completed Foundation
+## Stage 1 Inventory Foundation
 
-- Authentication with JWT
-- Role model: Owner, Manager, Staff
-- Dashboard
-- Categories
-- Brands
-- Products
-- Purchases with invoice upload, OCR interface, review, and confirmation
-- Inventory stock history
+- Authentication with JWT login, logout acknowledgement, token validation, role validation, protected routes, token expiry handling, and structured errors.
+- Dashboard summary cards, inventory value, low stock, and recent stock movements with loading, empty, and error states.
+- Categories with create, edit, delete, search, duplicate validation, delete guard for referenced products, confirmation dialog, toasts, skeleton, empty state, and responsive layout.
+- Brands with the same completed CRUD UX and backend rules as categories.
+- Products with create, edit, delete, search, filters, active/inactive status, barcode and duplicate variant validation, image upload, form validation, toasts, and responsive table.
+- Purchases with invoice upload, OCR review, editable review lines, confirmation flow, and stock changes only after confirmation.
+- Stock with manual adjustments, stock history, filters, CSV export, validation, and negative-stock prevention.
+- Shared quality primitives: loading skeletons, empty states, toast notifications, error boundary, structured API errors, and stricter client-side validation.
+
+## Explicitly Not Included In Stage 1
+
+- Billing
+- Customers
+- Supplier CRUD beyond purchase supplier capture
+- Reports
+- Android feature work
+- Deployment changes
 - PWA installable web app
 - Docker and Nginx deployment scaffolding
 - PostgreSQL backup and restore scripts

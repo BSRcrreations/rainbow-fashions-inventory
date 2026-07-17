@@ -1,4 +1,4 @@
-export type UserRole = "OWNER" | "STAFF";
+export type UserRole = "OWNER" | "MANAGER" | "STAFF";
 export type PricingType = "MRP" | "OWN_PRICE";
 export type PurchaseStatus = "DRAFT" | "REVIEWED" | "CONFIRMED" | "CANCELLED";
 export type StockMovementType = "PURCHASE" | "SALE" | "ADJUSTMENT";
@@ -50,6 +50,7 @@ export interface Product {
   current_stock: number;
   minimum_stock: number;
   barcode?: string | null;
+  image_url?: string | null;
   is_active: boolean;
   category?: Category | null;
   brand?: Brand | null;

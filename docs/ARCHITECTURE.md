@@ -14,6 +14,9 @@ Key decisions:
 - Service classes own business rules and transaction boundaries.
 - OCR is behind an interface in `app/ai`.
 - Purchases are draft/review/confirm to prevent accidental stock changes.
+- Catalog and product duplicate/delete rules live in services and repositories, not React.
+- API errors are normalized in FastAPI exception handlers before reaching the client.
+- Product images are stored as uploaded files and referenced from products by `image_url`.
 - `stores` and `product_inventory` support future multi-store work without redesign.
 
 Future modules can add tables that reference existing IDs:
@@ -28,3 +31,9 @@ Future modules can add tables that reference existing IDs:
 - Web: React, Vite, TypeScript, Tailwind CSS, shadcn-style primitives, TanStack Query, Zustand.
 - Android: React Native Expo scaffold using the same API and authentication model.
 - iOS: intentionally out of scope.
+
+## Stage 1 Frontend Pattern
+
+- Pages reuse shared primitives for buttons, cards, skeletons, empty states, confirmation dialogs, toasts, and error display.
+- Form validation runs client-side for fast feedback, while backend services remain the source of truth.
+- Tables keep existing layout but use horizontal overflow and compact controls for tablet and phone widths.
