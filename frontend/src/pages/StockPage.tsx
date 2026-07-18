@@ -1,190 +1,50 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Download, History, SlidersHorizontal } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { AlertTriangle, Boxes, Download, History, IndianRupee, PackageX, Search } from "lucide-react";
 import { api } from "../api/client";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
 import { SkeletonRows } from "../components/LoadingState";
 import PageHeader from "../components/PageHeader";
+import StatCard from "../components/StatCard";
 import StatusBadge from "../components/StatusBadge";
 import { useToast } from "../components/ToastProvider";
 import { Button } from "../components/ui/button";
 import type { Product, StockHistory, StockMovementType } from "../types";
-import { shortDate } from "../utils/format";
+import { money, shortDate } from "../utils/format";
+
+const movementTypes: StockMovementType[] = ["PURCHASE", "SALE", "CUSTOMER_RETURN", "SUPPLIER_RETURN", "DAMAGE", "MANUAL_ADJUSTMENT"];
+const movementLabels: Record<StockMovementType, string> = { PURCHASE: "Purchase", SALE: "Sale", CUSTOMER_RETURN: "Customer Return", SUPPLIER_RETURN: "Supplier Return", DAMAGE: "Damage", MANUAL_ADJUSTMENT: "Manual Adjustment" };
 
 export default function StockPage() {
   const toast = useToast();
-  const [history, setHistory] = useState<StockHistory[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
+  const [search, setSearch] = useState("");
   const [productId, setProductId] = useState("");
-  const [filterProductId, setFilterProductId] = useState("");
-  const [movementFilter, setMovementFilter] = useState("");
-  const [direction, setDirection] = useState("INCREASE");
-  const [qty, setQty] = useState("1");
-  const [reference, setReference] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [pending, setPending] = useState(false);
+  const [movementType, setMovementType] = useState("");
   const [exporting, setExporting] = useState(false);
-  const [error, setError] = useState("");
+  const productsQuery = useQuery({ queryKey: ["inventory-products"], queryFn: () => api.get<Product[]>("/products?limit=500") });
+  const params = new URLSearchParams();
+  if (productId) params.set("product_id", productId);
+  if (movementType) params.set("movement_type", movementType);
+  const historyQuery = useQuery({ queryKey: ["stock-history", productId, movementType], queryFn: () => api.get<StockHistory[]>(`/stock/history${params.toString() ? `?${params}` : ""}`) });
+  const products = useMemo(() => productsQuery.data ?? [], [productsQuery.data]);
+  const history = historyQuery.data ?? [];
+  const visibleProducts = useMemo(() => { const value = search.trim().toLowerCase(); if (!value) return products; return products.filter((product) => [product.name, product.sku, product.barcode, product.brand?.name, product.category?.name].some((field) => field?.toLowerCase().includes(value))); }, [products, search]);
+  const totalStock = products.reduce((sum, product) => sum + product.current_stock, 0);
+  const inventoryValue = products.reduce((sum, product) => sum + Number(product.purchase_price) * product.current_stock, 0);
+  const lowStock = products.filter((product) => product.current_stock > 0 && product.current_stock <= product.minimum_stock).length;
+  const outOfStock = products.filter((product) => product.current_stock === 0).length;
 
-  const filtered = useMemo(() => Boolean(filterProductId || movementFilter), [filterProductId, movementFilter]);
-
-  function historyQuery(productFilter: string, movementType: string) {
-    const params = new URLSearchParams();
-    if (productFilter) params.set("product_id", productFilter);
-    if (movementType) params.set("movement_type", movementType);
-    const query = params.toString();
-    return query ? `?${query}` : "";
-  }
-
-  const load = useCallback(async (productFilter: string, movementType: string) => {
-    setError("");
-    try {
-      const [historyData, productData] = await Promise.all([
-        api.get<StockHistory[]>(`/stock/history${historyQuery(productFilter, movementType)}`),
-        api.get<Product[]>("/products"),
-      ]);
-      setHistory(historyData);
-      setProducts(productData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load stock history");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load("", "");
-  }, [load]);
-
-  function validateAdjustment() {
-    if (!productId) return "Product is required";
-    const amount = Number(qty);
-    if (!Number.isInteger(amount) || amount <= 0) return "Adjustment quantity must be a positive whole number";
-    const product = products.find((item) => item.id === productId);
-    if (product && direction === "DECREASE" && product.current_stock - amount < 0) return "Stock cannot become negative";
-    return "";
-  }
-
-  async function adjust(event: FormEvent) {
-    event.preventDefault();
-    const validationError = validateAdjustment();
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-    setPending(true);
-    setError("");
-    try {
-      await api.post<StockHistory>("/stock/adjustments", { product_id: productId, direction, qty: Number(qty), reference: reference.trim() || null });
-      setReference("");
-      toast.success("Stock adjusted");
-      await load(filterProductId, movementFilter);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Stock adjustment failed";
-      setError(message);
-      toast.error(message);
-    } finally {
-      setPending(false);
-    }
-  }
-
-  async function exportCsv() {
-    setExporting(true);
-    setError("");
-    try {
-      const blob = await api.getBlob(`/stock/history/export${historyQuery(filterProductId, movementFilter)}`);
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = "stock-history.csv";
-      anchor.click();
-      URL.revokeObjectURL(url);
-      toast.success("Stock history exported");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to export stock history";
-      setError(message);
-      toast.error(message);
-    } finally {
-      setExporting(false);
-    }
-  }
+  async function exportCsv() { setExporting(true); try { const blob = await api.getBlob(`/stock/history/export${params.toString() ? `?${params}` : ""}`); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "inventory-movements.csv"; anchor.click(); URL.revokeObjectURL(url); toast.success("Movement history exported"); } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Unable to export movements"); } finally { setExporting(false); } }
 
   return (
     <>
-      <PageHeader
-        title="Stock"
-        subtitle="Adjustments and movement history"
-        actions={
-          <Button type="button" variant="secondary" onClick={() => void exportCsv()} disabled={exporting}>
-            <Download size={16} /> {exporting ? "Exporting" : "Export CSV"}
-          </Button>
-        }
-      />
-      <form onSubmit={adjust} className="mb-5 grid gap-3 rounded-md border border-line bg-white p-4 md:grid-cols-5">
-        <select className="focus-ring h-10 rounded-md border border-line px-3 md:col-span-2" value={productId} onChange={(event) => setProductId(event.target.value)} disabled={pending}>
-          <option value="">Product</option>
-          {products.map((product) => <option key={product.id} value={product.id}>{product.name} / {product.size} / {product.color}</option>)}
-        </select>
-        <select className="focus-ring h-10 rounded-md border border-line px-3" value={direction} onChange={(event) => setDirection(event.target.value)} disabled={pending}>
-          <option value="INCREASE">Increase</option>
-          <option value="DECREASE">Decrease</option>
-        </select>
-        <input className="focus-ring h-10 rounded-md border border-line px-3" type="number" min="1" value={qty} onChange={(event) => setQty(event.target.value)} disabled={pending} />
-        <Button type="submit" disabled={pending}>
-          <SlidersHorizontal size={16} /> {pending ? "Adjusting" : "Adjust"}
-        </Button>
-        <input className="focus-ring h-10 rounded-md border border-line px-3 md:col-span-5" placeholder="Reference" value={reference} onChange={(event) => setReference(event.target.value)} disabled={pending} />
-      </form>
-      <div className="mb-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_220px_auto]">
-        <select className="focus-ring h-10 rounded-md border border-line bg-white px-3" value={filterProductId} onChange={(event) => setFilterProductId(event.target.value)}>
-          <option value="">All products</option>
-          {products.map((product) => <option key={product.id} value={product.id}>{product.name} / {product.size} / {product.color}</option>)}
-        </select>
-        <select className="focus-ring h-10 rounded-md border border-line bg-white px-3" value={movementFilter} onChange={(event) => setMovementFilter(event.target.value)}>
-          <option value="">All movement types</option>
-          {(["PURCHASE", "SALE", "ADJUSTMENT"] satisfies StockMovementType[]).map((type) => <option key={type} value={type}>{type}</option>)}
-        </select>
-        <Button type="button" variant="secondary" onClick={() => void load(filterProductId, movementFilter)}>Apply filters</Button>
-      </div>
-      {error ? <div className="mb-4"><ErrorState message={error} /></div> : null}
-      {loading ? (
-        <SkeletonRows rows={6} />
-      ) : history.length ? (
-        <div className="overflow-x-auto rounded-md border border-line bg-white">
-          <table className="min-w-[760px] divide-y divide-line text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Type</th>
-                <th className="px-4 py-3">Qty</th>
-                <th className="px-4 py-3">Before</th>
-                <th className="px-4 py-3">After</th>
-                <th className="px-4 py-3">Reference</th>
-                <th className="px-4 py-3">Date</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {history.map((movement) => (
-                <tr key={movement.id}>
-                  <td className="px-4 py-3"><StatusBadge value={movement.movement_type} /></td>
-                  <td className="px-4 py-3">{movement.qty}</td>
-                  <td className="px-4 py-3">{movement.before_stock}</td>
-                  <td className="px-4 py-3">{movement.after_stock}</td>
-                  <td className="px-4 py-3">{movement.reference ?? "-"}</td>
-                  <td className="px-4 py-3">{shortDate(movement.movement_date)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="rounded-md border border-line bg-white">
-          <EmptyState
-            icon={History}
-            title={filtered ? "No matching stock movements" : "No stock movements yet"}
-            description={filtered ? "Try a different product or movement type." : "Manual adjustments and confirmed purchases will appear here."}
-          />
-        </div>
-      )}
+      <PageHeader title="Inventory" subtitle="Current stock levels and complete movement history" actions={<Button type="button" variant="secondary" onClick={() => void exportCsv()} disabled={exporting}><Download size={16} /> {exporting ? "Exporting" : "Export CSV"}</Button>} />
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Total Stock" value={`${totalStock.toLocaleString("en-IN")} Units`} tone="teal" icon={Boxes} /><StatCard label="Inventory Value" value={money(inventoryValue)} tone="slate" icon={IndianRupee} /><StatCard label="Low Stock" value={lowStock} tone="amber" icon={AlertTriangle} /><StatCard label="Out of Stock" value={outOfStock} tone="rose" icon={PackageX} /></div>
+
+      <section className="mb-6 overflow-hidden rounded-lg border border-slate-200 bg-white"><div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-lg font-semibold">Current Stock Levels</h2><p className="mt-1 text-sm text-slate-500">{visibleProducts.length} products</p></div><label className="flex h-11 min-w-0 items-center rounded-lg border border-slate-200 bg-white px-3 sm:w-80"><Search size={17} className="text-slate-400" /><input aria-label="Search current stock" className="min-w-0 flex-1 border-0 px-2 outline-none" placeholder="Search products or barcode" value={search} onChange={(event) => setSearch(event.target.value)} /></label></div>{productsQuery.isLoading ? <SkeletonRows rows={5} /> : productsQuery.error ? <ErrorState message={productsQuery.error instanceof Error ? productsQuery.error.message : "Unable to load stock"} /> : visibleProducts.length ? <div className="overflow-x-auto"><table className="min-w-[850px] divide-y divide-slate-100 text-sm"><thead className="text-left text-xs uppercase text-slate-500"><tr><th className="px-5 py-3">Product</th><th className="px-5 py-3">Category</th><th className="px-5 py-3">SKU / Barcode</th><th className="px-5 py-3 text-right">Current</th><th className="px-5 py-3 text-right">Minimum</th><th className="px-5 py-3">Status</th></tr></thead><tbody className="divide-y divide-slate-100">{visibleProducts.map((product) => <tr key={product.id}><td className="px-5 py-3"><div className="font-semibold text-slate-900">{product.name}</div><div className="text-xs text-slate-500">{product.size} · {product.color} · {product.brand?.name}</div></td><td className="px-5 py-3 text-slate-600">{product.category?.name} / {product.subcategory?.name}</td><td className="px-5 py-3"><div>{product.sku || "-"}</div><div className="text-xs text-slate-500">{product.barcode || "-"}</div></td><td className="px-5 py-3 text-right text-lg font-bold">{product.current_stock}</td><td className="px-5 py-3 text-right">{product.minimum_stock}</td><td className="px-5 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${product.current_stock === 0 ? "bg-red-100 text-red-700" : product.current_stock <= product.minimum_stock ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-700"}`}>{product.current_stock === 0 ? "Out of Stock" : product.current_stock <= product.minimum_stock ? "Low Stock" : "In Stock"}</span></td></tr>)}</tbody></table></div> : <EmptyState icon={Boxes} title="No products found" description="Products matching your search will appear here." />}</section>
+
+      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white"><div className="grid gap-3 border-b border-slate-100 px-5 py-4 md:grid-cols-[minmax(0,1fr)_240px]"><div><h2 className="text-lg font-semibold">Inventory Movement</h2><p className="mt-1 text-sm text-slate-500">Every stock change with its reason, reference, user, and time</p></div><div className="grid gap-2 sm:grid-cols-2 md:grid-cols-1"><select className="field-input" value={productId} onChange={(event) => setProductId(event.target.value)}><option value="">All products</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name} / {product.size} / {product.color}</option>)}</select><select className="field-input" value={movementType} onChange={(event) => setMovementType(event.target.value)}><option value="">All movement types</option>{movementTypes.map((type) => <option key={type} value={type}>{movementLabels[type]}</option>)}</select></div></div>{historyQuery.isLoading ? <SkeletonRows rows={6} /> : historyQuery.error ? <ErrorState message={historyQuery.error instanceof Error ? historyQuery.error.message : "Unable to load movement history"} /> : history.length ? <div className="overflow-x-auto"><table className="min-w-[980px] divide-y divide-slate-100 text-sm"><thead className="text-left text-xs uppercase text-slate-500"><tr><th className="px-5 py-3">Type</th><th className="px-5 py-3">Product</th><th className="px-5 py-3">Quantity</th><th className="px-5 py-3">Stock</th><th className="px-5 py-3">Reference</th><th className="px-5 py-3">User</th><th className="px-5 py-3">Date</th></tr></thead><tbody className="divide-y divide-slate-100">{history.map((movement) => <tr key={movement.id}><td className="px-5 py-3"><StatusBadge value={movement.movement_type} /></td><td className="px-5 py-3"><div className="font-semibold">{movement.product?.name ?? "Product"}</div><div className="text-xs text-slate-500">{movement.product ? `${movement.product.size} · ${movement.product.color}` : movement.product_id}</div></td><td className="px-5 py-3 font-bold">{movement.after_stock < movement.before_stock ? "-" : "+"}{movement.qty}</td><td className="px-5 py-3 text-slate-600">{movement.before_stock} → {movement.after_stock}</td><td className="px-5 py-3 font-medium">{movement.reference || "-"}</td><td className="px-5 py-3">{movement.created_by_user?.full_name || "System"}</td><td className="px-5 py-3 text-slate-600">{shortDate(movement.movement_date)}</td></tr>)}</tbody></table></div> : <EmptyState icon={History} title="No inventory movements" description="Purchases, sales, returns, damage, and manual corrections will appear here." />}</section>
     </>
   );
 }

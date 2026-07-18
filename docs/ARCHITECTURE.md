@@ -1,5 +1,13 @@
 # Architecture
 
+## Sales and Catalog Integrity
+
+The existing `route -> schema -> service -> repository -> model -> PostgreSQL` layering is retained. Category owns both SubCategory and Brand, while Product references all three. Composite database foreign keys plus service validation prevent assigning a brand or subcategory from another category.
+
+The hierarchy migration creates a `General` subcategory for every existing category and clones a legacy brand when it was shared by products in multiple categories. Sales use immutable invoice headers and item snapshots. `SaleService.create` locks product rows, calculates revenue/cost/profit server-side, updates product and store inventory, and writes linked stock history in one transaction.
+
+All inventory changes use explicit movement reasons. Confirmed purchases write `PURCHASE`, POS checkout writes `SALE`, and the separate adjustment service validates customer returns, supplier returns, damage, or manual corrections. Every movement stores the product, quantity, before/after stock, reference, user, and timestamp.
+
 The backend follows a layered structure:
 
 `API route -> Pydantic schema -> Service -> Repository -> SQLAlchemy model -> PostgreSQL`

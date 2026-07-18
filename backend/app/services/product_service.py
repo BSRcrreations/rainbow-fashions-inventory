@@ -19,6 +19,7 @@ from app.models.category import Category
 from app.models.product import Product
 from app.models.product_inventory import ProductInventory
 from app.models.stock_history import StockHistory
+from app.models.subcategory import SubCategory
 from app.models.user import User
 from app.repositories.product import ProductRepository
 from app.schemas.product import (
@@ -121,8 +122,8 @@ class ProductService:
         return product
 
     def create(self, payload: ProductCreate) -> Product:
-        self._ensure_category_and_brand(payload.category_id, payload.brand_id)
-        self._validate_unique_variant(payload.category_id, payload.brand_id, payload.name, payload.size, payload.color)
+        self._ensure_hierarchy(payload.category_id, payload.subcategory_id, payload.brand_id)
+        self._validate_unique_variant(payload.category_id, payload.subcategory_id, payload.brand_id, payload.name, payload.size, payload.color)
         if payload.sku and self.repo.get_by_sku(payload.sku):
             raise conflict("SKU already exists")
         if payload.barcode and self.repo.get_by_barcode(payload.barcode):
@@ -136,6 +137,7 @@ class ProductService:
         product = self.get(product_id)
         data = payload.model_dump(exclude_unset=True)
         next_category_id = data.get("category_id", product.category_id)
+        next_subcategory_id = data.get("subcategory_id", product.subcategory_id)
         next_brand_id = data.get("brand_id", product.brand_id)
         next_name = data.get("name", product.name)
         next_size = data.get("size", product.size)
@@ -144,8 +146,8 @@ class ProductService:
         next_mrp = data.get("mrp", product.mrp)
         if next_pricing_type.value == "MRP" and next_mrp is None:
             raise bad_request("MRP is required when pricing_type is MRP")
-        self._ensure_category_and_brand(next_category_id, next_brand_id)
-        self._validate_unique_variant(next_category_id, next_brand_id, next_name, next_size, next_color, exclude_id=product_id)
+        self._ensure_hierarchy(next_category_id, next_subcategory_id, next_brand_id)
+        self._validate_unique_variant(next_category_id, next_subcategory_id, next_brand_id, next_name, next_size, next_color, exclude_id=product_id)
         if data.get("sku") and self.repo.get_by_sku(data["sku"], exclude_id=product_id):
             raise conflict("SKU already exists")
         if data.get("barcode") and self.repo.get_by_barcode(data["barcode"], exclude_id=product_id):
@@ -205,7 +207,8 @@ class ProductService:
             raise not_found("Category")
         products = self._products_for_bulk(payload.product_ids)
         for product in products:
-            self._validate_unique_variant(payload.category_id, product.brand_id, product.name, product.size, product.color, product.id)
+            self._ensure_hierarchy(payload.category_id, product.subcategory_id, product.brand_id)
+            self._validate_unique_variant(payload.category_id, product.subcategory_id, product.brand_id, product.name, product.size, product.color, product.id)
             product.category_id = payload.category_id
         self.db.commit()
         return {"updated": len(products)}
@@ -215,7 +218,8 @@ class ProductService:
             raise not_found("Brand")
         products = self._products_for_bulk(payload.product_ids)
         for product in products:
-            self._validate_unique_variant(product.category_id, payload.brand_id, product.name, product.size, product.color, product.id)
+            self._ensure_hierarchy(product.category_id, product.subcategory_id, payload.brand_id)
+            self._validate_unique_variant(product.category_id, product.subcategory_id, payload.brand_id, product.name, product.size, product.color, product.id)
             product.brand_id = payload.brand_id
         self.db.commit()
         return {"updated": len(products)}
@@ -234,7 +238,7 @@ class ProductService:
                 StockHistory(
                     product_id=product.id,
                     store_id=current_user.store_id,
-                    movement_type=StockMovementType.ADJUSTMENT,
+                    movement_type=StockMovementType.MANUAL_ADJUSTMENT,
                     qty=payload.qty,
                     before_stock=before_stock,
                     after_stock=after_stock,
@@ -249,7 +253,7 @@ class ProductService:
         products = self.repo.list_by_ids(product_ids) if product_ids else self.repo.list_with_relations(0, 10000)
         output = StringIO()
         writer = csv.writer(output)
-        writer.writerow(["sku", "barcode", "name", "brand", "category", "size", "color", "purchase_price", "selling_price", "stock", "minimum_stock", "active"])
+        writer.writerow(["sku", "barcode", "name", "brand", "category", "subcategory", "size", "color", "purchase_price", "selling_price", "stock", "minimum_stock", "active"])
         for product in products:
             writer.writerow([
                 product.sku or "",
@@ -257,6 +261,7 @@ class ProductService:
                 product.name,
                 product.brand.name if product.brand else "",
                 product.category.name if product.category else "",
+                product.subcategory.name if product.subcategory else "",
                 product.size,
                 product.color,
                 product.purchase_price,
@@ -290,13 +295,17 @@ class ProductService:
         for index, row in enumerate(rows, start=2):
             try:
                 category = self._find_category_by_name(row.get("category", ""))
-                brand = self._find_brand_by_name(row.get("brand", ""))
-                if not category or not brand:
-                    raise ValueError("Brand and category must already exist")
+                if not category:
+                    raise ValueError("Category must already exist")
+                brand = self._find_brand_by_name(category.id, row.get("brand", ""))
+                subcategory = self._find_subcategory_by_name(category.id, row.get("subcategory", "General"))
+                if not brand or not subcategory:
+                    raise ValueError("Brand and subcategory must exist under the selected category")
                 payload = ProductCreate(
                     sku=row.get("sku") or None,
                     barcode=row.get("barcode") or None,
                     category_id=category.id,
+                    subcategory_id=subcategory.id,
                     brand_id=brand.id,
                     name=row.get("name", ""),
                     size=row.get("size", ""),
@@ -328,28 +337,37 @@ class ProductService:
     def template_csv(self) -> str:
         output = StringIO()
         writer = csv.writer(output)
-        writer.writerow(["sku", "barcode", "name", "brand", "category", "size", "color", "purchase_price", "selling_price", "stock", "minimum_stock", "active"])
-        writer.writerow(["RF-SKU-SAMPLE", "890000000001", "Cotton Kurti", "Rainbow", "Kurtis", "M", "Blue", "500", "799", "10", "2", "true"])
+        writer.writerow(["sku", "barcode", "name", "brand", "category", "subcategory", "size", "color", "purchase_price", "selling_price", "stock", "minimum_stock", "active"])
+        writer.writerow(["RF-SKU-SAMPLE", "890000000001", "Cotton Kurti", "Rainbow", "Kurtis", "General", "M", "Blue", "500", "799", "10", "2", "true"])
         return output.getvalue()
 
-    def _ensure_category_and_brand(self, category_id: UUID, brand_id: UUID) -> None:
+    def _ensure_hierarchy(self, category_id: UUID, subcategory_id: UUID, brand_id: UUID) -> None:
         if not self.db.get(Category, category_id):
             raise not_found("Category")
-        if not self.db.get(Brand, brand_id):
+        subcategory = self.db.get(SubCategory, subcategory_id)
+        if not subcategory:
+            raise not_found("Subcategory")
+        brand = self.db.get(Brand, brand_id)
+        if not brand:
             raise not_found("Brand")
+        if subcategory.category_id != category_id:
+            raise bad_request("Subcategory does not belong to the selected category")
+        if brand.category_id != category_id:
+            raise bad_request("Brand does not belong to the selected category")
 
     def _validate_unique_variant(
         self,
         category_id: UUID,
+        subcategory_id: UUID,
         brand_id: UUID,
         name: str,
         size: str,
         color: str,
         exclude_id: Optional[UUID] = None,
     ) -> None:
-        duplicate = self.repo.get_duplicate(category_id, brand_id, name, size, color, exclude_id)
+        duplicate = self.repo.get_duplicate(category_id, subcategory_id, brand_id, name, size, color, exclude_id)
         if duplicate:
-            raise conflict("Product variant already exists for this category, brand, name, size, and color")
+            raise conflict("Product variant already exists for this category, subcategory, brand, name, size, and color")
 
     def _products_for_bulk(self, product_ids: list[UUID]) -> list[Product]:
         products = self.repo.list_by_ids(product_ids)
@@ -377,7 +395,12 @@ class ProductService:
             return None
         return self.db.query(Category).filter(Category.name.ilike(name.strip())).first()
 
-    def _find_brand_by_name(self, name: str) -> Optional[Brand]:
+    def _find_brand_by_name(self, category_id: UUID, name: str) -> Optional[Brand]:
         if not name:
             return None
-        return self.db.query(Brand).filter(Brand.name.ilike(name.strip())).first()
+        return self.db.query(Brand).filter(Brand.category_id == category_id, Brand.name.ilike(name.strip())).first()
+
+    def _find_subcategory_by_name(self, category_id: UUID, name: str) -> Optional[SubCategory]:
+        if not name:
+            return None
+        return self.db.query(SubCategory).filter(SubCategory.category_id == category_id, SubCategory.name.ilike(name.strip())).first()

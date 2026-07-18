@@ -12,6 +12,7 @@ from app.models.brand import Brand
 from app.models.category import Category
 from app.models.product import Product
 from app.models.stock_history import StockHistory
+from app.models.subcategory import SubCategory
 from app.repositories.base import BaseRepository
 
 
@@ -75,10 +76,10 @@ class ProductRepository(BaseRepository[Product]):
         created_from: Optional[date] = None,
         created_to: Optional[date] = None,
     ):
-        query = self.db.query(Product).options(joinedload(Product.category), joinedload(Product.brand))
+        query = self.db.query(Product).options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand))
         if search:
             pattern = f"%{search.strip()}%"
-            query = query.join(Product.category).join(Product.brand).filter(
+            query = query.join(Product.category).join(Product.subcategory).join(Product.brand).filter(
                 or_(
                     Product.sku.ilike(pattern),
                     Product.name.ilike(pattern),
@@ -87,6 +88,7 @@ class ProductRepository(BaseRepository[Product]):
                     Product.barcode.ilike(pattern),
                     Brand.name.ilike(pattern),
                     Category.name.ilike(pattern),
+                    SubCategory.name.ilike(pattern),
                 )
             )
         if category_id:
@@ -128,7 +130,7 @@ class ProductRepository(BaseRepository[Product]):
     def get_with_relations(self, product_id: UUID) -> Optional[Product]:
         return (
             self.db.query(Product)
-            .options(joinedload(Product.category), joinedload(Product.brand))
+            .options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand))
             .filter(Product.id == product_id)
             .first()
         )
@@ -136,6 +138,7 @@ class ProductRepository(BaseRepository[Product]):
     def get_duplicate(
         self,
         category_id: UUID,
+        subcategory_id: UUID,
         brand_id: UUID,
         name: str,
         size: str,
@@ -144,6 +147,7 @@ class ProductRepository(BaseRepository[Product]):
     ) -> Optional[Product]:
         query = self.db.query(Product).filter(
             Product.category_id == category_id,
+            Product.subcategory_id == subcategory_id,
             Product.brand_id == brand_id,
             func.lower(Product.name) == name.strip().lower(),
             func.lower(Product.size) == size.strip().lower(),

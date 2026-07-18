@@ -6,19 +6,19 @@ import { cn } from "../../lib/utils";
 
 
 const buttonVariants = cva(
-  "focus-ring inline-flex items-center justify-center gap-2 rounded-md text-sm font-semibold transition disabled:pointer-events-none disabled:opacity-50",
+  "focus-ring inline-flex items-center justify-center gap-2 rounded-lg text-sm font-semibold shadow-sm transition-all duration-200 hover:-translate-y-px disabled:pointer-events-none disabled:translate-y-0 disabled:opacity-50",
   {
     variants: {
       variant: {
-        default: "bg-teal-700 text-white hover:bg-teal-800",
-        secondary: "border border-line bg-white text-slate-700 hover:bg-slate-50",
-        destructive: "bg-rose-700 text-white hover:bg-rose-800",
-        ghost: "text-slate-700 hover:bg-slate-100",
+        default: "bg-teal-700 text-white shadow-teal-900/15 hover:bg-teal-800 hover:shadow-md",
+        secondary: "border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:shadow-md",
+        destructive: "bg-red-600 text-white shadow-red-900/15 hover:bg-red-700 hover:shadow-md",
+        ghost: "shadow-none text-slate-700 hover:bg-slate-100",
       },
       size: {
-        default: "h-10 px-4",
-        sm: "h-9 px-3",
-        icon: "h-9 w-9",
+        default: "h-11 px-5",
+        sm: "h-10 px-4",
+        icon: "h-10 w-10",
       },
     },
     defaultVariants: {

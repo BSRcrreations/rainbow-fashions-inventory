@@ -41,15 +41,24 @@ SET
     description = EXCLUDED.description,
     is_active = TRUE;
 
-INSERT INTO brands (id, name, description)
+INSERT INTO brands (id, category_id, name, description)
 VALUES
-    ('00000000-0000-0000-0000-000000002001', 'Prisma', 'Fashion apparel brand'),
-    ('00000000-0000-0000-0000-000000002002', 'Flybirds', 'Everyday clothing and innerwear brand'),
-    ('00000000-0000-0000-0000-000000002003', 'Jockey', 'Branded innerwear and clothing')
-ON CONFLICT (name) DO UPDATE
+    ('00000000-0000-0000-0000-000000002001', '00000000-0000-0000-0000-000000001003', 'Prisma', 'Fashion apparel brand'),
+    ('00000000-0000-0000-0000-000000002002', '00000000-0000-0000-0000-000000001001', 'Flybirds', 'Everyday clothing brand'),
+    ('00000000-0000-0000-0000-000000002003', '00000000-0000-0000-0000-000000001002', 'Jockey', 'Branded innerwear'),
+    ('00000000-0000-0000-0000-000000002004', '00000000-0000-0000-0000-000000001004', 'Jockey', 'Branded innerwear')
+ON CONFLICT (category_id, name) DO UPDATE
 SET
     description = EXCLUDED.description,
     is_active = TRUE;
+
+INSERT INTO subcategories (id, category_id, name, description)
+VALUES
+    ('00000000-0000-0000-0000-000000005001', '00000000-0000-0000-0000-000000001001', 'General', 'Default product group'),
+    ('00000000-0000-0000-0000-000000005002', '00000000-0000-0000-0000-000000001002', 'General', 'Default product group'),
+    ('00000000-0000-0000-0000-000000005003', '00000000-0000-0000-0000-000000001003', 'General', 'Default product group'),
+    ('00000000-0000-0000-0000-000000005004', '00000000-0000-0000-0000-000000001004', 'General', 'Default product group')
+ON CONFLICT (category_id, name) DO UPDATE SET description = EXCLUDED.description, is_active = TRUE;
 
 INSERT INTO suppliers (id, name, phone, email, gst_number, address)
 VALUES
@@ -80,6 +89,7 @@ SET
 INSERT INTO products (
     id,
     category_id,
+    subcategory_id,
     brand_id,
     name,
     size,
@@ -96,6 +106,7 @@ VALUES
     (
         '00000000-0000-0000-0000-000000004001',
         '00000000-0000-0000-0000-000000001003',
+        '00000000-0000-0000-0000-000000005003',
         '00000000-0000-0000-0000-000000002001',
         'Cotton Leggins',
         'M',
@@ -111,6 +122,7 @@ VALUES
     (
         '00000000-0000-0000-0000-000000004002',
         '00000000-0000-0000-0000-000000001003',
+        '00000000-0000-0000-0000-000000005003',
         '00000000-0000-0000-0000-000000002001',
         'Cotton Leggins',
         'L',
@@ -126,6 +138,7 @@ VALUES
     (
         '00000000-0000-0000-0000-000000004003',
         '00000000-0000-0000-0000-000000001002',
+        '00000000-0000-0000-0000-000000005002',
         '00000000-0000-0000-0000-000000002003',
         'Everyday Comfort Bra',
         '34B',
@@ -141,6 +154,7 @@ VALUES
     (
         '00000000-0000-0000-0000-000000004004',
         '00000000-0000-0000-0000-000000001001',
+        '00000000-0000-0000-0000-000000005001',
         '00000000-0000-0000-0000-000000002002',
         'Printed Rayon Kurty',
         'XL',
@@ -156,7 +170,8 @@ VALUES
     (
         '00000000-0000-0000-0000-000000004005',
         '00000000-0000-0000-0000-000000001004',
-        '00000000-0000-0000-0000-000000002003',
+        '00000000-0000-0000-0000-000000005004',
+        '00000000-0000-0000-0000-000000002004',
         'Cotton Panties',
         'L',
         'White',
@@ -168,7 +183,7 @@ VALUES
         5,
         '890000000005'
     )
-ON CONFLICT (category_id, brand_id, name, size, color) DO UPDATE
+ON CONFLICT (category_id, subcategory_id, brand_id, name, size, color) DO UPDATE
 SET
     purchase_price = EXCLUDED.purchase_price,
     selling_price = EXCLUDED.selling_price,

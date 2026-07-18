@@ -11,6 +11,9 @@ from app.schemas.brand import BrandCreate
 from app.schemas.category import CategoryCreate
 from app.schemas.dashboard import DistributionItem
 from app.schemas.product import ProductCreate
+from app.schemas.sale import SaleCreate
+from app.schemas.subcategory import SubCategoryCreate
+from app.schemas.stock import StockAdjustmentCreate
 from app.services.catalog_service import BrandService, CategoryService
 
 
@@ -63,6 +66,14 @@ class Stage1ValidationTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             BrandCreate(name="  ", is_active=True)
 
+    def test_brand_requires_parent_category(self) -> None:
+        with self.assertRaises(ValidationError):
+            BrandCreate(name="Prisma", is_active=True)
+
+    def test_subcategory_requires_parent_category(self) -> None:
+        with self.assertRaises(ValidationError):
+            SubCategoryCreate(name="General", is_active=True)
+
     def test_duplicate_category_name_returns_conflict(self) -> None:
         service = CategoryService.__new__(CategoryService)
         service.db = FakeDb()
@@ -107,6 +118,20 @@ class Stage1ValidationTests(unittest.TestCase):
                 current_stock=1,
                 minimum_stock=0,
             )
+
+    def test_sale_requires_positive_line_items(self) -> None:
+        with self.assertRaises(ValidationError):
+            SaleCreate(payment_mode="CASH", items=[])
+        with self.assertRaises(ValidationError):
+            SaleCreate(payment_mode="CASH", items=[{"product_id": uuid4(), "quantity": 0}])
+
+    def test_stock_adjustment_requires_auditable_reference(self) -> None:
+        with self.assertRaises(ValidationError):
+            StockAdjustmentCreate(product_id=uuid4(), direction="INCREASE", reason="MANUAL_ADJUSTMENT", qty=1, reference="")
+
+    def test_stock_adjustment_rejects_generic_reason(self) -> None:
+        with self.assertRaises(ValidationError):
+            StockAdjustmentCreate(product_id=uuid4(), direction="INCREASE", reason="ADJUSTMENT", qty=1, reference="COUNT-1")
 
 
 if __name__ == "__main__":

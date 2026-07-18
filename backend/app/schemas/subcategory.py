@@ -7,11 +7,10 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.common import ORMBaseModel
-from app.schemas.brand import BrandRead
-from app.schemas.subcategory import SubCategoryRead
 
 
-class CategoryBase(BaseModel):
+class SubCategoryBase(BaseModel):
+    category_id: UUID
     name: str = Field(min_length=2, max_length=120)
     description: Optional[str] = None
     is_active: bool = True
@@ -19,16 +18,15 @@ class CategoryBase(BaseModel):
     @field_validator("name", mode="before")
     @classmethod
     def normalize_name(cls, value: str) -> str:
-        if not isinstance(value, str):
-            return value
-        return value.strip()
+        return value.strip() if isinstance(value, str) else value
 
 
-class CategoryCreate(CategoryBase):
+class SubCategoryCreate(SubCategoryBase):
     pass
 
 
-class CategoryUpdate(BaseModel):
+class SubCategoryUpdate(BaseModel):
+    category_id: Optional[UUID] = None
     name: Optional[str] = Field(default=None, min_length=2, max_length=120)
     description: Optional[str] = None
     is_active: Optional[bool] = None
@@ -36,17 +34,10 @@ class CategoryUpdate(BaseModel):
     @field_validator("name", mode="before")
     @classmethod
     def normalize_name(cls, value: Optional[str]) -> Optional[str]:
-        if value is None or not isinstance(value, str):
-            return value
-        return value.strip()
+        return value.strip() if isinstance(value, str) else value
 
 
-class CategoryRead(CategoryBase, ORMBaseModel):
+class SubCategoryRead(SubCategoryBase, ORMBaseModel):
     id: UUID
     created_at: datetime
     updated_at: datetime
-
-
-class CategoryHierarchyRead(CategoryRead):
-    brands: list[BrandRead] = Field(default_factory=list)
-    subcategories: list[SubCategoryRead] = Field(default_factory=list)

@@ -22,7 +22,10 @@ class PurchaseStatus(str, Enum):
 class StockMovementType(str, Enum):
     PURCHASE = "PURCHASE"
     SALE = "SALE"
-    ADJUSTMENT = "ADJUSTMENT"
+    CUSTOMER_RETURN = "CUSTOMER_RETURN"
+    SUPPLIER_RETURN = "SUPPLIER_RETURN"
+    DAMAGE = "DAMAGE"
+    MANUAL_ADJUSTMENT = "MANUAL_ADJUSTMENT"
 
 
 class UploadFileType(str, Enum):

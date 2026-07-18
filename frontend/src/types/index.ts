@@ -1,7 +1,7 @@
 export type UserRole = "OWNER" | "MANAGER" | "STAFF";
 export type PricingType = "MRP" | "OWN_PRICE";
 export type PurchaseStatus = "DRAFT" | "REVIEWED" | "CONFIRMED" | "CANCELLED";
-export type StockMovementType = "PURCHASE" | "SALE" | "ADJUSTMENT";
+export type StockMovementType = "PURCHASE" | "SALE" | "CUSTOMER_RETURN" | "SUPPLIER_RETURN" | "DAMAGE" | "MANUAL_ADJUSTMENT";
 
 export interface User {
   id: string;
@@ -29,6 +29,7 @@ export interface Category {
 
 export interface Brand {
   id: string;
+  category_id: string;
   name: string;
   description?: string | null;
   is_active: boolean;
@@ -36,9 +37,25 @@ export interface Brand {
   updated_at: string;
 }
 
+export interface SubCategory {
+  id: string;
+  category_id: string;
+  name: string;
+  description?: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CategoryHierarchy extends Category {
+  brands: Brand[];
+  subcategories: SubCategory[];
+}
+
 export interface Product {
   id: string;
   category_id: string;
+  subcategory_id: string;
   brand_id: string;
   sku?: string | null;
   name: string;
@@ -54,7 +71,66 @@ export interface Product {
   image_url?: string | null;
   is_active: boolean;
   category?: Category | null;
+  subcategory?: SubCategory | null;
   brand?: Brand | null;
+}
+
+export interface SaleItem {
+  id: string;
+  product_id: string;
+  product_name: string;
+  quantity: number;
+  unit_price: string;
+  unit_cost: string;
+  line_total: string;
+}
+
+export interface Sale {
+  id: string;
+  invoice_number: string;
+  customer_name?: string | null;
+  payment_mode: string;
+  subtotal: string;
+  discount: string;
+  total_amount: string;
+  cost_amount: string;
+  profit_amount: string;
+  sale_date: string;
+  cashier?: { id: string; full_name: string } | null;
+  items: SaleItem[];
+}
+
+export interface PaginatedSales {
+  items: Sale[];
+  meta: { page: number; page_size: number; total_records: number; total_pages: number };
+}
+
+export interface SalesMetric {
+  sales: string;
+  profit: string;
+  orders: number;
+}
+
+export interface SalesDashboard {
+  range_start: string;
+  range_end: string;
+  selected: SalesMetric;
+  today: SalesMetric;
+  yesterday: SalesMetric;
+  week: SalesMetric;
+  month: SalesMetric;
+  total_revenue: string;
+  collection: { cash: string; upi: string; card: string; other: string; total: string };
+  inventory_value: string;
+  total_stock: number;
+  total_products: number;
+  trend: Array<{ date: string; sales: string; profit: string; orders: number }>;
+  top_categories: Array<{ id?: string | null; name: string; quantity: number; revenue: string }>;
+  top_brands: Array<{ id?: string | null; name: string; quantity: number; revenue: string }>;
+  top_products: Array<{ id?: string | null; name: string; quantity: number; revenue: string }>;
+  recent_sales: Sale[];
+  low_stock: Array<{ id: string; name: string; current_stock: number; minimum_stock: number }>;
+  out_of_stock: Array<{ id: string; name: string; current_stock: number; minimum_stock: number }>;
 }
 
 export interface PaginatedProducts {
@@ -106,6 +182,9 @@ export interface StockHistory {
   after_stock: number;
   reference?: string | null;
   movement_date: string;
+  created_by?: string | null;
+  product?: Pick<Product, "id" | "name" | "size" | "color" | "sku"> | null;
+  created_by_user?: { id: string; full_name: string } | null;
 }
 
 export interface DashboardSummary {

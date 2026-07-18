@@ -1,85 +1,21 @@
-import { BarChart3, Boxes, ClipboardList, Layers3, LogOut, PackageSearch, Tags } from "lucide-react";
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Boxes, ClipboardPenLine, FolderTree, LayoutDashboard, LogOut, Menu, Package, PackagePlus, ReceiptText, ShoppingCart, X } from "lucide-react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 
-const navItems = [
-  { to: "/", label: "Dashboard", icon: BarChart3 },
-  { to: "/products", label: "Products", icon: PackageSearch },
-  { to: "/categories", label: "Categories", icon: Layers3 },
-  { to: "/brands", label: "Brands", icon: Tags },
-  { to: "/purchases", label: "Purchases", icon: ClipboardList },
-  { to: "/stock", label: "Stock", icon: Boxes }
+const navigation = [
+  { label: "Overview", items: [{ to: "/", label: "Dashboard", icon: LayoutDashboard, end: true }] },
+  { label: "Sales", items: [{ to: "/sales", label: "New Sale", icon: ShoppingCart, end: true }, { to: "/sales/history", label: "Sales History", icon: ReceiptText }] },
+  { label: "Inventory", items: [{ to: "/products", label: "Products", icon: Package }, { to: "/categories", label: "Categories & Brands", icon: FolderTree }, { to: "/purchases", label: "Purchases", icon: PackagePlus }, { to: "/stock", label: "Stock", icon: Boxes, end: true }, { to: "/stock/adjustment", label: "Stock Adjustment", icon: ClipboardPenLine }] },
 ];
 
-export default function AppLayout() {
+function SidebarContent({ compact = false, onNavigate }: { compact?: boolean; onNavigate?: () => void }) {
   const { user, logout } = useAuth();
+  return <div className="flex h-full flex-col bg-[#0f766e] text-white"><div className={`flex h-24 items-center border-b border-white/10 ${compact ? "justify-center px-2" : "px-5"}`}><div className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-white text-lg font-bold text-teal-800 shadow-sm">R</div>{!compact ? <div className="ml-3 min-w-0"><div className="truncate text-2xl font-bold">Rainbow</div><div className="text-xs font-medium text-teal-100">Retail ERP</div></div> : null}</div><nav className={`flex-1 overflow-y-auto py-4 ${compact ? "space-y-2 px-3" : "space-y-5 px-4"}`} aria-label="Main navigation">{navigation.map((group) => <div key={group.label}>{!compact ? <div className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-wider text-teal-200">{group.label}</div> : null}<div className="space-y-1.5">{group.items.map((item) => { const Icon = item.icon; return <NavLink key={item.to} to={item.to} end={item.end} onClick={onNavigate} title={compact ? item.label : undefined} className={({ isActive }) => `group relative flex h-12 items-center rounded-xl font-medium transition-all duration-200 ${compact ? "justify-center px-2" : "gap-3 px-4 text-[15px]"} ${isActive ? "bg-gradient-to-r from-white/20 to-white/10 font-bold text-white shadow-sm" : "text-teal-50/85 hover:bg-white/10 hover:text-white"}`}>{({ isActive }) => <>{isActive ? <span className="absolute inset-y-2.5 left-0 w-1 rounded-r-full bg-amber-300" /> : null}<Icon size={isActive ? 23 : 21} strokeWidth={isActive ? 2.3 : 2} className="shrink-0 transition-all duration-200 group-hover:scale-105 group-hover:text-amber-200" />{!compact ? <span className="truncate">{item.label}</span> : null}</>}</NavLink>; })}</div></div>)}</nav><div className={`border-t border-white/10 p-4 ${compact ? "flex justify-center" : ""}`}>{!compact ? <div className="mb-3 flex items-center gap-3 rounded-lg bg-black/10 p-3"><div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/15 text-sm font-bold">{user?.full_name?.charAt(0) || "U"}</div><div className="min-w-0"><div className="truncate text-sm font-semibold">{user?.full_name}</div><div className="truncate text-xs text-teal-100">{user?.role}</div></div></div> : null}<button type="button" onClick={logout} title="Logout" aria-label="Logout" className={`focus-ring flex h-11 items-center rounded-lg text-sm font-medium text-teal-50 transition duration-200 hover:bg-white/10 hover:text-white ${compact ? "w-11 justify-center" : "w-full gap-3 px-3"}`}><LogOut size={20} />{!compact ? <span>Logout</span> : null}</button></div></div>;
+}
 
-  return (
-    <div className="min-h-screen bg-[#f6f8fb] text-ink">
-      <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-line bg-white lg:block">
-        <div className="border-b border-line px-6 py-5">
-          <div className="text-lg font-semibold">Rainbow fashions</div>
-          <div className="mt-1 text-xs uppercase tracking-wide text-teal-700">{user?.role}</div>
-        </div>
-        <nav className="space-y-1 px-3 py-4">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition ${
-                    isActive ? "bg-teal-50 text-teal-800" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
-                  }`
-                }
-              >
-                <Icon size={18} />
-                {item.label}
-              </NavLink>
-            );
-          })}
-        </nav>
-      </aside>
-      <div className="lg:pl-64">
-        <header className="sticky top-0 z-10 border-b border-line bg-white/95 px-4 py-3 backdrop-blur lg:px-8">
-          <div className="flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-slate-900 lg:hidden">Rainbow fashions</div>
-              <div className="hidden text-sm font-semibold text-slate-900 lg:block">{user?.full_name}</div>
-              <div className="truncate text-xs text-slate-500">{user?.email}</div>
-            </div>
-            <button
-              type="button"
-              onClick={logout}
-              className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm text-slate-700 hover:bg-slate-50"
-              title="Logout"
-              aria-label="Logout"
-            >
-              <LogOut size={16} />
-              <span className="hidden sm:inline">Logout</span>
-            </button>
-          </div>
-        </header>
-        <main className="px-4 py-5 pb-24 lg:px-8 lg:py-6 lg:pb-8">
-          <Outlet />
-        </main>
-      </div>
-      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-6 border-t border-line bg-white/95 px-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 shadow-[0_-4px_16px_rgba(15,23,42,0.06)] backdrop-blur lg:hidden">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) => `flex min-w-0 flex-col items-center gap-1 rounded-md px-1 py-2 text-[10px] font-medium ${isActive ? "bg-teal-50 text-teal-800" : "text-slate-500"}`}
-            >
-              <Icon size={18} />
-              <span className="max-w-full truncate">{item.label}</span>
-            </NavLink>
-          );
-        })}
-      </nav>
-    </div>
-  );
+export default function AppLayout() {
+  const { user } = useAuth(); const location = useLocation(); const [mobileOpen, setMobileOpen] = useState(false);
+  useEffect(() => { if (!mobileOpen) return; const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setMobileOpen(false); }; document.addEventListener("keydown", onKeyDown); document.body.style.overflow = "hidden"; return () => { document.removeEventListener("keydown", onKeyDown); document.body.style.overflow = ""; }; }, [mobileOpen]);
+  return <div className="min-h-screen bg-[#f4f7fa] text-[#111827]"><aside className="fixed inset-y-0 left-0 z-30 hidden w-[272px] shadow-xl shadow-slate-900/10 lg:block"><SidebarContent /></aside><aside className="fixed inset-y-0 left-0 z-30 hidden w-[88px] shadow-lg md:block lg:hidden"><SidebarContent compact /></aside>{mobileOpen ? <div className="fixed inset-0 z-40 md:hidden"><button type="button" className="absolute inset-0 bg-slate-950/45 backdrop-blur-sm" onClick={() => setMobileOpen(false)} aria-label="Close navigation" /><aside className="relative h-full w-[min(86vw,288px)] shadow-2xl"><SidebarContent onNavigate={() => setMobileOpen(false)} /><button type="button" className="absolute right-3 top-3 grid h-10 w-10 place-items-center rounded-lg text-teal-50 hover:bg-white/10" onClick={() => setMobileOpen(false)} aria-label="Close menu"><X size={22} /></button></aside></div> : null}<div className="md:pl-[88px] lg:pl-[272px]"><header className="sticky top-0 z-20 h-16 border-b border-slate-200/80 bg-white/90 px-4 backdrop-blur-xl md:px-6 lg:px-8"><div className="flex h-full items-center justify-between gap-4"><div className="flex min-w-0 items-center gap-3"><button type="button" className="focus-ring grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm md:hidden" onClick={() => setMobileOpen(true)} aria-label="Open menu"><Menu size={22} /></button><div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-900 md:hidden">Rainbow Fashions</div><div className="hidden text-sm font-semibold text-slate-900 md:block">{user?.full_name}</div><div className="truncate text-xs text-slate-500">{user?.email}</div></div></div><div className="hidden items-center gap-2 rounded-full border border-slate-200 bg-slate-50 py-1.5 pl-2 pr-3 text-sm font-medium text-slate-700 sm:flex"><span className="grid h-7 w-7 place-items-center rounded-full bg-teal-100 font-bold text-teal-800">{user?.full_name?.charAt(0) || "U"}</span>{user?.role}</div></div></header><main className="min-w-0 px-4 py-6 md:px-6 lg:px-8 lg:py-8"><div key={location.pathname} className="page-enter"><Outlet /></div></main></div></div>;
 }

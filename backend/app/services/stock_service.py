@@ -20,13 +20,24 @@ class StockService:
         self.db = db
         self.repo = StockHistoryRepository(db)
 
-    def history(self, skip: int = 0, limit: int = 100) -> list[StockHistory]:
-        return self.repo.list_recent(skip, limit)
+    def history(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        product_id: Optional[UUID] = None,
+        movement_type: Optional[StockMovementType] = None,
+    ) -> list[StockHistory]:
+        return self.repo.list_recent(skip, limit, product_id, movement_type)
 
     def adjust(self, payload: StockAdjustmentCreate, current_user: User) -> StockHistory:
         product = self.db.get(Product, payload.product_id)
         if not product:
             raise not_found("Product")
+
+        if payload.reason == "CUSTOMER_RETURN" and payload.direction != "INCREASE":
+            raise bad_request("Customer returns must increase stock")
+        if payload.reason in {"SUPPLIER_RETURN", "DAMAGE"} and payload.direction != "DECREASE":
+            raise bad_request(f"{payload.reason.replace('_', ' ').title()} must decrease stock")
 
         before_stock = product.current_stock
         if payload.direction == "INCREASE":
@@ -43,7 +54,7 @@ class StockService:
         movement = StockHistory(
             product_id=product.id,
             store_id=current_user.store_id,
-            movement_type=StockMovementType.ADJUSTMENT,
+            movement_type=StockMovementType(payload.reason),
             qty=payload.qty,
             before_stock=before_stock,
             after_stock=after_stock,

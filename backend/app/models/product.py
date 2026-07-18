@@ -17,11 +17,12 @@ from app.models.enums import PricingType
 class Product(Base):
     __tablename__ = "products"
     __table_args__ = (
-        UniqueConstraint("category_id", "brand_id", "name", "size", "color", name="uq_products_variant"),
+        UniqueConstraint("category_id", "subcategory_id", "brand_id", "name", "size", "color", name="uq_products_variant"),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     category_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("categories.id", ondelete="RESTRICT"), nullable=False)
+    subcategory_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("subcategories.id", ondelete="RESTRICT"), nullable=False)
     brand_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("brands.id", ondelete="RESTRICT"), nullable=False)
     sku: Mapped[Optional[str]] = mapped_column(String(80), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(180), nullable=False, index=True)
@@ -40,6 +41,7 @@ class Product(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
     category = relationship("Category", back_populates="products")
+    subcategory = relationship("SubCategory", back_populates="products")
     brand = relationship("Brand", back_populates="products")
     inventory_items = relationship("ProductInventory", back_populates="product", passive_deletes=True)
     purchase_items = relationship(
@@ -55,3 +57,4 @@ class Product(Base):
         passive_deletes=True,
     )
     stock_movements = relationship("StockHistory", back_populates="product", passive_deletes=True)
+    sale_items = relationship("SaleItem", back_populates="product", passive_deletes=True)

@@ -11,10 +11,12 @@ from app.models.enums import PricingType
 from app.schemas.brand import BrandRead
 from app.schemas.category import CategoryRead
 from app.schemas.common import ORMBaseModel
+from app.schemas.subcategory import SubCategoryRead
 
 
 class ProductBase(BaseModel):
     category_id: UUID
+    subcategory_id: UUID
     brand_id: UUID
     sku: Optional[str] = Field(default=None, max_length=80)
     name: str = Field(min_length=2, max_length=180)
@@ -58,6 +60,7 @@ class ProductCreate(ProductBase):
 
 class ProductUpdate(BaseModel):
     category_id: Optional[UUID] = None
+    subcategory_id: Optional[UUID] = None
     brand_id: Optional[UUID] = None
     sku: Optional[str] = Field(default=None, max_length=80)
     name: Optional[str] = Field(default=None, min_length=2, max_length=180)
@@ -94,6 +97,7 @@ class ProductRead(ProductBase, ORMBaseModel):
     created_at: datetime
     updated_at: datetime
     category: Optional[CategoryRead] = None
+    subcategory: Optional[SubCategoryRead] = None
     brand: Optional[BrandRead] = None
 
 
@@ -124,7 +128,7 @@ class ProductBulkBrandUpdate(ProductBulkIds):
 class ProductBulkStockUpdate(ProductBulkIds):
     direction: Literal["INCREASE", "DECREASE"]
     qty: int = Field(gt=0)
-    reference: Optional[str] = Field(default=None, max_length=180)
+    reference: str = Field(min_length=2, max_length=180)
 
 
 class ProductImportSummary(BaseModel):

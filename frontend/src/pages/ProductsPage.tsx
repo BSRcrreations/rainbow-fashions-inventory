@@ -12,7 +12,7 @@ import PageHeader from "../components/PageHeader";
 import { useToast } from "../components/ToastProvider";
 import { Button } from "../components/ui/button";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
-import type { Brand, Category, PaginatedProducts, PricingType, Product } from "../types";
+import type { CategoryHierarchy, PaginatedProducts, PricingType, Product } from "../types";
 import { money } from "../utils/format";
 
 type SortBy = "name" | "sku" | "selling_price" | "purchase_price" | "stock" | "created_at" | "updated_at";
@@ -21,6 +21,7 @@ type StockStatus = "" | "low" | "out" | "in";
 
 interface ProductFormState {
   category_id: string;
+  subcategory_id: string;
   brand_id: string;
   sku: string;
   name: string;
@@ -38,6 +39,7 @@ interface ProductFormState {
 
 const emptyForm: ProductFormState = {
   category_id: "",
+  subcategory_id: "",
   brand_id: "",
   sku: "",
   name: "",
@@ -56,6 +58,7 @@ const emptyForm: ProductFormState = {
 function formFromProduct(product: Product): ProductFormState {
   return {
     category_id: product.category_id,
+    subcategory_id: product.subcategory_id,
     brand_id: product.brand_id,
     sku: product.sku ?? "",
     name: product.name,
@@ -113,8 +116,6 @@ export default function ProductsPage() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [bulkCategory, setBulkCategory] = useState("");
-  const [bulkBrand, setBulkBrand] = useState("");
   const [bulkQty, setBulkQty] = useState("1");
   const [bulkDirection, setBulkDirection] = useState<"INCREASE" | "DECREASE">("INCREASE");
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -185,13 +186,15 @@ export default function ProductsPage() {
     },
   });
 
-  const categoriesQuery = useQuery({ queryKey: ["categories"], queryFn: () => api.get<Category[]>("/categories") });
-  const brandsQuery = useQuery({ queryKey: ["brands"], queryFn: () => api.get<Brand[]>("/brands") });
+  const hierarchyQuery = useQuery({ queryKey: ["category-hierarchy"], queryFn: () => api.get<CategoryHierarchy[]>("/categories/hierarchy") });
 
   const products = productsQuery.data?.items ?? [];
   const meta = productsQuery.data?.meta;
-  const categories = categoriesQuery.data ?? [];
-  const brands = brandsQuery.data ?? [];
+  const categories = useMemo(() => hierarchyQuery.data ?? [], [hierarchyQuery.data]);
+  const brands = useMemo(() => categories.flatMap((category) => category.brands), [categories]);
+  const selectedCategory = categories.find((category) => category.id === form.category_id);
+  const availableSubcategories = selectedCategory?.subcategories.filter((item) => item.is_active) ?? [];
+  const availableBrands = selectedCategory?.brands.filter((item) => item.is_active) ?? [];
   const selectedCount = selectedIds.size;
   const isFiltered = Boolean(debouncedSearch.trim() || categoryFilter || brandFilter || statusFilter !== "all" || stockStatus || minPrice || maxPrice || createdFrom || createdTo);
 
@@ -245,6 +248,7 @@ export default function ProductsPage() {
   function validateForm() {
     const requiredFields: Array<[Exclude<keyof ProductFormState, "is_active">, string]> = [
       ["category_id", "Category is required"],
+      ["subcategory_id", "Subcategory is required"],
       ["brand_id", "Brand is required"],
       ["name", "Product name is required"],
       ["size", "Size is required"],
@@ -403,13 +407,11 @@ export default function ProductsPage() {
     }
   }
 
-  async function runBulk(action: "category" | "brand" | "stock" | "delete") {
+  async function runBulk(action: "stock" | "delete") {
     const product_ids = Array.from(selectedIds);
     if (!product_ids.length) return;
     try {
       if (action === "delete") await api.post("/products/bulk/delete", { product_ids });
-      if (action === "category") await api.post("/products/bulk/category", { product_ids, category_id: bulkCategory });
-      if (action === "brand") await api.post("/products/bulk/brand", { product_ids, brand_id: bulkBrand });
       if (action === "stock") await api.post("/products/bulk/stock", { product_ids, direction: bulkDirection, qty: Number(bulkQty), reference: "Bulk update from products page" });
       toast.success("Bulk operation completed");
       setSelectedIds(new Set());
@@ -548,15 +550,21 @@ export default function ProductsPage() {
       <Dialog open={formOpen} title={editing ? "Edit product" : "Add product"} description={editing ? `Update ${editing.name} without changing its stock history.` : "Add the essentials now. You can edit details later."} onClose={cancelEdit} maxWidth="xl">
       <form onSubmit={(event: FormEvent) => { event.preventDefault(); saveMutation.mutate(); }} className="grid gap-4 sm:grid-cols-2">
         <label className="field-label">Category<span>*</span>
-        <select autoFocus className="field-input" value={form.category_id} onChange={(event) => setForm({ ...form, category_id: event.target.value })} disabled={saveMutation.isPending}>
+        <select autoFocus className="field-input" value={form.category_id} onChange={(event) => setForm({ ...form, category_id: event.target.value, subcategory_id: "", brand_id: "" })} disabled={saveMutation.isPending}>
           <option value="">Category</option>
           {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
         </select>
         </label>
+        <label className="field-label">Subcategory<span>*</span>
+        <select className="field-input" value={form.subcategory_id} onChange={(event) => setForm({ ...form, subcategory_id: event.target.value })} disabled={saveMutation.isPending || !form.category_id}>
+          <option value="">{form.category_id ? "Subcategory" : "Select category first"}</option>
+          {availableSubcategories.map((subcategory) => <option key={subcategory.id} value={subcategory.id}>{subcategory.name}</option>)}
+        </select>
+        </label>
         <label className="field-label">Brand<span>*</span>
-        <select className="field-input" value={form.brand_id} onChange={(event) => setForm({ ...form, brand_id: event.target.value })} disabled={saveMutation.isPending}>
-          <option value="">Brand</option>
-          {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+        <select className="field-input" value={form.brand_id} onChange={(event) => setForm({ ...form, brand_id: event.target.value })} disabled={saveMutation.isPending || !form.category_id}>
+          <option value="">{form.category_id ? "Brand" : "Select category first"}</option>
+          {availableBrands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
         </select>
         </label>
         <label className="field-label sm:col-span-2">Product name<span>*</span>
@@ -617,16 +625,6 @@ export default function ProductsPage() {
         <div className="mb-4 grid gap-2 rounded-md border border-teal-200 bg-teal-50 p-3 md:grid-cols-[auto_1fr] md:items-center">
           <div className="text-sm font-semibold text-teal-900">{selectedCount} selected</div>
           <div className="flex flex-wrap gap-2">
-            <select className="focus-ring h-9 rounded-md border border-line bg-white px-2 text-sm" value={bulkCategory} onChange={(event) => setBulkCategory(event.target.value)}>
-              <option value="">Category</option>
-              {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-            </select>
-            <Button type="button" size="sm" variant="secondary" onClick={() => void runBulk("category")} disabled={!bulkCategory}>Change category</Button>
-            <select className="focus-ring h-9 rounded-md border border-line bg-white px-2 text-sm" value={bulkBrand} onChange={(event) => setBulkBrand(event.target.value)}>
-              <option value="">Brand</option>
-              {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
-            </select>
-            <Button type="button" size="sm" variant="secondary" onClick={() => void runBulk("brand")} disabled={!bulkBrand}>Change brand</Button>
             <select className="focus-ring h-9 rounded-md border border-line bg-white px-2 text-sm" value={bulkDirection} onChange={(event) => setBulkDirection(event.target.value as "INCREASE" | "DECREASE")}>
               <option value="INCREASE">Increase</option>
               <option value="DECREASE">Decrease</option>
@@ -653,7 +651,7 @@ export default function ProductsPage() {
                   {product.image_url ? <img loading="lazy" src={imageSrc(product.image_url)} alt="" className="h-14 w-14 shrink-0 rounded-md object-cover" /> : <div className="grid h-14 w-14 shrink-0 place-items-center rounded-md bg-slate-100 text-slate-400"><PackageOpen size={20} /></div>}
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-semibold text-slate-950"><HighlightText text={product.name} query={debouncedSearch} /></div>
-                    <div className="mt-0.5 truncate text-xs text-slate-500"><HighlightText text={product.brand?.name} query={debouncedSearch} /> · <HighlightText text={product.category?.name} query={debouncedSearch} /></div>
+                    <div className="mt-0.5 truncate text-xs text-slate-500"><HighlightText text={product.category?.name} query={debouncedSearch} /> · <HighlightText text={product.subcategory?.name} query={debouncedSearch} /> · <HighlightText text={product.brand?.name} query={debouncedSearch} /></div>
                     <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600">
                       <span>{product.size} / {product.color}</span>
                       <span>{product.sku || product.barcode || "No code"}</span>
@@ -697,7 +695,7 @@ export default function ProductsPage() {
                       {product.image_url ? <img loading="lazy" src={imageSrc(product.image_url)} alt="" className="h-11 w-11 rounded object-cover" /> : <div className="grid h-11 w-11 place-items-center rounded bg-slate-100 text-slate-400"><PackageOpen size={18} /></div>}
                       <div className="min-w-0">
                         <div className="truncate font-medium text-slate-900"><HighlightText text={product.name} query={debouncedSearch} /></div>
-                        <div className="truncate text-slate-500"><HighlightText text={product.brand?.name} query={debouncedSearch} /> / <HighlightText text={product.category?.name} query={debouncedSearch} /></div>
+                        <div className="truncate text-slate-500"><HighlightText text={product.category?.name} query={debouncedSearch} /> / <HighlightText text={product.subcategory?.name} query={debouncedSearch} /> / <HighlightText text={product.brand?.name} query={debouncedSearch} /></div>
                       </div>
                     </div>
                   </td>

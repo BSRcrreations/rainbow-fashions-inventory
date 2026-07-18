@@ -32,3 +32,4 @@ class User(Base):
     created_purchases = relationship("Purchase", back_populates="created_by_user", foreign_keys="Purchase.created_by")
     confirmed_purchases = relationship("Purchase", back_populates="confirmed_by_user", foreign_keys="Purchase.confirmed_by")
     stock_movements = relationship("StockHistory", back_populates="created_by_user")
+    sales = relationship("Sale", back_populates="cashier")

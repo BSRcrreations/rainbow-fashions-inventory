@@ -4,10 +4,12 @@ fastapi==0.115.0
 bcrypt==4.0.1
 passlib[bcrypt]==1.7.4
 psycopg[binary]==3.2.13
+pytest==8.3.5
 pydantic==2.8.2
 pydantic-settings==2.4.0
 python-jose[cryptography]==3.3.0
 python-multipart==0.0.9
 openpyxl==3.1.5
+reportlab==4.2.5
 SQLAlchemy==2.0.34
 uvicorn[standard]==0.30.6

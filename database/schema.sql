@@ -3,7 +3,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TYPE user_role AS ENUM ('OWNER', 'MANAGER', 'STAFF');
 CREATE TYPE pricing_type AS ENUM ('MRP', 'OWN_PRICE');
 CREATE TYPE purchase_status AS ENUM ('DRAFT', 'REVIEWED', 'CONFIRMED', 'CANCELLED');
-CREATE TYPE stock_movement_type AS ENUM ('PURCHASE', 'SALE', 'ADJUSTMENT');
+CREATE TYPE stock_movement_type AS ENUM ('PURCHASE', 'SALE', 'CUSTOMER_RETURN', 'SUPPLIER_RETURN', 'DAMAGE', 'MANUAL_ADJUSTMENT');
 CREATE TYPE upload_file_type AS ENUM ('INVOICE_IMAGE', 'INVOICE_PDF', 'PRODUCT_IMAGE');
 
 CREATE TABLE stores (
@@ -44,12 +44,26 @@ CREATE TABLE categories (
 
 CREATE TABLE brands (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
     name VARCHAR(120) NOT NULL,
     description TEXT,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_brands_name UNIQUE (name)
+    CONSTRAINT uq_brands_category_name UNIQUE (category_id, name),
+    CONSTRAINT uq_brands_id_category UNIQUE (id, category_id)
+);
+
+CREATE TABLE subcategories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    name VARCHAR(120) NOT NULL,
+    description TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_subcategories_category_name UNIQUE (category_id, name),
+    CONSTRAINT uq_subcategories_id_category UNIQUE (id, category_id)
 );
 
 CREATE TABLE suppliers (
@@ -68,6 +82,7 @@ CREATE TABLE suppliers (
 CREATE TABLE products (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     category_id UUID NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
+    subcategory_id UUID NOT NULL REFERENCES subcategories(id) ON DELETE RESTRICT,
     brand_id UUID NOT NULL REFERENCES brands(id) ON DELETE RESTRICT,
     sku VARCHAR(80),
     name VARCHAR(180) NOT NULL,
@@ -92,7 +107,9 @@ CREATE TABLE products (
     CONSTRAINT ck_products_mrp_required_for_mrp_pricing CHECK (
         pricing_type <> 'MRP' OR mrp IS NOT NULL
     ),
-    CONSTRAINT uq_products_variant UNIQUE (category_id, brand_id, name, size, color),
+    CONSTRAINT fk_products_subcategory_category FOREIGN KEY (subcategory_id, category_id) REFERENCES subcategories(id, category_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_products_brand_category FOREIGN KEY (brand_id, category_id) REFERENCES brands(id, category_id) ON DELETE RESTRICT,
+    CONSTRAINT uq_products_variant UNIQUE (category_id, subcategory_id, brand_id, name, size, color),
     CONSTRAINT uq_products_sku UNIQUE (sku),
     CONSTRAINT uq_products_barcode UNIQUE (barcode)
 );
@@ -175,6 +192,39 @@ CREATE TABLE purchase_items (
     )
 );
 
+CREATE TABLE sales (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID REFERENCES stores(id) ON DELETE SET NULL,
+    invoice_number VARCHAR(120) NOT NULL,
+    customer_name VARCHAR(180),
+    payment_mode VARCHAR(40) NOT NULL,
+    cashier_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    subtotal NUMERIC(12, 2) NOT NULL,
+    discount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    total_amount NUMERIC(12, 2) NOT NULL,
+    cost_amount NUMERIC(12, 2) NOT NULL,
+    profit_amount NUMERIC(12, 2) NOT NULL,
+    sale_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_sales_invoice_number UNIQUE (invoice_number),
+    CONSTRAINT ck_sales_amounts_non_negative CHECK (subtotal >= 0 AND discount >= 0 AND total_amount >= 0 AND cost_amount >= 0),
+    CONSTRAINT ck_sales_discount_not_above_subtotal CHECK (discount <= subtotal)
+);
+
+CREATE TABLE sale_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sale_id UUID NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    product_name VARCHAR(180) NOT NULL,
+    quantity INTEGER NOT NULL,
+    unit_price NUMERIC(12, 2) NOT NULL,
+    unit_cost NUMERIC(12, 2) NOT NULL,
+    line_total NUMERIC(12, 2) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_sale_items_quantity_positive CHECK (quantity > 0),
+    CONSTRAINT ck_sale_items_amounts_non_negative CHECK (unit_price >= 0 AND unit_cost >= 0 AND line_total >= 0)
+);
+
 CREATE TABLE stock_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
@@ -186,6 +236,8 @@ CREATE TABLE stock_history (
     reference VARCHAR(180),
     purchase_id UUID REFERENCES purchases(id) ON DELETE SET NULL,
     purchase_item_id UUID REFERENCES purchase_items(id) ON DELETE SET NULL,
+    sale_id UUID REFERENCES sales(id) ON DELETE SET NULL,
+    sale_item_id UUID REFERENCES sale_items(id) ON DELETE SET NULL,
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
     movement_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -197,9 +249,13 @@ CREATE TABLE stock_history (
 CREATE INDEX ix_users_store_id ON users(store_id);
 CREATE INDEX ix_categories_name ON categories(name);
 CREATE INDEX ix_brands_name ON brands(name);
+CREATE INDEX ix_brands_category_id ON brands(category_id);
+CREATE INDEX ix_subcategories_category_id ON subcategories(category_id);
+CREATE INDEX ix_subcategories_name ON subcategories(name);
 CREATE INDEX ix_suppliers_name ON suppliers(name);
 CREATE INDEX ix_products_category_id ON products(category_id);
 CREATE INDEX ix_products_brand_id ON products(brand_id);
+CREATE INDEX ix_products_subcategory_id ON products(subcategory_id);
 CREATE INDEX ix_products_sku ON products(sku);
 CREATE INDEX ix_products_name ON products(name);
 CREATE INDEX ix_products_color ON products(color);
@@ -223,6 +279,14 @@ CREATE INDEX ix_stock_history_product_id ON stock_history(product_id);
 CREATE INDEX ix_stock_history_store_id ON stock_history(store_id);
 CREATE INDEX ix_stock_history_movement_type ON stock_history(movement_type);
 CREATE INDEX ix_stock_history_movement_date ON stock_history(movement_date);
+CREATE INDEX ix_sales_sale_date ON sales(sale_date);
+CREATE INDEX ix_sales_invoice_number ON sales(invoice_number);
+CREATE INDEX ix_sales_customer_name ON sales(customer_name);
+CREATE INDEX ix_sales_payment_mode ON sales(payment_mode);
+CREATE INDEX ix_sales_cashier_id ON sales(cashier_id);
+CREATE INDEX ix_sale_items_sale_id ON sale_items(sale_id);
+CREATE INDEX ix_sale_items_product_id ON sale_items(product_id);
+CREATE INDEX ix_stock_history_sale_id ON stock_history(sale_id);
 
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$

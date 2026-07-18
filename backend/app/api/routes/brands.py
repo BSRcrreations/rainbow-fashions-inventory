@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from uuid import UUID
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
@@ -16,8 +17,8 @@ router = APIRouter(prefix="/brands", tags=["Brands"])
 
 
 @router.get("", response_model=list[BrandRead])
-def list_brands(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), _: User = Depends(get_current_user)) -> list:
-    return BrandService(db).list(skip, limit)
+def list_brands(category_id: Optional[UUID] = None, skip: int = 0, limit: int = 100, db: Session = Depends(get_db), _: User = Depends(get_current_user)) -> list:
+    return BrandService(db).list(category_id, skip, limit)
 
 
 @router.post("", response_model=BrandRead, status_code=status.HTTP_201_CREATED)

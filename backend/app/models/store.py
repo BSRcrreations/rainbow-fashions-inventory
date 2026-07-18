@@ -31,3 +31,4 @@ class Store(Base):
     inventory_items = relationship("ProductInventory", back_populates="store")
     purchases = relationship("Purchase", back_populates="store")
     stock_movements = relationship("StockHistory", back_populates="store")
+    sales = relationship("Sale", back_populates="store")

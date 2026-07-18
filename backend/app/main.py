@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.staticfiles import StaticFiles
 
-from app.api.routes import auth, brands, categories, dashboard, products, purchases, stock
+from app.api.routes import auth, brands, categories, dashboard, products, purchases, sales, stock, subcategories
 from app.core.config import get_settings
 from app.core.exceptions import error_payload
 from app.core.logging import configure_logging
@@ -54,6 +54,8 @@ app.include_router(auth.router, prefix=settings.api_v1_prefix)
 app.include_router(dashboard.router, prefix=settings.api_v1_prefix)
 app.include_router(categories.router, prefix=settings.api_v1_prefix)
 app.include_router(brands.router, prefix=settings.api_v1_prefix)
+app.include_router(subcategories.router, prefix=settings.api_v1_prefix)
+app.include_router(sales.router, prefix=settings.api_v1_prefix)
 app.include_router(products.router, prefix=settings.api_v1_prefix)
 app.include_router(purchases.router, prefix=settings.api_v1_prefix)
 app.include_router(stock.router, prefix=settings.api_v1_prefix)

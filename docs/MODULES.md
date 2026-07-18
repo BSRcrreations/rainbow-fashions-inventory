@@ -1,5 +1,15 @@
 # Module Status
 
+## Sales and Product Hierarchy
+
+- Sales Dashboard: today/week/month/all-time KPIs, selected-range sales and profit trends, product/category/brand rankings, recent sales, low-stock, and out-of-stock signals.
+- Sales History: debounced invoice/customer/payment/cashier search, date and payment filters, responsive invoice detail, print, PDF, and Excel export.
+- Category hierarchy: brands and subcategories are managed inside Categories and cannot exist without a parent category.
+- Product form: category-first selection loads only valid subcategories and brands for that category.
+- New Sale POS: stock-aware product search, cart quantities, customer/payment/discount capture, atomic checkout, invoice creation, profit calculation, stock decrement, and sale movement history.
+- Inventory: current stock levels and a filterable audit trail with explicit purchase, sale, return, damage, and manual adjustment reasons.
+- Stock Adjustment: separate manager workflow with a required reason, reference, and before/after stock preview.
+
 ## Stage 1 Inventory Foundation
 
 - Authentication with JWT login, logout acknowledgement, token validation, role validation, protected routes, token expiry handling, and structured errors.

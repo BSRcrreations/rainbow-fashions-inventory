@@ -10,6 +10,7 @@ from app.schemas.common import ORMBaseModel
 
 
 class BrandBase(BaseModel):
+    category_id: UUID
     name: str = Field(min_length=2, max_length=120)
     description: Optional[str] = None
     is_active: bool = True
@@ -27,6 +28,7 @@ class BrandCreate(BrandBase):
 
 
 class BrandUpdate(BaseModel):
+    category_id: Optional[UUID] = None
     name: Optional[str] = Field(default=None, min_length=2, max_length=120)
     description: Optional[str] = None
     is_active: Optional[bool] = None

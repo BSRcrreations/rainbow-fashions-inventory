@@ -8,11 +8,16 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_manager_or_owner
 from app.database.session import get_db
 from app.models.user import User
-from app.schemas.category import CategoryCreate, CategoryRead, CategoryUpdate
+from app.schemas.category import CategoryCreate, CategoryHierarchyRead, CategoryRead, CategoryUpdate
 from app.services.catalog_service import CategoryService
 
 
 router = APIRouter(prefix="/categories", tags=["Categories"])
+
+
+@router.get("/hierarchy", response_model=list[CategoryHierarchyRead])
+def list_category_hierarchy(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), _: User = Depends(get_current_user)) -> list:
+    return CategoryService(db).list_hierarchy(skip, limit)
 
 
 @router.get("", response_model=list[CategoryRead])

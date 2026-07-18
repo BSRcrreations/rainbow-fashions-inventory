@@ -2,6 +2,22 @@
 
 Base URL: `/api/v1`
 
+Sales and hierarchy additions:
+
+- `GET /categories/hierarchy` returns categories with their brands and subcategories.
+- `GET|POST /subcategories` and `PUT|DELETE /subcategories/{id}` manage category-owned subcategories.
+- `GET /brands?category_id={id}` filters brands by category; brand create requires `category_id`.
+- Product create/update requires `category_id`, `subcategory_id`, and `brand_id`; mismatched parent categories return a validation error.
+- `GET /sales/dashboard?preset=today|yesterday|week|month|custom` returns KPIs, trends, rankings, recent sales, and stock alerts. Custom ranges require `start_date` and `end_date`.
+- `GET /sales` returns paginated, searchable sales history with payment and date filters.
+- `POST /sales` creates an atomic sale and related stock movements.
+- `GET /sales/{id}` returns invoice detail.
+- `GET /sales/export?format=xlsx|pdf` exports the filtered history.
+- `GET /stock/history` supports `product_id` and explicit `movement_type` filters and returns product/user attribution.
+- `GET /stock/history/export` exports the filtered inventory movement audit trail.
+- `POST /stock/adjustments` requires a reference and accepts `CUSTOMER_RETURN`, `SUPPLIER_RETURN`, `DAMAGE`, or `MANUAL_ADJUSTMENT` as its reason.
+- `GET /sales` additionally supports `invoice_number`, `customer_name`, and `cashier_name` filters.
+
 Authentication:
 
 - `POST /auth/login`
@@ -132,8 +148,8 @@ Purchases:
 
 Stock:
 
-- `GET /stock/history?product_id=...&movement_type=ADJUSTMENT`
-- `GET /stock/history/export?product_id=...&movement_type=ADJUSTMENT`
+- `GET /stock/history?product_id=...&movement_type=MANUAL_ADJUSTMENT`
+- `GET /stock/history/export?product_id=...&movement_type=MANUAL_ADJUSTMENT`
 - `POST /stock/adjustments`
 
 Validation:

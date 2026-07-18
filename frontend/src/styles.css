@@ -2,9 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+@media print {
+  body * { visibility: hidden; }
+  #printable-invoice, #printable-invoice * { visibility: visible; }
+  #printable-invoice { position: absolute; inset: 0; width: 100%; padding: 24px; background: white; }
+}
+
 :root {
-  color: #1f2933;
-  background: #f6f8fb;
+  color: #111827;
+  background: #f4f7fa;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -14,6 +20,7 @@
 body {
   margin: 0;
   min-width: 320px;
+  background: #f4f7fa;
 }
 
 button,
@@ -28,7 +35,7 @@ textarea {
 }
 
 .field-label {
-  @apply grid gap-1.5 text-sm font-medium text-slate-700;
+  @apply grid gap-2 text-sm font-semibold text-slate-700;
 }
 
 .field-label > span {
@@ -36,9 +43,52 @@ textarea {
 }
 
 .field-input {
-  @apply focus-ring h-10 w-full rounded-md border border-line bg-white px-3 font-normal text-slate-900 placeholder:text-slate-400 disabled:bg-slate-50 disabled:text-slate-500;
+  @apply focus-ring h-11 w-full rounded-lg border border-slate-200 bg-white px-3.5 font-normal text-slate-900 shadow-sm transition duration-200 placeholder:text-slate-400 hover:border-slate-300 disabled:bg-slate-50 disabled:text-slate-500;
 }
 
 .filter-chip {
   @apply inline-flex h-7 items-center gap-1 rounded-full border border-teal-200 bg-teal-50 px-2.5 font-medium text-teal-800 transition hover:bg-teal-100;
+}
+
+main section.rounded-md,
+main div.rounded-md.border.border-line.bg-white {
+  border-color: rgb(226 232 240 / 0.9);
+  box-shadow: 0 4px 18px rgb(15 23 42 / 0.04);
+}
+
+main table thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f8fafc;
+}
+
+main table tbody tr {
+  transition: background-color 180ms ease;
+}
+
+main table tbody tr:nth-child(even) {
+  background: rgb(248 250 252 / 0.5);
+}
+
+main table tbody tr:hover {
+  background: rgb(240 253 250 / 0.85);
+}
+
+.page-enter {
+  animation: page-enter 220ms ease-out both;
+}
+
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

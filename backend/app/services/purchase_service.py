@@ -19,6 +19,7 @@ from app.models.category import Category
 from app.models.enums import PricingType, PurchaseStatus, StockMovementType
 from app.models.product import Product
 from app.models.product_inventory import ProductInventory
+from app.models.subcategory import SubCategory
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.stock_history import StockHistory
@@ -140,7 +141,7 @@ class PurchaseService:
         for item in extracted_invoice.items:
             matched = self._match_product(item.brand, item.category, item.product_name, item.size, item.color)
             category = self._find_category(item.category)
-            brand = self._find_brand(item.brand)
+            brand = self._find_brand(category.id, item.brand) if category else None
             review_items.append(
                 PurchaseItemReview(
                     product_id=matched.id if matched else None,
@@ -211,16 +212,20 @@ class PurchaseService:
                 return product
 
         category = self.db.get(Category, item.category_id) if item.category_id else self._get_or_create_category(item.category_name)
-        brand = self.db.get(Brand, item.brand_id) if item.brand_id else self._get_or_create_brand(item.brand_name)
+        brand = self.db.get(Brand, item.brand_id) if item.brand_id else self._get_or_create_brand(category.id if category else None, item.brand_name)
         if not category or not brand:
             raise bad_request(f"Category and brand are required for new product: {item.product_name}")
+        if brand.category_id != category.id:
+            raise bad_request(f"Brand does not belong to category for new product: {item.product_name}")
+        subcategory = self._get_or_create_default_subcategory(category.id)
 
-        duplicate = self.product_repo.get_duplicate(category.id, brand.id, item.product_name, item.size, item.color)
+        duplicate = self.product_repo.get_duplicate(category.id, subcategory.id, brand.id, item.product_name, item.size, item.color)
         if duplicate:
             return duplicate
 
         product = Product(
             category_id=category.id,
+            subcategory_id=subcategory.id,
             brand_id=brand.id,
             name=item.product_name,
             size=item.size,
@@ -270,10 +275,10 @@ class PurchaseService:
             return None
         return self.db.query(Category).filter(func.lower(Category.name) == name.strip().lower()).first()
 
-    def _find_brand(self, name: Optional[str]) -> Optional[Brand]:
-        if not name:
+    def _find_brand(self, category_id: UUID, name: Optional[str]) -> Optional[Brand]:
+        if not category_id or not name:
             return None
-        return self.db.query(Brand).filter(func.lower(Brand.name) == name.strip().lower()).first()
+        return self.db.query(Brand).filter(Brand.category_id == category_id, func.lower(Brand.name) == name.strip().lower()).first()
 
     def _get_or_create_category(self, name: Optional[str]) -> Optional[Category]:
         if not name:
@@ -286,16 +291,29 @@ class PurchaseService:
         self.db.flush()
         return category
 
-    def _get_or_create_brand(self, name: Optional[str]) -> Optional[Brand]:
-        if not name:
+    def _get_or_create_brand(self, category_id: Optional[UUID], name: Optional[str]) -> Optional[Brand]:
+        if not category_id or not name:
             return None
-        brand = self._find_brand(name)
+        brand = self._find_brand(category_id, name)
         if brand:
             return brand
-        brand = Brand(name=name.strip(), description="Created from invoice extraction")
+        brand = Brand(category_id=category_id, name=name.strip(), description="Created from invoice extraction")
         self.db.add(brand)
         self.db.flush()
         return brand
+
+    def _get_or_create_default_subcategory(self, category_id: UUID) -> SubCategory:
+        subcategory = (
+            self.db.query(SubCategory)
+            .filter(SubCategory.category_id == category_id, func.lower(SubCategory.name) == "general")
+            .first()
+        )
+        if subcategory:
+            return subcategory
+        subcategory = SubCategory(category_id=category_id, name="General", description="Default product group")
+        self.db.add(subcategory)
+        self.db.flush()
+        return subcategory
 
     def _get_or_create_supplier(self, name: Optional[str]) -> Optional[Supplier]:
         if not name:
