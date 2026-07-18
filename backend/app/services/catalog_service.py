@@ -4,7 +4,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import conflict, not_found
+from app.core.exceptions import bad_request, conflict, not_found
 from app.models.brand import Brand
 from app.models.category import Category
 from app.repositories.catalog import BrandRepository, CategoryRepository
@@ -50,6 +50,8 @@ class CategoryService:
 
     def delete(self, category_id: UUID) -> None:
         category = self.get(category_id)
+        if self.repo.product_count(category_id) > 0:
+            raise bad_request("Category is used by products and cannot be deleted")
         self.repo.delete(category)
         self.db.commit()
 
@@ -92,5 +94,7 @@ class BrandService:
 
     def delete(self, brand_id: UUID) -> None:
         brand = self.get(brand_id)
+        if self.repo.product_count(brand_id) > 0:
+            raise bad_request("Brand is used by products and cannot be deleted")
         self.repo.delete(brand)
         self.db.commit()

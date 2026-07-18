@@ -30,6 +30,12 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+function handleUnauthorized(status: number): void {
+  if (status !== 401 || !getToken()) return;
+  clearToken();
+  window.dispatchEvent(new Event("rainbow:unauthorized"));
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   const token = getToken();
@@ -38,6 +44,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
   if (!response.ok) {
+    handleUnauthorized(response.status);
     const error = await response.json().catch(() => ({ detail: "Request failed" }));
     const detail = error.detail;
     if (typeof detail === "string") {
@@ -58,6 +65,24 @@ async function requestBlob(path: string): Promise<Blob> {
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await fetch(`${API_BASE_URL}${path}`, { headers });
   if (!response.ok) {
+    handleUnauthorized(response.status);
+    const error = await response.json().catch(() => ({ detail: "Request failed" }));
+    const detail = error.detail;
+    if (typeof detail === "string") throw new ApiError(detail, response.status);
+    if (detail && typeof detail === "object") throw new ApiError(detail.message ?? "Request failed", response.status, detail.code, detail.fields);
+    throw new ApiError("Request failed", response.status);
+  }
+  return response.blob();
+}
+
+async function requestBlobWithBody(path: string, body: unknown): Promise<Blob> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  headers.set("Content-Type", "application/json");
+  const response = await fetch(`${API_BASE_URL}${path}`, { method: "POST", headers, body: JSON.stringify(body ?? {}) });
+  if (!response.ok) {
+    handleUnauthorized(response.status);
     const error = await response.json().catch(() => ({ detail: "Request failed" }));
     const detail = error.detail;
     if (typeof detail === "string") throw new ApiError(detail, response.status);
@@ -77,6 +102,7 @@ export const api = {
   logout: () => request<{ message: string }>("/auth/logout", { method: "POST" }),
   get: <T>(path: string) => request<T>(path),
   getBlob: (path: string) => requestBlob(path),
+  postBlob: (path: string, body?: unknown) => requestBlobWithBody(path, body),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "POST", body: body instanceof FormData ? body : JSON.stringify(body ?? {}) }),
   put: <T>(path: string, body: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(body) }),

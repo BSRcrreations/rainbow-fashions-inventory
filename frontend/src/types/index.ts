@@ -40,6 +40,7 @@ export interface Product {
   id: string;
   category_id: string;
   brand_id: string;
+  sku?: string | null;
   name: string;
   size: string;
   color: string;
@@ -54,6 +55,16 @@ export interface Product {
   is_active: boolean;
   category?: Category | null;
   brand?: Brand | null;
+}
+
+export interface PaginatedProducts {
+  items: Product[];
+  meta: {
+    page: number;
+    page_size: number;
+    total_records: number;
+    total_pages: number;
+  };
 }
 
 export interface PurchaseItem {
@@ -114,6 +125,11 @@ export interface DashboardSummary {
   }>;
   recent_purchases: Purchase[];
   recent_stock_changes: StockHistory[];
+  latest_products: Product[];
+  stock_distribution: Array<{ label: string; value: number }>;
+  category_distribution: Array<{ label: string; value: number }>;
+  brand_distribution: Array<{ label: string; value: number }>;
+  top_selling_products: Array<{ label: string; value: number }>;
 }
 
 export interface PurchaseUploadResponse {

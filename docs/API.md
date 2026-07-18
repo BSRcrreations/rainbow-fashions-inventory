@@ -44,19 +44,83 @@ Validation:
 
 Products:
 
-- `GET /products?search=...&category_id=...&brand_id=...&is_active=true&low_stock=true`
+- `GET /products?search=...&category_id=...&brand_id=...&is_active=true`
+- `GET /products?paginated=true&page=1&page_size=25&search=...&stock_status=low&min_price=100&max_price=1000&created_from=2026-01-01&created_to=2026-12-31&sort_by=name&sort_dir=asc`
+- `GET /products/generate-code?kind=sku`
+- `GET /products/generate-code?kind=barcode`
+- `GET /products/export?format=csv`
+- `GET /products/export?format=xlsx`
+- `GET /products/import-template`
+- `POST /products/import`
 - `POST /products`
 - `GET /products/{product_id}`
 - `PUT /products/{product_id}`
 - `POST /products/{product_id}/image`
+- `DELETE /products/{product_id}/image`
 - `DELETE /products/{product_id}`
+- `POST /products/bulk/delete`
+- `POST /products/bulk/category`
+- `POST /products/bulk/brand`
+- `POST /products/bulk/stock`
+- `POST /products/bulk/export?format=csv`
+
+Pagination response when `paginated=true`:
+
+```json
+{
+  "items": [],
+  "meta": {
+    "page": 1,
+    "page_size": 25,
+    "total_records": 0,
+    "total_pages": 1
+  }
+}
+```
+
+Supported product filters:
+
+- `search`: SKU, barcode, product name, brand, category, size, or color.
+- `category_id`
+- `brand_id`
+- `is_active`
+- `stock_status`: `in`, `low`, or `out`.
+- `min_price`
+- `max_price`
+- `created_from`
+- `created_to`
+
+Supported product sorting:
+
+- `name`
+- `sku`
+- `selling_price`
+- `purchase_price`
+- `stock`
+- `created_at`
+- `updated_at`
 
 Validation:
 
+- Duplicate SKU returns `409`.
 - Duplicate barcode returns `409`.
 - Duplicate category/brand/name/size/color variant returns `409`.
 - Negative price, cost, quantity, or minimum stock returns `422`.
 - MRP pricing requires an MRP value.
+
+Image rules:
+
+- Product images accept `jpg`, `jpeg`, `png`, and `webp`.
+- Maximum product image size is 5 MB.
+- Images are stored with generated filenames.
+- Products store a relative `image_url`, for example `/uploads/products/{filename}.webp`.
+
+Import/export:
+
+- CSV import/export is supported.
+- XLSX import/export is supported when `openpyxl` is installed.
+- Invalid import rows are skipped and returned in an error report.
+- Import expects existing brand and category names.
 
 Purchases:
 
@@ -80,6 +144,8 @@ Validation:
 Dashboard:
 
 - `GET /dashboard/summary`
+
+Dashboard summary includes core inventory cards, low stock products, latest products, recent stock movements, stock distribution, category distribution, brand distribution, and a top-selling products placeholder.
 
 FastAPI also serves interactive OpenAPI docs at `/docs` and raw OpenAPI JSON at `/api/v1/openapi.json`.
 

@@ -69,6 +69,7 @@ CREATE TABLE products (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     category_id UUID NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
     brand_id UUID NOT NULL REFERENCES brands(id) ON DELETE RESTRICT,
+    sku VARCHAR(80),
     name VARCHAR(180) NOT NULL,
     size VARCHAR(60) NOT NULL,
     color VARCHAR(80) NOT NULL,
@@ -92,6 +93,7 @@ CREATE TABLE products (
         pricing_type <> 'MRP' OR mrp IS NOT NULL
     ),
     CONSTRAINT uq_products_variant UNIQUE (category_id, brand_id, name, size, color),
+    CONSTRAINT uq_products_sku UNIQUE (sku),
     CONSTRAINT uq_products_barcode UNIQUE (barcode)
 );
 
@@ -198,12 +200,13 @@ CREATE INDEX ix_brands_name ON brands(name);
 CREATE INDEX ix_suppliers_name ON suppliers(name);
 CREATE INDEX ix_products_category_id ON products(category_id);
 CREATE INDEX ix_products_brand_id ON products(brand_id);
+CREATE INDEX ix_products_sku ON products(sku);
 CREATE INDEX ix_products_name ON products(name);
 CREATE INDEX ix_products_color ON products(color);
 CREATE INDEX ix_products_size ON products(size);
 CREATE INDEX ix_products_barcode ON products(barcode);
 CREATE INDEX ix_products_search ON products USING gin (
-    to_tsvector('simple', coalesce(name, '') || ' ' || coalesce(size, '') || ' ' || coalesce(color, '') || ' ' || coalesce(barcode, ''))
+    to_tsvector('simple', coalesce(sku, '') || ' ' || coalesce(name, '') || ' ' || coalesce(size, '') || ' ' || coalesce(color, '') || ' ' || coalesce(barcode, ''))
 );
 CREATE INDEX ix_product_inventory_store_id ON product_inventory(store_id);
 CREATE INDEX ix_uploaded_files_uploaded_by ON uploaded_files(uploaded_by);

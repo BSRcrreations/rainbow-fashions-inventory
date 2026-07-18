@@ -44,40 +44,42 @@ export default function AppLayout() {
       <div className="lg:pl-64">
         <header className="sticky top-0 z-10 border-b border-line bg-white/95 px-4 py-3 backdrop-blur lg:px-8">
           <div className="flex items-center justify-between gap-4">
-            <div>
-              <div className="text-sm font-semibold text-slate-900">{user?.full_name}</div>
-              <div className="text-xs text-slate-500">{user?.email}</div>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-slate-900 lg:hidden">Rainbow fashions</div>
+              <div className="hidden text-sm font-semibold text-slate-900 lg:block">{user?.full_name}</div>
+              <div className="truncate text-xs text-slate-500">{user?.email}</div>
             </div>
             <button
               type="button"
               onClick={logout}
               className="focus-ring inline-flex h-9 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm text-slate-700 hover:bg-slate-50"
               title="Logout"
+              aria-label="Logout"
             >
               <LogOut size={16} />
-              Logout
+              <span className="hidden sm:inline">Logout</span>
             </button>
           </div>
-          <nav className="mt-3 flex gap-2 overflow-x-auto lg:hidden">
-            {navItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  `whitespace-nowrap rounded-md px-3 py-2 text-xs font-medium ${
-                    isActive ? "bg-teal-700 text-white" : "bg-slate-100 text-slate-700"
-                  }`
-                }
-              >
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
         </header>
-        <main className="px-4 py-6 lg:px-8">
+        <main className="px-4 py-5 pb-24 lg:px-8 lg:py-6 lg:pb-8">
           <Outlet />
         </main>
       </div>
+      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-6 border-t border-line bg-white/95 px-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 shadow-[0_-4px_16px_rgba(15,23,42,0.06)] backdrop-blur lg:hidden">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) => `flex min-w-0 flex-col items-center gap-1 rounded-md px-1 py-2 text-[10px] font-medium ${isActive ? "bg-teal-50 text-teal-800" : "text-slate-500"}`}
+            >
+              <Icon size={18} />
+              <span className="max-w-full truncate">{item.label}</span>
+            </NavLink>
+          );
+        })}
+      </nav>
     </div>
   );
 }

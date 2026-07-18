@@ -5,6 +5,8 @@ from decimal import Decimal
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
+from app.models.brand import Brand
+from app.models.category import Category
 from app.models.product import Product
 from app.models.purchase import Purchase
 from app.models.stock_history import StockHistory
@@ -40,6 +42,37 @@ class DashboardService:
             .limit(10)
             .all()
         )
+        latest_products = (
+            self.db.query(Product)
+            .options(joinedload(Product.brand), joinedload(Product.category))
+            .order_by(Product.created_at.desc())
+            .limit(5)
+            .all()
+        )
+        out_of_stock = self.db.query(func.count(Product.id)).filter(Product.current_stock == 0).scalar() or 0
+        low_stock = (
+            self.db.query(func.count(Product.id))
+            .filter(Product.current_stock > 0, Product.current_stock <= Product.minimum_stock)
+            .scalar()
+            or 0
+        )
+        in_stock = self.db.query(func.count(Product.id)).filter(Product.current_stock > Product.minimum_stock).scalar() or 0
+        category_distribution = (
+            self.db.query(Category.name, func.count(Product.id))
+            .join(Product, Product.category_id == Category.id)
+            .group_by(Category.name)
+            .order_by(func.count(Product.id).desc())
+            .limit(8)
+            .all()
+        )
+        brand_distribution = (
+            self.db.query(Brand.name, func.count(Product.id))
+            .join(Product, Product.brand_id == Brand.id)
+            .group_by(Brand.name)
+            .order_by(func.count(Product.id).desc())
+            .limit(8)
+            .all()
+        )
 
         return DashboardSummary(
             total_products=total_products,
@@ -61,4 +94,13 @@ class DashboardService:
             ],
             recent_purchases=recent_purchases,
             recent_stock_changes=recent_stock_changes,
+            latest_products=latest_products,
+            stock_distribution=[
+                {"label": "In stock", "value": in_stock},
+                {"label": "Low stock", "value": low_stock},
+                {"label": "Out of stock", "value": out_of_stock},
+            ],
+            category_distribution=[{"label": name, "value": count} for name, count in category_distribution],
+            brand_distribution=[{"label": name, "value": count} for name, count in brand_distribution],
+            top_selling_products=[],
         )

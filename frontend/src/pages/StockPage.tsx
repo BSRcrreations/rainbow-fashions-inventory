@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Download, History, SlidersHorizontal } from "lucide-react";
 import { api } from "../api/client";
 import EmptyState from "../components/EmptyState";
@@ -28,19 +28,19 @@ export default function StockPage() {
 
   const filtered = useMemo(() => Boolean(filterProductId || movementFilter), [filterProductId, movementFilter]);
 
-  function historyQuery() {
+  function historyQuery(productFilter: string, movementType: string) {
     const params = new URLSearchParams();
-    if (filterProductId) params.set("product_id", filterProductId);
-    if (movementFilter) params.set("movement_type", movementFilter);
+    if (productFilter) params.set("product_id", productFilter);
+    if (movementType) params.set("movement_type", movementType);
     const query = params.toString();
     return query ? `?${query}` : "";
   }
 
-  async function load() {
+  const load = useCallback(async (productFilter: string, movementType: string) => {
     setError("");
     try {
       const [historyData, productData] = await Promise.all([
-        api.get<StockHistory[]>(`/stock/history${historyQuery()}`),
+        api.get<StockHistory[]>(`/stock/history${historyQuery(productFilter, movementType)}`),
         api.get<Product[]>("/products"),
       ]);
       setHistory(historyData);
@@ -50,11 +50,11 @@ export default function StockPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    void load();
-  }, []);
+    void load("", "");
+  }, [load]);
 
   function validateAdjustment() {
     if (!productId) return "Product is required";
@@ -78,7 +78,7 @@ export default function StockPage() {
       await api.post<StockHistory>("/stock/adjustments", { product_id: productId, direction, qty: Number(qty), reference: reference.trim() || null });
       setReference("");
       toast.success("Stock adjusted");
-      await load();
+      await load(filterProductId, movementFilter);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Stock adjustment failed";
       setError(message);
@@ -92,7 +92,7 @@ export default function StockPage() {
     setExporting(true);
     setError("");
     try {
-      const blob = await api.getBlob(`/stock/history/export${historyQuery()}`);
+      const blob = await api.getBlob(`/stock/history/export${historyQuery(filterProductId, movementFilter)}`);
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -144,7 +144,7 @@ export default function StockPage() {
           <option value="">All movement types</option>
           {(["PURCHASE", "SALE", "ADJUSTMENT"] satisfies StockMovementType[]).map((type) => <option key={type} value={type}>{type}</option>)}
         </select>
-        <Button type="button" variant="secondary" onClick={() => void load()}>Apply filters</Button>
+        <Button type="button" variant="secondary" onClick={() => void load(filterProductId, movementFilter)}>Apply filters</Button>
       </div>
       {error ? <div className="mb-4"><ErrorState message={error} /></div> : null}
       {loading ? (

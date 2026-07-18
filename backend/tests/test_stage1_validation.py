@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.schemas.brand import BrandCreate
 from app.schemas.category import CategoryCreate
+from app.schemas.dashboard import DistributionItem
 from app.schemas.product import ProductCreate
 from app.services.catalog_service import BrandService, CategoryService
 
@@ -48,6 +49,12 @@ class FakeCatalogRepo:
 
 
 class Stage1ValidationTests(unittest.TestCase):
+    def test_dashboard_distribution_accepts_text_label(self) -> None:
+        item = DistributionItem(label="In stock", value=5)
+
+        self.assertEqual(item.label, "In stock")
+        self.assertEqual(item.value, 5)
+
     def test_empty_category_name_is_rejected(self) -> None:
         with self.assertRaises(ValidationError):
             CategoryCreate(name="  ", is_active=True)

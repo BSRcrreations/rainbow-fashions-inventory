@@ -49,3 +49,51 @@ class FileService:
         self.db.flush()
         self.db.refresh(uploaded_file)
         return uploaded_file
+
+    async def save_product_image(self, file: UploadFile, uploaded_by: Optional[UUID]) -> UploadedFile:
+        if file.content_type not in self.settings.allowed_product_image_content_types:
+            raise bad_request("Only JPG, PNG, and WEBP product images are allowed")
+
+        content = await file.read()
+        if not content:
+            raise bad_request("Uploaded image is empty")
+        if len(content) > self.settings.max_product_image_size_bytes:
+            raise bad_request(f"Product image exceeds {self.settings.max_product_image_size_mb} MB")
+
+        extension = Path(file.filename or "product").suffix.lower()
+        allowed_extensions = {".jpg", ".jpeg", ".png", ".webp"}
+        if extension not in allowed_extensions:
+            raise bad_request("Product image filename must end with jpg, jpeg, png, or webp")
+
+        upload_dir = self.settings.product_upload_dir
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        stored_filename = f"{uuid4()}{extension}"
+        storage_path = upload_dir / stored_filename
+        storage_path.write_bytes(content)
+
+        uploaded_file = UploadedFile(
+            file_type=UploadFileType.PRODUCT_IMAGE,
+            original_filename=Path(file.filename or stored_filename).name,
+            stored_filename=stored_filename,
+            content_type=file.content_type or "application/octet-stream",
+            file_size_bytes=len(content),
+            storage_path=str(storage_path),
+            uploaded_by=uploaded_by,
+        )
+        self.db.add(uploaded_file)
+        self.db.flush()
+        self.db.refresh(uploaded_file)
+        return uploaded_file
+
+    def delete_product_image_path(self, image_url: Optional[str]) -> None:
+        if not image_url:
+            return
+        filename = Path(image_url).name
+        if not filename:
+            return
+        upload_dir = self.settings.product_upload_dir.resolve()
+        target = (upload_dir / filename).resolve()
+        if upload_dir not in target.parents and target != upload_dir:
+            raise bad_request("Invalid product image path")
+        if target.exists() and target.is_file():
+            target.unlink()

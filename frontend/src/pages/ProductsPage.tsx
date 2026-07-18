@@ -1,19 +1,28 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Edit3, ImagePlus, PackageOpen, Plus, Search, Trash2 } from "lucide-react";
+import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronLeft, ChevronRight, Download, Edit3, FileDown, FileUp, Filter, ImagePlus, PackageOpen, Plus, RefreshCw, Search, Trash2, Wand2, X } from "lucide-react";
 import { api } from "../api/client";
 import ConfirmDialog from "../components/ConfirmDialog";
+import Dialog from "../components/Dialog";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
+import HighlightText from "../components/HighlightText";
 import { SkeletonRows } from "../components/LoadingState";
 import PageHeader from "../components/PageHeader";
 import { useToast } from "../components/ToastProvider";
 import { Button } from "../components/ui/button";
-import type { Brand, Category, PricingType, Product } from "../types";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import type { Brand, Category, PaginatedProducts, PricingType, Product } from "../types";
 import { money } from "../utils/format";
+
+type SortBy = "name" | "sku" | "selling_price" | "purchase_price" | "stock" | "created_at" | "updated_at";
+type SortDir = "asc" | "desc";
+type StockStatus = "" | "low" | "out" | "in";
 
 interface ProductFormState {
   category_id: string;
   brand_id: string;
+  sku: string;
   name: string;
   size: string;
   color: string;
@@ -30,6 +39,7 @@ interface ProductFormState {
 const emptyForm: ProductFormState = {
   category_id: "",
   brand_id: "",
+  sku: "",
   name: "",
   size: "",
   color: "",
@@ -47,6 +57,7 @@ function formFromProduct(product: Product): ProductFormState {
   return {
     category_id: product.category_id,
     brand_id: product.brand_id,
+    sku: product.sku ?? "",
     name: product.name,
     size: product.size,
     color: product.color,
@@ -67,63 +78,169 @@ function imageSrc(imageUrl?: string | null) {
   return `${window.location.protocol}//${window.location.hostname}:8000${imageUrl}`;
 }
 
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function ProductsPage() {
   const toast = useToast();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [brands, setBrands] = useState<Brand[]>([]);
+  const queryClient = useQueryClient();
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [brandFilter, setBrandFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [lowStockOnly, setLowStockOnly] = useState(false);
+  const [stockStatus, setStockStatus] = useState<StockStatus>("");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [createdFrom, setCreatedFrom] = useState("");
+  const [createdTo, setCreatedTo] = useState("");
+  const [sortBy, setSortBy] = useState<SortBy>("created_at");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [form, setForm] = useState<ProductFormState>(emptyForm);
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState("");
   const [editing, setEditing] = useState<Product | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [pending, setPending] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkCategory, setBulkCategory] = useState("");
+  const [bulkBrand, setBulkBrand] = useState("");
+  const [bulkQty, setBulkQty] = useState("1");
+  const [bulkDirection, setBulkDirection] = useState<"INCREASE" | "DECREASE">("INCREASE");
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [error, setError] = useState("");
 
-  const hasProducts = products.length > 0;
-  const isFiltered = useMemo(
-    () => Boolean(search.trim() || categoryFilter || brandFilter || statusFilter !== "all" || lowStockOnly),
-    [brandFilter, categoryFilter, lowStockOnly, search, statusFilter]
-  );
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, categoryFilter, brandFilter, statusFilter, stockStatus, minPrice, maxPrice, createdFrom, createdTo, sortBy, sortDir, pageSize]);
 
-  function buildQuery(query = search) {
-    const params = new URLSearchParams();
-    if (query.trim()) params.set("search", query.trim());
-    if (categoryFilter) params.set("category_id", categoryFilter);
-    if (brandFilter) params.set("brand_id", brandFilter);
-    if (statusFilter !== "all") params.set("is_active", String(statusFilter === "active"));
-    if (lowStockOnly) params.set("low_stock", "true");
-    const queryString = params.toString();
-    return queryString ? `?${queryString}` : "";
+  useEffect(() => {
+    if (!imageFile) {
+      setImagePreview("");
+      return;
+    }
+    const url = URL.createObjectURL(imageFile);
+    setImagePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [imageFile]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTyping = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.tagName === "SELECT";
+      if (event.key === "/" && !isTyping) {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+      }
+      if (event.key.toLowerCase() === "n" && !isTyping && !formOpen) {
+        event.preventDefault();
+        beginCreate();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [formOpen]);
+
+  const productsQueryKey = [
+    "products",
+    debouncedSearch,
+    categoryFilter,
+    brandFilter,
+    statusFilter,
+    stockStatus,
+    minPrice,
+    maxPrice,
+    createdFrom,
+    createdTo,
+    sortBy,
+    sortDir,
+    page,
+    pageSize,
+  ];
+
+  const productsQuery = useQuery({
+    queryKey: productsQueryKey,
+    queryFn: async () => {
+      const params = new URLSearchParams({ paginated: "true", page: String(page), page_size: String(pageSize), sort_by: sortBy, sort_dir: sortDir });
+      if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+      if (categoryFilter) params.set("category_id", categoryFilter);
+      if (brandFilter) params.set("brand_id", brandFilter);
+      if (statusFilter !== "all") params.set("is_active", String(statusFilter === "active"));
+      if (stockStatus) params.set("stock_status", stockStatus);
+      if (minPrice) params.set("min_price", minPrice);
+      if (maxPrice) params.set("max_price", maxPrice);
+      if (createdFrom) params.set("created_from", createdFrom);
+      if (createdTo) params.set("created_to", createdTo);
+      return api.get<PaginatedProducts>(`/products?${params.toString()}`);
+    },
+  });
+
+  const categoriesQuery = useQuery({ queryKey: ["categories"], queryFn: () => api.get<Category[]>("/categories") });
+  const brandsQuery = useQuery({ queryKey: ["brands"], queryFn: () => api.get<Brand[]>("/brands") });
+
+  const products = productsQuery.data?.items ?? [];
+  const meta = productsQuery.data?.meta;
+  const categories = categoriesQuery.data ?? [];
+  const brands = brandsQuery.data ?? [];
+  const selectedCount = selectedIds.size;
+  const isFiltered = Boolean(debouncedSearch.trim() || categoryFilter || brandFilter || statusFilter !== "all" || stockStatus || minPrice || maxPrice || createdFrom || createdTo);
+
+  function invalidateProducts() {
+    void queryClient.invalidateQueries({ queryKey: ["products"] });
   }
 
-  async function load(query = search) {
-    setError("");
+  function validateImage(file: File) {
+    const allowed = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowed.includes(file.type)) return "Only JPG, PNG, and WEBP images are allowed";
+    if (file.size > 5 * 1024 * 1024) return "Image must be 5MB or smaller";
+    return "";
+  }
+
+  async function compressImage(file: File): Promise<File> {
+    if (file.size < 1024 * 1024) return file;
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const context = canvas.getContext("2d");
+    if (!context) return file;
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.82));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], `${file.name.replace(/\.[^.]+$/, "")}.webp`, { type: "image/webp" });
+  }
+
+  async function chooseImage(file: File | null) {
+    if (!file) return;
+    const validationError = validateImage(file);
+    if (validationError) {
+      setError(validationError);
+      toast.error(validationError);
+      return;
+    }
     try {
-      const [productData, categoryData, brandData] = await Promise.all([
-        api.get<Product[]>(`/products${buildQuery(query)}`),
-        api.get<Category[]>("/categories"),
-        api.get<Brand[]>("/brands"),
-      ]);
-      setProducts(productData);
-      setCategories(categoryData);
-      setBrands(brandData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load products");
-    } finally {
-      setLoading(false);
+      setImageFile(await compressImage(file));
+    } catch {
+      setImageFile(file);
     }
   }
 
-  useEffect(() => {
-    void load("");
-  }, []);
+  function handleDrop(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    void chooseImage(event.dataTransfer.files[0] ?? null);
+  }
 
   function validateForm() {
     const requiredFields: Array<[Exclude<keyof ProductFormState, "is_active">, string]> = [
@@ -154,6 +271,7 @@ export default function ProductsPage() {
   function payload() {
     return {
       ...form,
+      sku: form.sku.trim() || null,
       name: form.name.trim(),
       size: form.size.trim(),
       color: form.color.trim(),
@@ -167,68 +285,67 @@ export default function ProductsPage() {
     };
   }
 
-  async function uploadImage(productId: string) {
-    if (!imageFile) return;
-    const body = new FormData();
-    body.append("file", imageFile);
-    await api.post<Product>(`/products/${productId}/image`, body);
-  }
-
-  async function save(event: FormEvent) {
-    event.preventDefault();
-    const validationError = validateForm();
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-    setPending(true);
-    setError("");
-    try {
-      if (editing) {
-        const updated = await api.put<Product>(`/products/${editing.id}`, payload());
-        await uploadImage(updated.id);
-        toast.success("Product updated");
-      } else {
-        const created = await api.post<Product>("/products", payload());
-        await uploadImage(created.id);
-        toast.success("Product added");
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const validationError = validateForm();
+      if (validationError) throw new Error(validationError);
+      const product = editing ? await api.put<Product>(`/products/${editing.id}`, payload()) : await api.post<Product>("/products", payload());
+      if (imageFile) {
+        const body = new FormData();
+        body.append("file", imageFile);
+        await api.post<Product>(`/products/${product.id}/image`, body);
       }
+    },
+    onSuccess: () => {
+      toast.success(editing ? "Product updated" : "Product added");
       setForm(emptyForm);
       setEditing(null);
+      setFormOpen(false);
       setImageFile(null);
-      await load();
-    } catch (err) {
+      setError("");
+      invalidateProducts();
+    },
+    onError: (err) => {
       const message = err instanceof Error ? err.message : "Unable to save product";
       setError(message);
       toast.error(message);
-    } finally {
-      setPending(false);
-    }
-  }
+    },
+  });
 
-  async function remove() {
-    if (!deleteTarget) return;
-    setDeleting(true);
-    setError("");
-    try {
-      await api.delete(`/products/${deleteTarget.id}`);
+  const deleteMutation = useMutation({
+    mutationFn: (productId: string) => api.delete(`/products/${productId}`),
+    onSuccess: () => {
       toast.success("Product deleted");
       setDeleteTarget(null);
-      await load();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to delete product";
-      setError(message);
-      toast.error(message);
-    } finally {
-      setDeleting(false);
-    }
-  }
+      invalidateProducts();
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Unable to delete product"),
+  });
+
+  const deleteImageMutation = useMutation({
+    mutationFn: (productId: string) => api.delete(`/products/${productId}/image`),
+    onSuccess: () => {
+      toast.success("Image deleted");
+      invalidateProducts();
+      if (editing) setEditing({ ...editing, image_url: null });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Unable to delete image"),
+  });
 
   function beginEdit(product: Product) {
     setEditing(product);
     setForm(formFromProduct(product));
     setImageFile(null);
     setError("");
+    setFormOpen(true);
+  }
+
+  function beginCreate() {
+    setEditing(null);
+    setForm(emptyForm);
+    setImageFile(null);
+    setError("");
+    setFormOpen(true);
   }
 
   function cancelEdit() {
@@ -236,118 +353,366 @@ export default function ProductsPage() {
     setForm(emptyForm);
     setImageFile(null);
     setError("");
+    setFormOpen(false);
+  }
+
+  async function generateCode(kind: "sku" | "barcode") {
+    try {
+      const response = await api.get<{ value: string }>(`/products/generate-code?kind=${kind}`);
+      setForm((current) => ({ ...current, [kind]: response.value }));
+      toast.success(`${kind.toUpperCase()} generated`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : `Unable to generate ${kind}`);
+    }
+  }
+
+  async function exportProducts(format: "csv" | "xlsx", selected = false) {
+    try {
+      const blob = selected
+        ? await api.postBlob(`/products/bulk/export?format=${format}`, { product_ids: Array.from(selectedIds) })
+        : await api.getBlob(`/products/export?format=${format}`);
+      downloadBlob(blob, selected ? `selected-products.${format}` : `products.${format}`);
+      toast.success("Export downloaded");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to export products");
+    }
+  }
+
+  async function downloadTemplate() {
+    try {
+      downloadBlob(await api.getBlob("/products/import-template"), "product-import-template.csv");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to download template");
+    }
+  }
+
+  async function importFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const body = new FormData();
+    body.append("file", file);
+    try {
+      const response = await api.post<{ created: number; updated: number; skipped: number; errors: Array<{ row: string; message: string }> }>("/products/import", body);
+      toast.success(`Import complete: ${response.created} created, ${response.updated} updated, ${response.skipped} skipped`);
+      if (response.errors.length) setError(response.errors.map((item) => `Row ${item.row}: ${item.message}`).join(" | "));
+      invalidateProducts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  async function runBulk(action: "category" | "brand" | "stock" | "delete") {
+    const product_ids = Array.from(selectedIds);
+    if (!product_ids.length) return;
+    try {
+      if (action === "delete") await api.post("/products/bulk/delete", { product_ids });
+      if (action === "category") await api.post("/products/bulk/category", { product_ids, category_id: bulkCategory });
+      if (action === "brand") await api.post("/products/bulk/brand", { product_ids, brand_id: bulkBrand });
+      if (action === "stock") await api.post("/products/bulk/stock", { product_ids, direction: bulkDirection, qty: Number(bulkQty), reference: "Bulk update from products page" });
+      toast.success("Bulk operation completed");
+      setSelectedIds(new Set());
+      setBulkDeleteOpen(false);
+      invalidateProducts();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Bulk operation failed");
+    }
+  }
+
+  function toggleSelected(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllVisible() {
+    setSelectedIds((current) => {
+      const visibleIds = products.map((product) => product.id);
+      const allSelected = visibleIds.length > 0 && visibleIds.every((id) => current.has(id));
+      const next = new Set(current);
+      visibleIds.forEach((id) => {
+        if (allSelected) next.delete(id);
+        else next.add(id);
+      });
+      return next;
+    });
+  }
+
+  const currentRange = useMemo(() => {
+    if (!meta || meta.total_records === 0) return "0 records";
+    const start = (meta.page - 1) * meta.page_size + 1;
+    const end = Math.min(meta.page * meta.page_size, meta.total_records);
+    return `${start}-${end} of ${meta.total_records}`;
+  }, [meta]);
+
+  function clearFilters() {
+    setSearch("");
+    setCategoryFilter("");
+    setBrandFilter("");
+    setStatusFilter("all");
+    setStockStatus("");
+    setMinPrice("");
+    setMaxPrice("");
+    setCreatedFrom("");
+    setCreatedTo("");
   }
 
   return (
     <>
-      <PageHeader title="Products" subtitle="Search, variants, prices, and stock" />
-      <div className="mb-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto]">
-        <div className="flex h-10 min-w-0 items-center rounded-md border border-line bg-white px-3">
+      <PageHeader
+        title="Products"
+        subtitle={`${meta?.total_records ?? 0} products in your inventory`}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" size="sm" onClick={downloadTemplate} title="Download import template"><FileDown size={16} /> Template</Button>
+            <label className="focus-ring inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+              <FileUp size={16} /> Import
+              <input className="hidden" type="file" accept=".csv,.xlsx" onChange={(event) => void importFile(event)} />
+            </label>
+            <Button type="button" variant="secondary" size="sm" onClick={() => void exportProducts("xlsx")} title="Export products"><Download size={16} /> Export</Button>
+            <Button type="button" size="sm" onClick={beginCreate}><Plus size={16} /> New product</Button>
+          </div>
+        }
+      />
+
+      <div className="sticky top-[65px] z-[5] mb-4 rounded-md border border-line bg-white p-3 shadow-sm">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 sm:flex">
+          <div className="col-span-2 flex h-10 min-w-0 flex-1 items-center rounded-md border border-line bg-white px-3 sm:col-span-1">
           <Search size={16} className="shrink-0 text-slate-400" />
-          <input
-            className="focus-ring min-w-0 flex-1 border-0 px-2 outline-none"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void load(search);
-            }}
-            placeholder="Brand, category, name, color, size, barcode"
-          />
+            <input ref={searchInputRef} aria-label="Search products" className="focus-ring min-w-0 flex-1 border-0 px-2 outline-none" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search products, SKU or barcode" />
+            {search ? <button type="button" className="text-slate-400 hover:text-slate-700" onClick={() => setSearch("")} title="Clear search"><X size={16} /></button> : <span className="hidden rounded border border-line px-1.5 py-0.5 text-[11px] text-slate-400 sm:inline">/</span>}
+          </div>
+          <Button type="button" variant="secondary" onClick={() => setFiltersOpen((current) => !current)}>
+            <Filter size={16} /> Filters {isFiltered ? <span className="rounded-full bg-teal-100 px-1.5 text-xs text-teal-800">On</span> : null}
+          </Button>
+          <Button type="button" variant="ghost" size="icon" onClick={() => void productsQuery.refetch()} title="Refresh products"><RefreshCw size={16} /></Button>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          <select className="focus-ring h-10 rounded-md border border-line bg-white px-3" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+
+        {isFiltered ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            {categoryFilter ? <button type="button" className="filter-chip" onClick={() => setCategoryFilter("")}>{categories.find((item) => item.id === categoryFilter)?.name}<X size={12} /></button> : null}
+            {brandFilter ? <button type="button" className="filter-chip" onClick={() => setBrandFilter("")}>{brands.find((item) => item.id === brandFilter)?.name}<X size={12} /></button> : null}
+            {stockStatus ? <button type="button" className="filter-chip" onClick={() => setStockStatus("")}>{stockStatus === "in" ? "In stock" : stockStatus === "low" ? "Low stock" : "Out of stock"}<X size={12} /></button> : null}
+            {statusFilter !== "all" ? <button type="button" className="filter-chip" onClick={() => setStatusFilter("all")}>{statusFilter}<X size={12} /></button> : null}
+            {minPrice || maxPrice ? <button type="button" className="filter-chip" onClick={() => { setMinPrice(""); setMaxPrice(""); }}>Price {minPrice || "0"}-{maxPrice || "any"}<X size={12} /></button> : null}
+            {createdFrom || createdTo ? <button type="button" className="filter-chip" onClick={() => { setCreatedFrom(""); setCreatedTo(""); }}>Date range<X size={12} /></button> : null}
+            <button type="button" className="font-medium text-teal-700 hover:text-teal-900" onClick={clearFilters}>Clear all</button>
+          </div>
+        ) : null}
+
+        {filtersOpen ? <div className="mt-3 grid gap-3 border-t border-line pt-3 sm:grid-cols-2 xl:grid-cols-5">
+          <select className="focus-ring h-10 rounded-md border border-line px-3" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
             <option value="">All categories</option>
             {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
           </select>
-          <select className="focus-ring h-10 rounded-md border border-line bg-white px-3" value={brandFilter} onChange={(event) => setBrandFilter(event.target.value)}>
+          <select className="focus-ring h-10 rounded-md border border-line px-3" value={brandFilter} onChange={(event) => setBrandFilter(event.target.value)}>
             <option value="">All brands</option>
             {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
           </select>
-          <select className="focus-ring h-10 rounded-md border border-line bg-white px-3" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+          <select className="focus-ring h-10 rounded-md border border-line px-3" value={stockStatus} onChange={(event) => setStockStatus(event.target.value as StockStatus)}>
+            <option value="">All stock</option>
+            <option value="in">In stock</option>
+            <option value="low">Low stock</option>
+            <option value="out">Out of stock</option>
+          </select>
+          <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="Min price" type="number" min="0" value={minPrice} onChange={(event) => setMinPrice(event.target.value)} />
+          <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="Max price" type="number" min="0" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} />
+          <select className="focus-ring h-10 rounded-md border border-line px-3" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
             <option value="all">All statuses</option>
             <option value="active">Active</option>
             <option value="inactive">Inactive</option>
           </select>
-          <label className="flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm text-slate-600">
-            <input type="checkbox" checked={lowStockOnly} onChange={(event) => setLowStockOnly(event.target.checked)} />
-            Low stock
-          </label>
-          <Button type="button" onClick={() => void load(search)}>Apply</Button>
-        </div>
+          <input aria-label="Created after" className="focus-ring h-10 rounded-md border border-line px-3" type="date" value={createdFrom} onChange={(event) => setCreatedFrom(event.target.value)} />
+          <input aria-label="Created before" className="focus-ring h-10 rounded-md border border-line px-3" type="date" value={createdTo} onChange={(event) => setCreatedTo(event.target.value)} />
+          <select className="focus-ring h-10 rounded-md border border-line px-3" value={sortBy} onChange={(event) => setSortBy(event.target.value as SortBy)}>
+            <option value="created_at">Recently added</option>
+            <option value="updated_at">Recently updated</option>
+            <option value="name">Name</option>
+            <option value="sku">SKU</option>
+            <option value="selling_price">Selling price</option>
+            <option value="purchase_price">Cost price</option>
+            <option value="stock">Stock</option>
+          </select>
+          <select className="focus-ring h-10 rounded-md border border-line px-3" value={sortDir} onChange={(event) => setSortDir(event.target.value as SortDir)}>
+            <option value="asc">Ascending</option>
+            <option value="desc">Descending</option>
+          </select>
+          <Button type="button" variant="secondary" onClick={clearFilters}>Clear filters</Button>
+        </div> : null}
       </div>
 
-      <form onSubmit={save} className="mb-5 grid gap-3 rounded-md border border-line bg-white p-4 md:grid-cols-2 xl:grid-cols-4">
-        <select className="focus-ring h-10 rounded-md border border-line px-3" value={form.category_id} onChange={(event) => setForm({ ...form, category_id: event.target.value })} disabled={pending}>
+      <Dialog open={formOpen} title={editing ? "Edit product" : "Add product"} description={editing ? `Update ${editing.name} without changing its stock history.` : "Add the essentials now. You can edit details later."} onClose={cancelEdit} maxWidth="xl">
+      <form onSubmit={(event: FormEvent) => { event.preventDefault(); saveMutation.mutate(); }} className="grid gap-4 sm:grid-cols-2">
+        <label className="field-label">Category<span>*</span>
+        <select autoFocus className="field-input" value={form.category_id} onChange={(event) => setForm({ ...form, category_id: event.target.value })} disabled={saveMutation.isPending}>
           <option value="">Category</option>
           {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
         </select>
-        <select className="focus-ring h-10 rounded-md border border-line px-3" value={form.brand_id} onChange={(event) => setForm({ ...form, brand_id: event.target.value })} disabled={pending}>
+        </label>
+        <label className="field-label">Brand<span>*</span>
+        <select className="field-input" value={form.brand_id} onChange={(event) => setForm({ ...form, brand_id: event.target.value })} disabled={saveMutation.isPending}>
           <option value="">Brand</option>
           {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
         </select>
-        <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="Name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} disabled={pending} />
-        <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="Size" value={form.size} onChange={(event) => setForm({ ...form, size: event.target.value })} disabled={pending} />
-        <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="Color" value={form.color} onChange={(event) => setForm({ ...form, color: event.target.value })} disabled={pending} />
-        <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="Cost" type="number" min="0" step="0.01" value={form.purchase_price} onChange={(event) => setForm({ ...form, purchase_price: event.target.value })} disabled={pending} />
-        <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="Price" type="number" min="0" step="0.01" value={form.selling_price} onChange={(event) => setForm({ ...form, selling_price: event.target.value })} disabled={pending} />
-        <select className="focus-ring h-10 rounded-md border border-line px-3" value={form.pricing_type} onChange={(event) => setForm({ ...form, pricing_type: event.target.value as PricingType })} disabled={pending}>
+        </label>
+        <label className="field-label sm:col-span-2">Product name<span>*</span>
+          <input className="field-input" placeholder="e.g. Cotton leggings" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} disabled={saveMutation.isPending} />
+        </label>
+        <label className="field-label">SKU
+        <div className="flex gap-2">
+          <input className="field-input min-w-0 flex-1" placeholder="Optional" value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} disabled={saveMutation.isPending} />
+          <Button type="button" variant="secondary" size="icon" onClick={() => void generateCode("sku")} title="Generate SKU"><Wand2 size={16} /></Button>
+        </div>
+        </label>
+        <label className="field-label">Barcode
+        <div className="flex gap-2">
+          <input className="field-input min-w-0 flex-1" placeholder="Optional" value={form.barcode} onChange={(event) => setForm({ ...form, barcode: event.target.value })} disabled={saveMutation.isPending} />
+          <Button type="button" variant="secondary" size="icon" onClick={() => void generateCode("barcode")} title="Generate barcode"><Wand2 size={16} /></Button>
+        </div>
+        </label>
+        <label className="field-label">Size<span>*</span><input className="field-input" placeholder="e.g. M" value={form.size} onChange={(event) => setForm({ ...form, size: event.target.value })} disabled={saveMutation.isPending} /></label>
+        <label className="field-label">Color<span>*</span><input className="field-input" placeholder="e.g. Black" value={form.color} onChange={(event) => setForm({ ...form, color: event.target.value })} disabled={saveMutation.isPending} /></label>
+        <label className="field-label">Cost price<span>*</span><input className="field-input" placeholder="0.00" type="number" min="0" step="0.01" value={form.purchase_price} onChange={(event) => setForm({ ...form, purchase_price: event.target.value })} disabled={saveMutation.isPending} /></label>
+        <label className="field-label">Selling price<span>*</span><input className="field-input" placeholder="0.00" type="number" min="0" step="0.01" value={form.selling_price} onChange={(event) => setForm({ ...form, selling_price: event.target.value })} disabled={saveMutation.isPending} /></label>
+        <label className="field-label">Pricing<select className="field-input" value={form.pricing_type} onChange={(event) => setForm({ ...form, pricing_type: event.target.value as PricingType })} disabled={saveMutation.isPending}>
           <option value="OWN_PRICE">Own price</option>
           <option value="MRP">MRP</option>
-        </select>
-        <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="MRP" type="number" min="0" step="0.01" value={form.mrp} onChange={(event) => setForm({ ...form, mrp: event.target.value })} disabled={pending} />
-        <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="Quantity" type="number" min="0" value={form.current_stock} onChange={(event) => setForm({ ...form, current_stock: event.target.value })} disabled={pending || Boolean(editing)} />
-        <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="Minimum stock" type="number" min="0" value={form.minimum_stock} onChange={(event) => setForm({ ...form, minimum_stock: event.target.value })} disabled={pending} />
-        <input className="focus-ring h-10 rounded-md border border-line px-3" placeholder="Barcode" value={form.barcode} onChange={(event) => setForm({ ...form, barcode: event.target.value })} disabled={pending} />
-        <label className="flex h-10 items-center gap-2 rounded-md border border-line px-3 text-sm text-slate-600">
-          <input type="checkbox" checked={form.is_active} onChange={(event) => setForm({ ...form, is_active: event.target.checked })} disabled={pending} />
-          Active
+        </select></label>
+        <label className="field-label">MRP<input className="field-input" placeholder="Optional" type="number" min="0" step="0.01" value={form.mrp} onChange={(event) => setForm({ ...form, mrp: event.target.value })} disabled={saveMutation.isPending} /></label>
+        <label className="field-label">Opening stock<input className="field-input" type="number" min="0" value={form.current_stock} onChange={(event) => setForm({ ...form, current_stock: event.target.value })} disabled={saveMutation.isPending || Boolean(editing)} /></label>
+        <label className="field-label">Low stock alert<input className="field-input" type="number" min="0" value={form.minimum_stock} onChange={(event) => setForm({ ...form, minimum_stock: event.target.value })} disabled={saveMutation.isPending} /></label>
+        <label className="flex h-10 items-center gap-2 rounded-md border border-line px-3 text-sm text-slate-600 sm:col-span-2">
+          <input type="checkbox" checked={form.is_active} onChange={(event) => setForm({ ...form, is_active: event.target.checked })} disabled={saveMutation.isPending} />
+          Product is active and available for inventory operations
         </label>
-        <label className="focus-ring flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm text-slate-700 hover:bg-slate-50">
+        <label
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={handleDrop}
+          className="focus-ring flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed border-line bg-slate-50 px-3 text-sm text-slate-700 hover:border-teal-400 hover:bg-teal-50 sm:col-span-2"
+        >
           <ImagePlus size={16} />
-          {imageFile ? imageFile.name : "Image"}
-          <input className="hidden" type="file" accept=".jpg,.jpeg,.png" onChange={(event) => setImageFile(event.target.files?.[0] ?? null)} disabled={pending} />
+          {imageFile ? imageFile.name : "Upload or drop image"}
+          <span className="text-xs text-slate-500">JPG, PNG or WEBP up to 5MB. Large images are compressed automatically.</span>
+          <input className="hidden" type="file" accept=".jpg,.jpeg,.png,.webp" onChange={(event) => void chooseImage(event.target.files?.[0] ?? null)} disabled={saveMutation.isPending} />
         </label>
-        <div className="grid gap-2 md:grid-cols-2 xl:col-span-4">
-          <Button type="submit" disabled={pending}>
-            <Plus size={16} /> {pending ? "Saving" : editing ? "Update product" : "Add product"}
+        <div className="flex items-center gap-3 sm:col-span-2">
+          {imagePreview || editing?.image_url ? <img src={imagePreview || imageSrc(editing?.image_url)} alt="" className="h-14 w-14 rounded object-cover" /> : <div className="grid h-14 w-14 place-items-center rounded bg-slate-100 text-slate-400"><PackageOpen size={20} /></div>}
+          {editing?.image_url ? <Button type="button" variant="secondary" size="sm" onClick={() => deleteImageMutation.mutate(editing.id)} disabled={deleteImageMutation.isPending}>Delete image</Button> : null}
+        </div>
+        {error ? <div className="sm:col-span-2"><ErrorState message={error} /></div> : null}
+        <div className="flex flex-col-reverse gap-2 border-t border-line pt-4 sm:col-span-2 sm:flex-row sm:justify-end">
+          <Button type="button" variant="secondary" onClick={cancelEdit} disabled={saveMutation.isPending}>Cancel</Button>
+          <Button type="submit" disabled={saveMutation.isPending}>
+            <Plus size={16} /> {saveMutation.isPending ? "Saving" : editing ? "Update product" : "Add product"}
           </Button>
-          {editing ? <Button type="button" variant="secondary" onClick={cancelEdit} disabled={pending}>Cancel edit</Button> : null}
         </div>
       </form>
-      {error ? <div className="mb-4"><ErrorState message={error} /></div> : null}
+      </Dialog>
 
-      {loading ? (
+      {selectedCount ? (
+        <div className="mb-4 grid gap-2 rounded-md border border-teal-200 bg-teal-50 p-3 md:grid-cols-[auto_1fr] md:items-center">
+          <div className="text-sm font-semibold text-teal-900">{selectedCount} selected</div>
+          <div className="flex flex-wrap gap-2">
+            <select className="focus-ring h-9 rounded-md border border-line bg-white px-2 text-sm" value={bulkCategory} onChange={(event) => setBulkCategory(event.target.value)}>
+              <option value="">Category</option>
+              {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+            </select>
+            <Button type="button" size="sm" variant="secondary" onClick={() => void runBulk("category")} disabled={!bulkCategory}>Change category</Button>
+            <select className="focus-ring h-9 rounded-md border border-line bg-white px-2 text-sm" value={bulkBrand} onChange={(event) => setBulkBrand(event.target.value)}>
+              <option value="">Brand</option>
+              {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+            </select>
+            <Button type="button" size="sm" variant="secondary" onClick={() => void runBulk("brand")} disabled={!bulkBrand}>Change brand</Button>
+            <select className="focus-ring h-9 rounded-md border border-line bg-white px-2 text-sm" value={bulkDirection} onChange={(event) => setBulkDirection(event.target.value as "INCREASE" | "DECREASE")}>
+              <option value="INCREASE">Increase</option>
+              <option value="DECREASE">Decrease</option>
+            </select>
+            <input className="focus-ring h-9 w-20 rounded-md border border-line px-2 text-sm" type="number" min="1" value={bulkQty} onChange={(event) => setBulkQty(event.target.value)} />
+            <Button type="button" size="sm" variant="secondary" onClick={() => void runBulk("stock")}>Update stock</Button>
+            <Button type="button" size="sm" variant="secondary" onClick={() => void exportProducts("csv", true)}>Export selected</Button>
+            <Button type="button" size="sm" variant="destructive" onClick={() => setBulkDeleteOpen(true)}>Delete selected</Button>
+          </div>
+        </div>
+      ) : null}
+
+      {productsQuery.isLoading ? (
         <SkeletonRows rows={7} />
-      ) : hasProducts ? (
-        <div className="overflow-x-auto rounded-md border border-line bg-white">
-          <table className="min-w-[920px] divide-y divide-line text-sm">
+      ) : productsQuery.error ? (
+        <ErrorState message={productsQuery.error instanceof Error ? productsQuery.error.message : "Unable to load products"} />
+      ) : products.length ? (
+        <div className="overflow-hidden rounded-md border border-line bg-white">
+          <div className="divide-y divide-line md:hidden">
+            {products.map((product) => (
+              <article key={product.id} className={`p-4 ${selectedIds.has(product.id) ? "bg-teal-50/50" : ""}`}>
+                <div className="flex items-start gap-3">
+                  <input aria-label={`Select ${product.name}`} className="mt-4" type="checkbox" checked={selectedIds.has(product.id)} onChange={() => toggleSelected(product.id)} />
+                  {product.image_url ? <img loading="lazy" src={imageSrc(product.image_url)} alt="" className="h-14 w-14 shrink-0 rounded-md object-cover" /> : <div className="grid h-14 w-14 shrink-0 place-items-center rounded-md bg-slate-100 text-slate-400"><PackageOpen size={20} /></div>}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-semibold text-slate-950"><HighlightText text={product.name} query={debouncedSearch} /></div>
+                    <div className="mt-0.5 truncate text-xs text-slate-500"><HighlightText text={product.brand?.name} query={debouncedSearch} /> · <HighlightText text={product.category?.name} query={debouncedSearch} /></div>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600">
+                      <span>{product.size} / {product.color}</span>
+                      <span>{product.sku || product.barcode || "No code"}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center justify-between border-t border-line pt-3">
+                  <div>
+                    <div className="font-semibold text-slate-950">{money(product.selling_price)}</div>
+                    <div className={`text-xs ${product.current_stock === 0 ? "text-rose-700" : product.current_stock <= product.minimum_stock ? "text-amber-700" : "text-slate-500"}`}>{product.current_stock} in stock</div>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button type="button" variant="secondary" size="sm" onClick={() => beginEdit(product)}><Edit3 size={15} /> Edit</Button>
+                    <Button type="button" variant="ghost" size="icon" className="text-rose-700" onClick={() => setDeleteTarget(product)} title="Delete product"><Trash2 size={16} /></Button>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
+          <table className="min-w-[960px] divide-y divide-line text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
               <tr>
+                <th className="px-4 py-3"><input type="checkbox" checked={products.length > 0 && products.every((product) => selectedIds.has(product.id))} onChange={toggleAllVisible} /></th>
                 <th className="px-4 py-3">Product</th>
+                <th className="px-4 py-3">SKU / Barcode</th>
                 <th className="px-4 py-3">Variant</th>
                 <th className="px-4 py-3">Price</th>
+                <th className="px-4 py-3">Cost</th>
                 <th className="px-4 py-3">Stock</th>
-                <th className="px-4 py-3">Barcode</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
               {products.map((product) => (
-                <tr key={product.id}>
+                <tr key={product.id} className={selectedIds.has(product.id) ? "bg-teal-50/40" : ""}>
+                  <td className="px-4 py-3"><input type="checkbox" checked={selectedIds.has(product.id)} onChange={() => toggleSelected(product.id)} /></td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      {product.image_url ? <img src={imageSrc(product.image_url)} alt="" className="h-10 w-10 rounded object-cover" /> : <div className="grid h-10 w-10 place-items-center rounded bg-slate-100 text-slate-400"><PackageOpen size={18} /></div>}
+                      {product.image_url ? <img loading="lazy" src={imageSrc(product.image_url)} alt="" className="h-11 w-11 rounded object-cover" /> : <div className="grid h-11 w-11 place-items-center rounded bg-slate-100 text-slate-400"><PackageOpen size={18} /></div>}
                       <div className="min-w-0">
-                        <div className="truncate font-medium text-slate-900">{product.name}</div>
-                        <div className="truncate text-slate-500">{product.brand?.name} / {product.category?.name}</div>
+                        <div className="truncate font-medium text-slate-900"><HighlightText text={product.name} query={debouncedSearch} /></div>
+                        <div className="truncate text-slate-500"><HighlightText text={product.brand?.name} query={debouncedSearch} /> / <HighlightText text={product.category?.name} query={debouncedSearch} /></div>
                       </div>
                     </div>
                   </td>
+                  <td className="px-4 py-3">
+                    <div><HighlightText text={product.sku || "-"} query={debouncedSearch} /></div>
+                    <div className="text-slate-500"><HighlightText text={product.barcode || "-"} query={debouncedSearch} /></div>
+                  </td>
                   <td className="px-4 py-3">{product.size} / {product.color}</td>
                   <td className="px-4 py-3">{money(product.selling_price)}</td>
-                  <td className="px-4 py-3">{product.current_stock}</td>
-                  <td className="px-4 py-3">{product.barcode ?? "-"}</td>
+                  <td className="px-4 py-3">{money(product.purchase_price)}</td>
+                  <td className="px-4 py-3">
+                    <span className={product.current_stock === 0 ? "font-semibold text-rose-700" : product.current_stock <= product.minimum_stock ? "font-semibold text-amber-700" : "text-slate-700"}>
+                      {product.current_stock}
+                    </span>
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`rounded px-2 py-1 text-xs font-medium ${product.is_active ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-600"}`}>
                       {product.is_active ? "Active" : "Inactive"}
@@ -355,35 +720,52 @@ export default function ProductsPage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex justify-end gap-2">
-                      <Button type="button" variant="secondary" size="icon" onClick={() => beginEdit(product)} title="Edit product">
-                        <Edit3 size={16} />
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon" className="text-rose-700 hover:bg-rose-50" onClick={() => setDeleteTarget(product)} title="Delete product">
-                        <Trash2 size={17} />
-                      </Button>
+                      <Button type="button" variant="secondary" size="icon" onClick={() => beginEdit(product)} title="Edit product"><Edit3 size={16} /></Button>
+                      <Button type="button" variant="ghost" size="icon" className="text-rose-700 hover:bg-rose-50" onClick={() => setDeleteTarget(product)} title="Delete product"><Trash2 size={17} /></Button>
                     </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
+          <div className="flex flex-col gap-3 border-t border-line px-4 py-3 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+            <div>{currentRange}</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select className="focus-ring h-9 rounded-md border border-line px-2" value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))}>
+                {[10, 25, 50, 100].map((size) => <option key={size} value={size}>{size} / page</option>)}
+              </select>
+              <Button type="button" variant="secondary" size="icon" disabled={!meta || meta.page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} title="Previous page"><ChevronLeft size={16} /></Button>
+              <span>Page {meta?.page ?? 1} of {meta?.total_pages ?? 1}</span>
+              <Button type="button" variant="secondary" size="icon" disabled={!meta || meta.page >= meta.total_pages} onClick={() => setPage((current) => current + 1)} title="Next page"><ChevronRight size={16} /></Button>
+            </div>
+          </div>
         </div>
       ) : (
         <div className="rounded-md border border-line bg-white">
           <EmptyState
             icon={PackageOpen}
             title={isFiltered ? "No matching products" : "No products yet"}
-            description={isFiltered ? "Try clearing filters or searching another barcode, brand, category, size, or color." : "Add products with their brand, category, price, stock, barcode, and optional image."}
+            description={isFiltered ? "Try clearing filters or searching another SKU, barcode, brand, category, size, or color." : "Add products with images, SKU, barcode, price, stock, brand, and category."}
           />
         </div>
       )}
+
       <ConfirmDialog
         open={Boolean(deleteTarget)}
         title="Delete product"
-        description={`Delete "${deleteTarget?.name ?? "this product"}"? Stock history may prevent deletion if it is referenced.`}
-        loading={deleting}
+        description={`Delete "${deleteTarget?.name ?? "this product"}"? This cannot be undone.`}
+        loading={deleteMutation.isPending}
         onCancel={() => setDeleteTarget(null)}
-        onConfirm={() => void remove()}
+        onConfirm={() => deleteTarget ? deleteMutation.mutate(deleteTarget.id) : undefined}
+      />
+      <ConfirmDialog
+        open={bulkDeleteOpen}
+        title="Delete selected products"
+        description={`Delete ${selectedCount} selected products? This cannot be undone.`}
+        loading={false}
+        onCancel={() => setBulkDeleteOpen(false)}
+        onConfirm={() => void runBulk("delete")}
       />
     </>
   );

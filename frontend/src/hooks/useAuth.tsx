@@ -32,6 +32,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void loadUser();
   }, []);
 
+  useEffect(() => {
+    const handleUnauthorized = () => setUser(null);
+    window.addEventListener("rainbow:unauthorized", handleUnauthorized);
+    return () => window.removeEventListener("rainbow:unauthorized", handleUnauthorized);
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user,

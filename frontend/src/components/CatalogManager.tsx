@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Edit3, Layers3, Plus, Search, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type { Brand, Category } from "../types";
@@ -13,7 +13,7 @@ import { Button } from "./ui/button";
 type CatalogItem = Category | Brand;
 type CatalogKind = "category" | "brand";
 
-interface CatalogManagerProps<T extends CatalogItem> {
+interface CatalogManagerProps {
   kind: CatalogKind;
   title: string;
   subtitle: string;
@@ -43,7 +43,7 @@ export default function CatalogManager<T extends CatalogItem>({
   subtitle,
   endpoint,
   emptyDescription,
-}: CatalogManagerProps<T>) {
+}: CatalogManagerProps) {
   const toast = useToast();
   const [items, setItems] = useState<T[]>([]);
   const [search, setSearch] = useState("");
@@ -58,7 +58,7 @@ export default function CatalogManager<T extends CatalogItem>({
   const noun = kind === "category" ? "category" : "brand";
   const filteredEmpty = useMemo(() => search.trim().length > 0 && items.length === 0, [items.length, search]);
 
-  async function load(query = search) {
+  const load = useCallback(async (query: string) => {
     setError("");
     try {
       const suffix = query.trim() ? `?search=${encodeURIComponent(query.trim())}` : "";
@@ -68,11 +68,11 @@ export default function CatalogManager<T extends CatalogItem>({
     } finally {
       setLoading(false);
     }
-  }
+  }, [endpoint, noun]);
 
   useEffect(() => {
     void load("");
-  }, []);
+  }, [load]);
 
   function validateName(value: string) {
     if (!value.trim()) return `${title.slice(0, -1)} name is required`;
@@ -97,7 +97,7 @@ export default function CatalogManager<T extends CatalogItem>({
       });
       setForm(emptyForm);
       toast.success(`${title.slice(0, -1)} added`);
-      await load();
+      await load(search);
     } catch (err) {
       const message = err instanceof Error ? err.message : `Unable to save ${noun}`;
       setError(message);
@@ -126,7 +126,7 @@ export default function CatalogManager<T extends CatalogItem>({
       setEditing(null);
       setForm(emptyForm);
       toast.success(`${title.slice(0, -1)} updated`);
-      await load();
+      await load(search);
     } catch (err) {
       const message = err instanceof Error ? err.message : `Unable to update ${noun}`;
       setError(message);
@@ -144,7 +144,7 @@ export default function CatalogManager<T extends CatalogItem>({
       await api.delete(`${endpoint}/${deleteTarget.id}`);
       toast.success(`${title.slice(0, -1)} deleted`);
       setDeleteTarget(null);
-      await load();
+      await load(search);
     } catch (err) {
       const message = err instanceof Error ? err.message : `Unable to delete ${noun}`;
       setError(message);

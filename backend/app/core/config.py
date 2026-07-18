@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     invoice_upload_dir: Path = Path("app/uploads/invoices")
     product_upload_dir: Path = Path("app/uploads/products")
     max_upload_size_mb: int = 10
+    max_product_image_size_mb: int = 5
     allowed_invoice_content_types: set[str] = {
         "image/jpeg",
         "image/png",
@@ -35,6 +36,7 @@ class Settings(BaseSettings):
     allowed_product_image_content_types: set[str] = {
         "image/jpeg",
         "image/png",
+        "image/webp",
     }
 
     ocr_provider: str = "mock"
@@ -65,6 +67,10 @@ class Settings(BaseSettings):
     @property
     def max_upload_size_bytes(self) -> int:
         return self.max_upload_size_mb * 1024 * 1024
+
+    @property
+    def max_product_image_size_bytes(self) -> int:
+        return self.max_product_image_size_mb * 1024 * 1024
 
     @property
     def cors_origin_list(self) -> list[str]:
