@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID, uuid4
@@ -25,13 +25,24 @@ class PurchaseItem(Base):
     brand_name: Mapped[Optional[str]] = mapped_column(String(120))
     category_name: Mapped[Optional[str]] = mapped_column(String(120))
     product_name: Mapped[str] = mapped_column(String(180), nullable=False)
+    barcode: Mapped[Optional[str]] = mapped_column(String(80), index=True)
+    supplier_product_code: Mapped[Optional[str]] = mapped_column(String(120))
+    hsn_sac: Mapped[Optional[str]] = mapped_column(String(40))
+    unit: Mapped[str] = mapped_column(String(40), nullable=False, default="Each")
     size: Mapped[str] = mapped_column(String(60), nullable=False)
     color: Mapped[str] = mapped_column(String(80), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     purchase_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    discount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    tax_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    tax_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=0)
     mrp: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))
     line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4))
+    match_status: Mapped[str] = mapped_column(String(40), nullable=False, default="NOT_FOUND")
+    batch_number: Mapped[Optional[str]] = mapped_column(String(120))
+    expiry_date: Mapped[Optional[date]] = mapped_column()
+    user_verified: Mapped[bool] = mapped_column(nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

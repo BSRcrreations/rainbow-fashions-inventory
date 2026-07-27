@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -13,8 +14,8 @@ from app.schemas.stock import StockHistoryRead
 class LowStockProduct(BaseModel):
     id: UUID
     name: str
-    size: str
-    color: str
+    size: Optional[str] = None
+    color: Optional[str] = None
     current_stock: int
     minimum_stock: int
     brand_name: str

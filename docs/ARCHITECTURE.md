@@ -1,5 +1,7 @@
 # Architecture
 
+The frontend presentation layer uses the centralized token and component contract documented in `docs/DESIGN_SYSTEM.md`. Pages consume semantic Tailwind aliases and shared UI primitives; they do not own independent color schemes or control styling.
+
 ## Sales and Catalog Integrity
 
 The existing `route -> schema -> service -> repository -> model -> PostgreSQL` layering is retained. Category owns both SubCategory and Brand, while Product references all three. Composite database foreign keys plus service validation prevent assigning a brand or subcategory from another category.
@@ -21,7 +23,7 @@ Key decisions:
 - Repository classes isolate persistence queries.
 - Service classes own business rules and transaction boundaries.
 - OCR is behind an interface in `app/ai`.
-- Purchases are draft/review/confirm to prevent accidental stock changes.
+- Purchases are queue/draft/review/confirm to prevent accidental stock changes; upload commits the job before background recognition begins. Purchase edits use optimistic versions and append purchase audit records; only confirmation writes stock history.
 - Catalog and product duplicate/delete rules live in services and repositories, not React.
 - API errors are normalized in FastAPI exception handlers before reaching the client.
 - Product images are stored as uploaded files and referenced from products by `image_url`.
@@ -33,7 +35,7 @@ Key decisions:
 Future modules can add tables that reference existing IDs:
 
 - Billing and POS can reference `products`, `stores`, and `stock_history`.
-- Barcode and QR code modules can extend product identifiers without changing product variants.
+- Product barcodes use the existing `products.barcode` column. Product dates, exact barcode lookup, and Code 128 label rendering extend the catalog without a separate identifier table.
 - Supplier and customer modules can expand from the existing supplier-ready purchase design.
 - Mobile apps can use the same REST API.
 
@@ -51,3 +53,6 @@ Future modules can add tables that reference existing IDs:
 - Products use React Query caching, debounced search, memoized pagination state, and server-side filtering/sorting.
 - Product create/edit runs in a reusable accessible dialog; advanced filters remain collapsible and expose removable active-filter chips.
 - API `401` responses clear the local token and notify the authentication provider so protected routes return to login immediately.
+# Sale workflow integrity
+
+Sale edits, returns, and voids run in one database transaction. The service locks the sale, products, and authenticated-store inventory rows, recalculates totals with `Decimal`, creates stock history rows, and writes a `sale_audits` record before committing once.

@@ -28,7 +28,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="grid min-h-screen place-items-center bg-[#f6f8fb] px-4">
+    <div className="grid min-h-screen place-items-center bg-background px-4">
       <form onSubmit={handleSubmit} className="w-full max-w-sm rounded-md border border-line bg-white p-6 shadow-sm">
         <div className="mb-6">
           <h1 className="text-2xl font-semibold text-slate-950">Rainbow fashions</h1>

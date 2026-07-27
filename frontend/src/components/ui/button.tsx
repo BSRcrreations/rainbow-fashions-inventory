@@ -10,15 +10,15 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-teal-700 text-white shadow-teal-900/15 hover:bg-teal-800 hover:shadow-md",
-        secondary: "border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:shadow-md",
-        destructive: "bg-red-600 text-white shadow-red-900/15 hover:bg-red-700 hover:shadow-md",
+        default: "bg-primary-700 text-white hover:bg-primary-800 hover:shadow-md",
+        secondary: "border border-border bg-surface text-slate-700 hover:border-slate-300 hover:bg-surface-subtle hover:shadow-md",
+        destructive: "bg-error text-white hover:bg-red-700 hover:shadow-md",
         ghost: "shadow-none text-slate-700 hover:bg-slate-100",
       },
       size: {
-        default: "h-11 px-5",
-        sm: "h-10 px-4",
-        icon: "h-10 w-10",
+        default: "h-control px-5",
+        sm: "h-control-sm px-4",
+        icon: "h-control-sm w-control-sm",
       },
     },
     defaultVariants: {

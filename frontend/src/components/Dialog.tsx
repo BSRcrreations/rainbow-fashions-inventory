@@ -34,18 +34,18 @@ export default function Dialog({ open, title, description, children, onClose, ma
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center bg-slate-950/45 p-0 sm:items-center sm:p-4" role="presentation">
+    <div className="ds-dialog-backdrop flex items-end justify-center p-0 sm:items-center sm:p-4" role="presentation">
       <section
         aria-describedby={description ? "dialog-description" : undefined}
         aria-labelledby="dialog-title"
         aria-modal="true"
-        className={`flex max-h-[94vh] w-full flex-col rounded-t-lg border border-line bg-white shadow-2xl sm:rounded-lg ${widths[maxWidth]}`}
+        className={`ds-dialog flex max-h-[94vh] w-full flex-col rounded-b-none sm:rounded-lg ${widths[maxWidth]}`}
         role="dialog"
       >
-        <header className="flex items-start justify-between gap-4 border-b border-line px-4 py-4 sm:px-6">
+        <header className="flex items-start justify-between gap-4 border-b border-border px-4 py-4 sm:px-6">
           <div>
-            <h2 id="dialog-title" className="text-lg font-semibold text-slate-950">{title}</h2>
-            {description ? <p id="dialog-description" className="mt-1 text-sm text-slate-500">{description}</p> : null}
+            <h2 id="dialog-title" className="text-lg font-semibold text-foreground">{title}</h2>
+            {description ? <p id="dialog-description" className="mt-1 text-sm text-muted">{description}</p> : null}
           </div>
           <Button type="button" variant="ghost" size="icon" onClick={onClose} title="Close dialog" aria-label="Close dialog">
             <X size={18} />

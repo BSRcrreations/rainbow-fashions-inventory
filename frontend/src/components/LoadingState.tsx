@@ -1,6 +1,6 @@
 export default function LoadingState({ label = "Loading" }: { label?: string }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-500 shadow-sm">
+    <div className="ds-surface p-5 text-sm text-muted">
       {label}
     </div>
   );
@@ -8,7 +8,7 @@ export default function LoadingState({ label = "Loading" }: { label?: string }) 
 
 export function SkeletonRows({ rows = 5 }: { rows?: number }) {
   return (
-    <div className="divide-y divide-line overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+    <div className="ds-surface divide-y divide-border overflow-hidden">
       {Array.from({ length: rows }).map((_, index) => (
         <div key={index} className="flex items-center justify-between gap-4 px-5 py-5">
           <div className="min-w-0 flex-1">

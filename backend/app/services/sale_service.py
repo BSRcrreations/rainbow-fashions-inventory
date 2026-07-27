@@ -9,19 +9,19 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.core.exceptions import bad_request, conflict, not_found
 from app.models.brand import Brand
 from app.models.category import Category
-from app.models.enums import StockMovementType
+from app.models.enums import SaleStatus, StockMovementType
 from app.models.product import Product
 from app.models.product_inventory import ProductInventory
-from app.models.sale import Sale, SaleItem
+from app.models.sale import Sale, SaleAudit, SaleItem, SaleReturn, SaleReturnItem
 from app.models.stock_history import StockHistory
 from app.models.user import User
 from app.repositories.sale import SaleRepository
-from app.schemas.sale import SaleCreate, SaleListResponse, SalesDashboardResponse, SalesMetric
+from app.schemas.sale import SaleCreate, SaleListResponse, SaleReturnCreate, SaleUpdate, SaleVoidRequest, SalesDashboardResponse, SalesMetric
 
 
 BUSINESS_TIMEZONE = ZoneInfo("Asia/Kolkata")
@@ -33,45 +33,14 @@ class SaleService:
         self.repo = SaleRepository(db)
 
     def create(self, payload: SaleCreate, current_user: User) -> Sale:
-        if current_user.store_id is None:
-            raise bad_request("Current user is not assigned to a store")
+        store_id = self._store_id(current_user)
         invoice_number = payload.invoice_number or self._generate_invoice_number()
-        if self.repo.get_by_invoice(invoice_number):
+        if self.repo.get_by_invoice(invoice_number, store_id):
             raise conflict("Invoice number already exists")
-
-        product_ids = [item.product_id for item in payload.items]
-        if len(product_ids) != len(set(product_ids)):
-            raise bad_request("A product can appear only once in a sale")
-        products = (
-            self.db.query(Product)
-            .filter(Product.id.in_(product_ids))
-            .with_for_update()
-            .all()
-        )
-        product_map = {product.id: product for product in products}
-        if len(product_map) != len(product_ids):
-            raise not_found("One or more products")
-
-        subtotal = Decimal("0")
-        cost_amount = Decimal("0")
-        prepared: list[tuple[Product, int, Decimal, Decimal]] = []
-        for requested in payload.items:
-            product = product_map[requested.product_id]
-            if not product.is_active:
-                raise bad_request(f"{product.name} is inactive")
-            if product.current_stock < requested.quantity:
-                raise bad_request(f"Insufficient stock for {product.name}; {product.current_stock} available")
-            unit_price = requested.unit_price if requested.unit_price is not None else product.selling_price
-            line_total = unit_price * requested.quantity
-            subtotal += line_total
-            cost_amount += product.purchase_price * requested.quantity
-            prepared.append((product, requested.quantity, unit_price, line_total))
-
-        if payload.discount > subtotal:
-            raise bad_request("Discount cannot exceed subtotal")
-        total_amount = subtotal - payload.discount
+        prepared = self._prepare_items(payload.items, store_id)
+        subtotal, cost_amount, total_amount = self._totals(prepared, payload.discount)
         sale = Sale(
-            store_id=current_user.store_id,
+            store_id=store_id,
             invoice_number=invoice_number,
             customer_name=payload.customer_name,
             payment_mode=payload.payment_mode,
@@ -86,9 +55,7 @@ class SaleService:
         self.db.add(sale)
         self.db.flush()
 
-        for product, quantity, unit_price, line_total in prepared:
-            before_stock = product.current_stock
-            product.current_stock -= quantity
+        for product, inventory, quantity, unit_price, line_total in prepared:
             sale_item = SaleItem(
                 sale_id=sale.id,
                 product_id=product.id,
@@ -97,48 +64,110 @@ class SaleService:
                 unit_price=unit_price,
                 unit_cost=product.purchase_price,
                 line_total=line_total,
+                sku_snapshot=product.sku,
+                barcode_snapshot=product.barcode,
+                size_snapshot=product.size,
+                color_snapshot=product.color,
             )
             self.db.add(sale_item)
             self.db.flush()
-            inventory = (
-                self.db.query(ProductInventory)
-                .filter(ProductInventory.product_id == product.id, ProductInventory.store_id == current_user.store_id)
-                .first()
-            )
-            if inventory:
-                inventory.current_stock = product.current_stock
-            else:
-                self.db.add(
-                    ProductInventory(
-                        product_id=product.id,
-                        store_id=current_user.store_id,
-                        current_stock=product.current_stock,
-                        minimum_stock=product.minimum_stock,
-                    )
-                )
-            self.db.add(
-                StockHistory(
-                    product_id=product.id,
-                    store_id=current_user.store_id,
-                    movement_type=StockMovementType.SALE,
-                    qty=quantity,
-                    before_stock=before_stock,
-                    after_stock=product.current_stock,
-                    reference=invoice_number,
-                    sale_id=sale.id,
-                    sale_item_id=sale_item.id,
-                    created_by=current_user.id,
-                )
-            )
+            self._adjust_stock(product, inventory, -quantity, StockMovementType.SALE, invoice_number, sale, sale_item, current_user)
 
         self.db.commit()
-        return self.get(sale.id)
+        return self.get(sale.id, current_user)
 
-    def get(self, sale_id: UUID) -> Sale:
-        sale = self.repo.get_detail(sale_id)
+    def get(self, sale_id: UUID, current_user: User) -> Sale:
+        sale = self.repo.get_detail(sale_id, self._store_id(current_user))
         if not sale:
             raise not_found("Sale")
         return sale
+
+    def update(self, sale_id: UUID, payload: SaleUpdate, current_user: User) -> Sale:
+        store_id = self._store_id(current_user)
+        sale = self._locked_sale(sale_id, store_id)
+        if sale.status in {SaleStatus.VOIDED, SaleStatus.RETURNED}:
+            raise bad_request("This sale cannot be edited")
+        self._validate_version(sale, payload.version)
+        before = self._audit_snapshot(sale)
+        product_ids = [item.product_id for item in payload.items]
+        if len(product_ids) != len(set(product_ids)):
+            raise bad_request("A product can appear only once in a sale")
+        prepared = self._prepare_items(payload.items, store_id, validate_stock=False)
+        subtotal, cost_amount, total_amount = self._totals(prepared, payload.discount)
+        old_items = {item.product_id: item for item in sale.items}
+        new_items = {product.id: (product, inventory, quantity, price, line_total) for product, inventory, quantity, price, line_total in prepared}
+        for product_id in sorted(set(old_items) | set(new_items), key=str):
+            old = old_items.get(product_id)
+            new = new_items.get(product_id)
+            old_quantity = old.quantity if old else 0
+            new_quantity = new[2] if new else 0
+            delta = old_quantity - new_quantity
+            if delta:
+                product, inventory = (new[0], new[1]) if new else self._locked_product_inventory(product_id, store_id)
+                movement = StockMovementType.SALE_EDIT_RETURN if delta > 0 else StockMovementType.SALE_EDIT_DECREASE
+                self._adjust_stock(product, inventory, delta, movement, f"{sale.invoice_number} sale edit", sale, old, current_user)
+        self.db.query(SaleItem).filter(SaleItem.sale_id == sale.id).delete(synchronize_session=False)
+        self.db.flush()
+        for product, _, quantity, unit_price, line_total in prepared:
+            self.db.add(SaleItem(sale_id=sale.id, product_id=product.id, product_name=product.name, quantity=quantity, unit_price=unit_price, unit_cost=product.purchase_price, line_total=line_total, sku_snapshot=product.sku, barcode_snapshot=product.barcode, size_snapshot=product.size, color_snapshot=product.color))
+        sale.customer_name = payload.customer_name
+        sale.payment_mode = payload.payment_mode
+        sale.subtotal, sale.discount, sale.total_amount, sale.cost_amount = subtotal, payload.discount, total_amount, cost_amount
+        sale.profit_amount = total_amount - cost_amount
+        sale.status, sale.version, sale.edit_reason, sale.edited_by, sale.edited_at = SaleStatus.EDITED, sale.version + 1, payload.edit_reason, current_user.id, datetime.now(timezone.utc)
+        self.db.add(SaleAudit(sale_id=sale.id, action="EDITED", reason=payload.edit_reason, performed_by=current_user.id, before_data=before, after_data={"total_amount": str(total_amount), "version": sale.version}))
+        self.db.commit()
+        return self.get(sale.id, current_user)
+
+    def void(self, sale_id: UUID, payload: SaleVoidRequest, current_user: User) -> Sale:
+        store_id = self._store_id(current_user)
+        sale = self._locked_sale(sale_id, store_id)
+        if sale.status == SaleStatus.VOIDED:
+            raise bad_request("Sale is already voided")
+        self._validate_version(sale, payload.version)
+        before = self._audit_snapshot(sale)
+        returned = self._returned_quantities(sale)
+        for item in sale.items:
+            quantity = item.quantity - returned.get(item.id, 0)
+            if quantity:
+                product, inventory = self._locked_product_inventory(item.product_id, store_id)
+                self._adjust_stock(product, inventory, quantity, StockMovementType.SALE_VOID, f"{sale.invoice_number} void", sale, item, current_user)
+        sale.status, sale.version, sale.void_reason, sale.voided_by, sale.voided_at = SaleStatus.VOIDED, sale.version + 1, payload.reason, current_user.id, datetime.now(timezone.utc)
+        self.db.add(SaleAudit(sale_id=sale.id, action="VOIDED", reason=payload.reason, performed_by=current_user.id, before_data=before, after_data={"status": "VOIDED", "version": sale.version}))
+        self.db.commit()
+        return self.get(sale.id, current_user)
+
+    def create_return(self, sale_id: UUID, payload: SaleReturnCreate, current_user: User) -> SaleReturn:
+        store_id = self._store_id(current_user)
+        sale = self._locked_sale(sale_id, store_id)
+        if sale.status == SaleStatus.VOIDED:
+            raise bad_request("Voided sales cannot be returned")
+        requested_ids = [item.sale_item_id for item in payload.items]
+        if len(requested_ids) != len(set(requested_ids)):
+            raise bad_request("A sale item can appear only once in a return")
+        item_map = {item.id: item for item in sale.items}
+        if not set(requested_ids).issubset(item_map):
+            raise bad_request("One or more items do not belong to this sale")
+        returned = self._returned_quantities(sale)
+        sale_return = SaleReturn(sale_id=sale.id, store_id=store_id, reason=payload.reason, refund_method=payload.refund_method or sale.payment_mode, refund_amount=Decimal("0"), created_by=current_user.id)
+        self.db.add(sale_return)
+        refund = Decimal("0")
+        for request in payload.items:
+            item = item_map[request.sale_item_id]
+            if request.quantity > item.quantity - returned.get(item.id, 0):
+                raise bad_request(f"Return quantity exceeds remaining quantity for {item.product_name}")
+            product, inventory = self._locked_product_inventory(item.product_id, store_id)
+            amount = item.unit_price * request.quantity
+            refund += amount
+            self.db.add(SaleReturnItem(sale_return=sale_return, sale_item_id=item.id, quantity=request.quantity, refund_amount=amount))
+            self._adjust_stock(product, inventory, request.quantity, StockMovementType.CUSTOMER_RETURN, f"{sale.invoice_number} customer return", sale, item, current_user)
+        sale_return.refund_amount = refund
+        self.db.flush()
+        all_returned = all(item.quantity <= returned.get(item.id, 0) + sum(req.quantity for req in payload.items if req.sale_item_id == item.id) for item in sale.items)
+        sale.status, sale.version = (SaleStatus.RETURNED if all_returned else SaleStatus.PARTIALLY_RETURNED), sale.version + 1
+        self.db.add(SaleAudit(sale_id=sale.id, action="RETURNED", reason=payload.reason, performed_by=current_user.id, before_data=None, after_data={"refund_amount": str(refund), "status": sale.status.value}))
+        self.db.commit()
+        return sale_return
 
     def list_paginated(
         self,
@@ -151,11 +180,15 @@ class SaleService:
         invoice_number: Optional[str] = None,
         customer_name: Optional[str] = None,
         cashier_name: Optional[str] = None,
+        current_user: Optional[User] = None,
+        sort: str = "newest",
     ) -> SaleListResponse:
         page = max(page, 1)
         page_size = min(max(page_size, 1), 100)
         start_at, end_at = self._optional_bounds(start_date, end_date)
-        items, total = self.repo.list_paginated(page, page_size, search, payment_mode, start_at, end_at, invoice_number, customer_name, cashier_name)
+        if current_user is None:
+            raise bad_request("Current user is required")
+        items, total = self.repo.list_paginated(page, page_size, search, payment_mode, start_at, end_at, invoice_number, customer_name, cashier_name, self._store_id(current_user), sort)
         return SaleListResponse(
             items=items,
             meta={
@@ -171,64 +204,68 @@ class SaleService:
         preset: Literal["today", "yesterday", "week", "month", "custom"] = "today",
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
+        current_user: Optional[User] = None,
     ) -> SalesDashboardResponse:
+        if current_user is None:
+            raise bad_request("Current user is required")
+        store_id = self._store_id(current_user)
         today = datetime.now(BUSINESS_TIMEZONE).date()
         selected_start, selected_end = self._resolve_range(preset, start_date, end_date, today)
         week_start = today - timedelta(days=today.weekday())
         month_start = today.replace(day=1)
-        trend = self._trend(selected_start, selected_end)
+        trend = self._trend(selected_start, selected_end, store_id)
         selected_start_at, selected_end_at = self._bounds(selected_start, selected_end)
 
         return SalesDashboardResponse(
             range_start=selected_start,
             range_end=selected_end,
-            selected=self._metric(selected_start, selected_end),
-            today=self._metric(today, today),
-            yesterday=self._metric(today - timedelta(days=1), today - timedelta(days=1)),
-            week=self._metric(week_start, today),
-            month=self._metric(month_start, today),
-            total_revenue=self.db.query(func.coalesce(func.sum(Sale.total_amount), 0)).scalar() or Decimal("0"),
-            collection=self._collection(selected_start, selected_end),
+            selected=self._metric(selected_start, selected_end, store_id),
+            today=self._metric(today, today, store_id),
+            yesterday=self._metric(today - timedelta(days=1), today - timedelta(days=1), store_id),
+            week=self._metric(week_start, today, store_id),
+            month=self._metric(month_start, today, store_id),
+            total_revenue=self.db.query(func.coalesce(func.sum(Sale.total_amount), 0)).filter(Sale.store_id == store_id, Sale.status != SaleStatus.VOIDED).scalar() or Decimal("0"),
+            collection=self._collection(selected_start, selected_end, store_id),
             inventory_value=(
                 self.db.query(func.coalesce(func.sum(Product.purchase_price * Product.current_stock), 0))
-                .filter(Product.is_active.is_(True))
+                .join(ProductInventory, ProductInventory.product_id == Product.id).filter(Product.is_active.is_(True), ProductInventory.store_id == store_id)
                 .scalar()
                 or Decimal("0")
             ),
             total_stock=(
-                self.db.query(func.coalesce(func.sum(Product.current_stock), 0))
-                .filter(Product.is_active.is_(True))
+                self.db.query(func.coalesce(func.sum(ProductInventory.current_stock), 0))
+                .join(Product, ProductInventory.product_id == Product.id).filter(Product.is_active.is_(True), ProductInventory.store_id == store_id)
                 .scalar()
                 or 0
             ),
             total_products=self.db.query(func.count(Product.id)).filter(Product.is_active.is_(True)).scalar() or 0,
             trend=trend,
-            top_categories=self._ranking("category", selected_start_at, selected_end_at),
-            top_brands=self._ranking("brand", selected_start_at, selected_end_at),
-            top_products=self._ranking("product", selected_start_at, selected_end_at),
+            top_categories=self._ranking("category", selected_start_at, selected_end_at, store_id),
+            top_brands=self._ranking("brand", selected_start_at, selected_end_at, store_id),
+            top_products=self._ranking("product", selected_start_at, selected_end_at, store_id),
             recent_sales=(
                 self.db.query(Sale)
                 .options(joinedload(Sale.cashier), joinedload(Sale.items))
-                .filter(Sale.sale_date.between(selected_start_at, selected_end_at))
+                .filter(Sale.store_id == store_id, Sale.status != SaleStatus.VOIDED, Sale.sale_date.between(selected_start_at, selected_end_at))
                 .order_by(Sale.sale_date.desc())
                 .limit(8)
                 .all()
             ),
             low_stock=[
                 {"id": product.id, "name": product.name, "current_stock": product.current_stock, "minimum_stock": product.minimum_stock}
-                for product in self.db.query(Product).filter(Product.current_stock > 0, Product.current_stock <= Product.minimum_stock, Product.is_active.is_(True)).order_by(Product.current_stock).limit(8).all()
+                for product in self.db.query(Product).join(ProductInventory).filter(ProductInventory.store_id == store_id, ProductInventory.current_stock > 0, ProductInventory.current_stock <= ProductInventory.minimum_stock, Product.is_active.is_(True)).order_by(ProductInventory.current_stock).limit(8).all()
             ],
             out_of_stock=[
                 {"id": product.id, "name": product.name, "current_stock": product.current_stock, "minimum_stock": product.minimum_stock}
-                for product in self.db.query(Product).filter(Product.current_stock == 0, Product.is_active.is_(True)).order_by(Product.name).limit(8).all()
+                for product in self.db.query(Product).join(ProductInventory).filter(ProductInventory.store_id == store_id, ProductInventory.current_stock == 0, Product.is_active.is_(True)).order_by(Product.name).limit(8).all()
             ],
         )
 
-    def _collection(self, start_date: date, end_date: date) -> dict:
+    def _collection(self, start_date: date, end_date: date, store_id: UUID) -> dict:
         start_at, end_at = self._bounds(start_date, end_date)
         rows = (
             self.db.query(Sale.payment_mode, func.coalesce(func.sum(Sale.total_amount), 0))
-            .filter(Sale.sale_date.between(start_at, end_at))
+            .filter(Sale.store_id == store_id, Sale.status != SaleStatus.VOIDED, Sale.sale_date.between(start_at, end_at))
             .group_by(Sale.payment_mode)
             .all()
         )
@@ -307,12 +344,15 @@ class SaleService:
         invoice_number: Optional[str] = None,
         customer_name: Optional[str] = None,
         cashier_name: Optional[str] = None,
+        current_user: Optional[User] = None,
     ) -> list[Sale]:
         start_at, end_at = self._optional_bounds(start_date, end_date)
-        items, _ = self.repo.list_paginated(1, 10000, search, payment_mode, start_at, end_at, invoice_number, customer_name, cashier_name)
+        if current_user is None:
+            raise bad_request("Current user is required")
+        items, _ = self.repo.list_paginated(1, 10000, search, payment_mode, start_at, end_at, invoice_number, customer_name, cashier_name, self._store_id(current_user))
         return items
 
-    def _metric(self, start_date: date, end_date: date) -> SalesMetric:
+    def _metric(self, start_date: date, end_date: date, store_id: UUID) -> SalesMetric:
         start_at, end_at = self._bounds(start_date, end_date)
         sales, profit, orders = (
             self.db.query(
@@ -320,12 +360,12 @@ class SaleService:
                 func.coalesce(func.sum(Sale.profit_amount), 0),
                 func.count(Sale.id),
             )
-            .filter(Sale.sale_date.between(start_at, end_at))
+            .filter(Sale.store_id == store_id, Sale.status != SaleStatus.VOIDED, Sale.sale_date.between(start_at, end_at))
             .one()
         )
         return SalesMetric(sales=sales, profit=profit, orders=orders)
 
-    def _trend(self, start_date: date, end_date: date) -> list[dict]:
+    def _trend(self, start_date: date, end_date: date, store_id: UUID) -> list[dict]:
         start_at, end_at = self._bounds(start_date, end_date)
         day_expression = func.date(func.timezone(str(BUSINESS_TIMEZONE), Sale.sale_date))
         rows = (
@@ -335,7 +375,7 @@ class SaleService:
                 func.coalesce(func.sum(Sale.profit_amount), 0),
                 func.count(Sale.id),
             )
-            .filter(Sale.sale_date.between(start_at, end_at))
+            .filter(Sale.store_id == store_id, Sale.status != SaleStatus.VOIDED, Sale.sale_date.between(start_at, end_at))
             .group_by(day_expression)
             .order_by(day_expression)
             .all()
@@ -349,7 +389,7 @@ class SaleService:
             current += timedelta(days=1)
         return result
 
-    def _ranking(self, kind: str, start_at: datetime, end_at: datetime) -> list[dict]:
+    def _ranking(self, kind: str, start_at: datetime, end_at: datetime, store_id: UUID) -> list[dict]:
         if kind == "category":
             id_column, name_column = Category.id, Category.name
         elif kind == "brand":
@@ -371,7 +411,7 @@ class SaleService:
         elif kind == "brand":
             query = query.join(Brand, Product.brand_id == Brand.id)
         rows = (
-            query.filter(Sale.sale_date.between(start_at, end_at))
+            query.filter(Sale.store_id == store_id, Sale.status != SaleStatus.VOIDED, Sale.sale_date.between(start_at, end_at))
             .group_by(id_column, name_column)
             .order_by(func.sum(SaleItem.quantity).desc())
             .limit(8)
@@ -413,6 +453,113 @@ class SaleService:
         date_part = datetime.now(BUSINESS_TIMEZONE).strftime("%Y%m%d")
         for _ in range(10):
             candidate = f"RF-{date_part}-{uuid4().hex[:6].upper()}"
-            if not self.repo.get_by_invoice(candidate):
+            if not self.db.query(Sale).filter(Sale.invoice_number == candidate).first():
                 return candidate
         raise conflict("Unable to generate invoice number")
+
+    def list_audits(self, sale_id: UUID, current_user: User) -> list[SaleAudit]:
+        return self.repo.list_audits(sale_id, self._store_id(current_user))
+
+    def list_returns(self, sale_id: UUID, current_user: User) -> list[SaleReturn]:
+        return self.repo.list_returns(sale_id, self._store_id(current_user))
+
+    def _store_id(self, current_user: User) -> UUID:
+        if current_user.store_id is None:
+            raise bad_request("Current user is not assigned to a store")
+        return current_user.store_id
+
+    def _locked_sale(self, sale_id: UUID, store_id: UUID) -> Sale:
+        sale = (
+            self.db.query(Sale)
+            .options(selectinload(Sale.items))
+            .filter(Sale.id == sale_id, Sale.store_id == store_id)
+            .with_for_update()
+            .first()
+        )
+        if not sale:
+            raise not_found("Sale")
+        return sale
+
+    def _locked_product_inventory(self, product_id: UUID, store_id: UUID) -> tuple[Product, ProductInventory]:
+        product = self.db.query(Product).filter(Product.id == product_id).with_for_update().first()
+        if not product:
+            raise not_found("Product")
+        inventory = (
+            self.db.query(ProductInventory)
+            .filter(ProductInventory.product_id == product_id, ProductInventory.store_id == store_id)
+            .with_for_update()
+            .first()
+        )
+        if inventory is None:
+            inventory = ProductInventory(product_id=product_id, store_id=store_id, current_stock=0, minimum_stock=product.minimum_stock)
+            self.db.add(inventory)
+            self.db.flush()
+        return product, inventory
+
+    def _prepare_items(self, items: list, store_id: UUID, validate_stock: bool = True) -> list[tuple[Product, ProductInventory, int, Decimal, Decimal]]:
+        product_ids = [item.product_id for item in items]
+        if len(product_ids) != len(set(product_ids)):
+            raise bad_request("A product can appear only once in a sale")
+        prepared = []
+        for request in sorted(items, key=lambda item: str(item.product_id)):
+            product, inventory = self._locked_product_inventory(request.product_id, store_id)
+            if not product.is_active:
+                raise bad_request(f"{product.name} is inactive")
+            if validate_stock and inventory.current_stock < request.quantity:
+                raise bad_request(f"Insufficient stock for {product.name}; {inventory.current_stock} available")
+            unit_price = request.unit_price if request.unit_price is not None else product.selling_price
+            prepared.append((product, inventory, request.quantity, unit_price, unit_price * request.quantity))
+        return prepared
+
+    def _totals(self, prepared: list[tuple[Product, ProductInventory, int, Decimal, Decimal]], discount: Decimal) -> tuple[Decimal, Decimal, Decimal]:
+        subtotal = sum((line_total for _, _, _, _, line_total in prepared), Decimal("0"))
+        if discount > subtotal:
+            raise bad_request("Discount cannot exceed subtotal")
+        cost = sum((product.purchase_price * quantity for product, _, quantity, _, _ in prepared), Decimal("0"))
+        return subtotal, cost, subtotal - discount
+
+    def _adjust_stock(
+        self,
+        product: Product,
+        inventory: ProductInventory,
+        delta: int,
+        movement_type: StockMovementType,
+        reference: str,
+        sale: Sale,
+        sale_item: Optional[SaleItem],
+        current_user: User,
+    ) -> None:
+        before_stock = inventory.current_stock
+        after_stock = before_stock + delta
+        if after_stock < 0:
+            raise bad_request(f"Insufficient stock for {product.name}; {before_stock} available")
+        inventory.current_stock = after_stock
+        # Product.current_stock remains a compatibility aggregate; store inventory is authoritative for sales.
+        product.current_stock = max(0, product.current_stock + delta)
+        self.db.add(StockHistory(product_id=product.id, store_id=inventory.store_id, movement_type=movement_type, qty=abs(delta), before_stock=before_stock, after_stock=after_stock, reference=reference, sale_id=sale.id, sale_item_id=sale_item.id if sale_item else None, created_by=current_user.id))
+
+    def _validate_version(self, sale: Sale, version: int) -> None:
+        if sale.version != version:
+            raise conflict("This invoice was changed by another user. Reload it before saving.")
+
+    def _returned_quantities(self, sale: Sale) -> dict[UUID, int]:
+        rows = (
+            self.db.query(SaleReturnItem.sale_item_id, func.coalesce(func.sum(SaleReturnItem.quantity), 0))
+            .join(SaleReturn)
+            .filter(SaleReturn.sale_id == sale.id)
+            .group_by(SaleReturnItem.sale_item_id)
+            .all()
+        )
+        return {sale_item_id: quantity for sale_item_id, quantity in rows}
+
+    def _audit_snapshot(self, sale: Sale) -> dict:
+        return {
+            "status": sale.status.value,
+            "version": sale.version,
+            "customer_name": sale.customer_name,
+            "payment_mode": sale.payment_mode,
+            "subtotal": str(sale.subtotal),
+            "discount": str(sale.discount),
+            "total_amount": str(sale.total_amount),
+            "items": [{"product_id": str(item.product_id), "quantity": item.quantity, "unit_price": str(item.unit_price)} for item in sale.items],
+        }

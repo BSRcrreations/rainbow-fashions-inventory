@@ -5,6 +5,7 @@ CREATE TYPE pricing_type AS ENUM ('MRP', 'OWN_PRICE');
 CREATE TYPE purchase_status AS ENUM ('DRAFT', 'REVIEWED', 'CONFIRMED', 'CANCELLED');
 CREATE TYPE stock_movement_type AS ENUM ('PURCHASE', 'SALE', 'CUSTOMER_RETURN', 'SUPPLIER_RETURN', 'DAMAGE', 'MANUAL_ADJUSTMENT');
 CREATE TYPE upload_file_type AS ENUM ('INVOICE_IMAGE', 'INVOICE_PDF', 'PRODUCT_IMAGE');
+CREATE TYPE document_job_status AS ENUM ('UPLOADED', 'QUEUED', 'PREPROCESSING', 'OCR_RUNNING', 'AI_EXTRACTION', 'PRODUCT_MATCHING', 'VALIDATING', 'REVIEW_REQUIRED', 'COMPLETED', 'FAILED');
 
 CREATE TABLE stores (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -86,8 +87,8 @@ CREATE TABLE products (
     brand_id UUID NOT NULL REFERENCES brands(id) ON DELETE RESTRICT,
     sku VARCHAR(80),
     name VARCHAR(180) NOT NULL,
-    size VARCHAR(60) NOT NULL,
-    color VARCHAR(80) NOT NULL,
+    size VARCHAR(60),
+    color VARCHAR(80),
     purchase_price NUMERIC(12, 2) NOT NULL,
     selling_price NUMERIC(12, 2) NOT NULL,
     pricing_type pricing_type NOT NULL,
@@ -95,6 +96,7 @@ CREATE TABLE products (
     current_stock INTEGER NOT NULL DEFAULT 0,
     minimum_stock INTEGER NOT NULL DEFAULT 0,
     barcode VARCHAR(80),
+    product_date DATE NOT NULL DEFAULT CURRENT_DATE,
     image_url VARCHAR(500),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -109,9 +111,17 @@ CREATE TABLE products (
     ),
     CONSTRAINT fk_products_subcategory_category FOREIGN KEY (subcategory_id, category_id) REFERENCES subcategories(id, category_id) ON DELETE RESTRICT,
     CONSTRAINT fk_products_brand_category FOREIGN KEY (brand_id, category_id) REFERENCES brands(id, category_id) ON DELETE RESTRICT,
-    CONSTRAINT uq_products_variant UNIQUE (category_id, subcategory_id, brand_id, name, size, color),
     CONSTRAINT uq_products_sku UNIQUE (sku),
     CONSTRAINT uq_products_barcode UNIQUE (barcode)
+);
+
+CREATE TABLE product_variants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    color VARCHAR(80),
+    size VARCHAR(60),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_product_variants_combination UNIQUE (product_id, color, size)
 );
 
 CREATE TABLE product_inventory (
@@ -141,18 +151,72 @@ CREATE TABLE uploaded_files (
     CONSTRAINT uq_uploaded_files_stored_filename UNIQUE (stored_filename)
 );
 
+CREATE TABLE purchase_documents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    uploaded_file_id UUID NOT NULL REFERENCES uploaded_files(id) ON DELETE RESTRICT,
+    sha256 VARCHAR(64) NOT NULL,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX ix_purchase_documents_store_id ON purchase_documents(store_id);
+CREATE INDEX ix_purchase_documents_sha256 ON purchase_documents(sha256);
+
+CREATE TABLE document_processing_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES purchase_documents(id) ON DELETE CASCADE,
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    status document_job_status NOT NULL DEFAULT 'QUEUED',
+    progress INTEGER NOT NULL DEFAULT 0,
+    message VARCHAR(240) NOT NULL DEFAULT 'Queued for invoice recognition',
+    request_id VARCHAR(36) NOT NULL,
+    provider VARCHAR(40) NOT NULL DEFAULT 'mock',
+    result JSONB,
+    error_code VARCHAR(80),
+    error_message VARCHAR(300),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX ix_document_processing_jobs_document_id ON document_processing_jobs(document_id);
+CREATE INDEX ix_document_processing_jobs_store_id ON document_processing_jobs(store_id);
+CREATE INDEX ix_document_processing_jobs_request_id ON document_processing_jobs(request_id);
+
 CREATE TABLE purchases (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     store_id UUID REFERENCES stores(id) ON DELETE SET NULL,
     supplier_id UUID REFERENCES suppliers(id) ON DELETE SET NULL,
     uploaded_file_id UUID REFERENCES uploaded_files(id) ON DELETE SET NULL,
+    purchase_document_id UUID REFERENCES purchase_documents(id) ON DELETE SET NULL UNIQUE,
+    processing_job_id UUID REFERENCES document_processing_jobs(id) ON DELETE SET NULL,
     invoice_number VARCHAR(120),
+    purchase_date DATE NOT NULL DEFAULT CURRENT_DATE,
     invoice_date DATE,
+    received_date DATE,
+    due_date DATE,
     supplier_name VARCHAR(180),
+    payment_mode VARCHAR(40) NOT NULL DEFAULT 'CREDIT',
+    amount_paid NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    place_of_supply VARCHAR(120),
+    purchase_reference VARCHAR(120),
+    notes VARCHAR(1000),
+    warehouse VARCHAR(120),
+    currency VARCHAR(3) NOT NULL DEFAULT 'INR',
     status purchase_status NOT NULL DEFAULT 'DRAFT',
     extracted_payload JSONB NOT NULL DEFAULT '{}'::JSONB,
     reviewed_payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+    subtotal NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    discount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    tax_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    packaging_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    freight_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    round_off NUMERIC(12, 2) NOT NULL DEFAULT 0,
     total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    image_hash VARCHAR(64),
+    ai_processing_status VARCHAR(40) NOT NULL DEFAULT 'DRAFT',
+    version INTEGER NOT NULL DEFAULT 1,
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
     confirmed_by UUID REFERENCES users(id) ON DELETE SET NULL,
     confirmed_at TIMESTAMPTZ,
@@ -174,13 +238,24 @@ CREATE TABLE purchase_items (
     brand_name VARCHAR(120),
     category_name VARCHAR(120),
     product_name VARCHAR(180) NOT NULL,
+    barcode VARCHAR(80),
+    supplier_product_code VARCHAR(120),
+    hsn_sac VARCHAR(40),
+    unit VARCHAR(40) NOT NULL DEFAULT 'Each',
     size VARCHAR(60) NOT NULL,
     color VARCHAR(80) NOT NULL,
     quantity INTEGER NOT NULL,
     purchase_price NUMERIC(12, 2) NOT NULL,
+    discount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    tax_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    tax_rate NUMERIC(5, 2) NOT NULL DEFAULT 0,
     mrp NUMERIC(12, 2),
     line_total NUMERIC(12, 2) NOT NULL,
     confidence NUMERIC(5, 4),
+    match_status VARCHAR(40) NOT NULL DEFAULT 'NOT_FOUND',
+    batch_number VARCHAR(120),
+    expiry_date DATE,
+    user_verified BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT ck_purchase_items_quantity_positive CHECK (quantity > 0),
@@ -191,6 +266,19 @@ CREATE TABLE purchase_items (
         confidence IS NULL OR (confidence >= 0 AND confidence <= 1)
     )
 );
+
+CREATE TABLE purchase_audits (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    purchase_id UUID NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+    action VARCHAR(80) NOT NULL,
+    reason VARCHAR(500),
+    before_data JSONB,
+    after_data JSONB,
+    performed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX ix_purchase_audits_purchase_id ON purchase_audits(purchase_id);
 
 CREATE TABLE sales (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -206,6 +294,15 @@ CREATE TABLE sales (
     profit_amount NUMERIC(12, 2) NOT NULL,
     sale_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    status VARCHAR(32) NOT NULL DEFAULT 'COMPLETED',
+    version INTEGER NOT NULL DEFAULT 1,
+    edited_at TIMESTAMPTZ,
+    edited_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    edit_reason VARCHAR(300),
+    voided_at TIMESTAMPTZ,
+    voided_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    void_reason VARCHAR(300),
     CONSTRAINT uq_sales_invoice_number UNIQUE (invoice_number),
     CONSTRAINT ck_sales_amounts_non_negative CHECK (subtotal >= 0 AND discount >= 0 AND total_amount >= 0 AND cost_amount >= 0),
     CONSTRAINT ck_sales_discount_not_above_subtotal CHECK (discount <= subtotal)
@@ -220,9 +317,43 @@ CREATE TABLE sale_items (
     unit_price NUMERIC(12, 2) NOT NULL,
     unit_cost NUMERIC(12, 2) NOT NULL,
     line_total NUMERIC(12, 2) NOT NULL,
+    sku_snapshot VARCHAR(80),
+    barcode_snapshot VARCHAR(80),
+    size_snapshot VARCHAR(60),
+    color_snapshot VARCHAR(80),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT ck_sale_items_quantity_positive CHECK (quantity > 0),
     CONSTRAINT ck_sale_items_amounts_non_negative CHECK (unit_price >= 0 AND unit_cost >= 0 AND line_total >= 0)
+);
+
+CREATE TABLE sale_audits (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sale_id UUID NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+    action VARCHAR(40) NOT NULL,
+    reason VARCHAR(300),
+    performed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    before_data JSONB,
+    after_data JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE sale_returns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sale_id UUID NOT NULL REFERENCES sales(id) ON DELETE RESTRICT,
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE RESTRICT,
+    reason VARCHAR(300) NOT NULL,
+    refund_method VARCHAR(40),
+    refund_amount NUMERIC(12, 2) NOT NULL,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE sale_return_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sale_return_id UUID NOT NULL REFERENCES sale_returns(id) ON DELETE CASCADE,
+    sale_item_id UUID NOT NULL REFERENCES sale_items(id) ON DELETE RESTRICT,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    refund_amount NUMERIC(12, 2) NOT NULL
 );
 
 CREATE TABLE stock_history (
@@ -261,6 +392,7 @@ CREATE INDEX ix_products_name ON products(name);
 CREATE INDEX ix_products_color ON products(color);
 CREATE INDEX ix_products_size ON products(size);
 CREATE INDEX ix_products_barcode ON products(barcode);
+CREATE INDEX ix_product_variants_product_id ON product_variants(product_id);
 CREATE INDEX ix_products_search ON products USING gin (
     to_tsvector('simple', coalesce(sku, '') || ' ' || coalesce(name, '') || ' ' || coalesce(size, '') || ' ' || coalesce(color, '') || ' ' || coalesce(barcode, ''))
 );
@@ -271,10 +403,14 @@ CREATE INDEX ix_purchases_supplier_id ON purchases(supplier_id);
 CREATE INDEX ix_purchases_status ON purchases(status);
 CREATE INDEX ix_purchases_invoice_number ON purchases(invoice_number);
 CREATE INDEX ix_purchases_invoice_date ON purchases(invoice_date);
+CREATE INDEX ix_purchases_purchase_date ON purchases(purchase_date);
+CREATE INDEX ix_purchases_received_date ON purchases(received_date);
+CREATE INDEX ix_purchases_image_hash ON purchases(image_hash);
 CREATE INDEX ix_purchases_created_at ON purchases(created_at);
 CREATE INDEX ix_purchase_items_purchase_id ON purchase_items(purchase_id);
 CREATE INDEX ix_purchase_items_product_id ON purchase_items(product_id);
 CREATE INDEX ix_purchase_items_matched_product_id ON purchase_items(matched_product_id);
+CREATE INDEX ix_purchase_items_barcode ON purchase_items(barcode);
 CREATE INDEX ix_stock_history_product_id ON stock_history(product_id);
 CREATE INDEX ix_stock_history_store_id ON stock_history(store_id);
 CREATE INDEX ix_stock_history_movement_type ON stock_history(movement_type);
@@ -284,8 +420,14 @@ CREATE INDEX ix_sales_invoice_number ON sales(invoice_number);
 CREATE INDEX ix_sales_customer_name ON sales(customer_name);
 CREATE INDEX ix_sales_payment_mode ON sales(payment_mode);
 CREATE INDEX ix_sales_cashier_id ON sales(cashier_id);
+CREATE INDEX ix_sales_status ON sales(status);
 CREATE INDEX ix_sale_items_sale_id ON sale_items(sale_id);
 CREATE INDEX ix_sale_items_product_id ON sale_items(product_id);
+CREATE INDEX ix_sale_audits_sale_id ON sale_audits(sale_id);
+CREATE INDEX ix_sale_returns_sale_id ON sale_returns(sale_id);
+CREATE INDEX ix_sale_returns_store_id ON sale_returns(store_id);
+CREATE INDEX ix_sale_return_items_sale_return_id ON sale_return_items(sale_return_id);
+CREATE INDEX ix_sale_return_items_sale_item_id ON sale_return_items(sale_item_id);
 CREATE INDEX ix_stock_history_sale_id ON stock_history(sale_id);
 
 CREATE OR REPLACE FUNCTION set_updated_at()

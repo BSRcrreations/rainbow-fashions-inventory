@@ -60,32 +60,6 @@ VALUES
     ('00000000-0000-0000-0000-000000005004', '00000000-0000-0000-0000-000000001004', 'General', 'Default product group')
 ON CONFLICT (category_id, name) DO UPDATE SET description = EXCLUDED.description, is_active = TRUE;
 
-INSERT INTO suppliers (id, name, phone, email, gst_number, address)
-VALUES
-    (
-        '00000000-0000-0000-0000-000000003001',
-        'ARK Distributors',
-        '+91-9111111111',
-        'sales@arkdistributors.example',
-        '29ABCDE1234F1Z5',
-        'Wholesale Market Road'
-    ),
-    (
-        '00000000-0000-0000-0000-000000003002',
-        'GGL',
-        '+91-9222222222',
-        'orders@ggl.example',
-        '29ABCDE5678F1Z5',
-        'Industrial Area'
-    )
-ON CONFLICT (name) DO UPDATE
-SET
-    phone = EXCLUDED.phone,
-    email = EXCLUDED.email,
-    gst_number = EXCLUDED.gst_number,
-    address = EXCLUDED.address,
-    is_active = TRUE;
-
 INSERT INTO products (
     id,
     category_id,
@@ -100,7 +74,8 @@ INSERT INTO products (
     mrp,
     current_stock,
     minimum_stock,
-    barcode
+    barcode,
+    product_date
 )
 VALUES
     (
@@ -117,7 +92,8 @@ VALUES
         349.00,
         24,
         8,
-        '890000000001'
+        '890000000001',
+        CURRENT_DATE
     ),
     (
         '00000000-0000-0000-0000-000000004002',
@@ -133,7 +109,8 @@ VALUES
         369.00,
         18,
         8,
-        '890000000002'
+        '890000000002',
+        CURRENT_DATE
     ),
     (
         '00000000-0000-0000-0000-000000004003',
@@ -149,7 +126,8 @@ VALUES
         499.00,
         12,
         6,
-        '890000000003'
+        '890000000003',
+        CURRENT_DATE
     ),
     (
         '00000000-0000-0000-0000-000000004004',
@@ -165,7 +143,8 @@ VALUES
         899.00,
         7,
         5,
-        '890000000004'
+        '890000000004',
+        CURRENT_DATE
     ),
     (
         '00000000-0000-0000-0000-000000004005',
@@ -181,7 +160,8 @@ VALUES
         149.00,
         4,
         5,
-        '890000000005'
+        '890000000005',
+        CURRENT_DATE
     )
 ON CONFLICT (category_id, subcategory_id, brand_id, name, size, color) DO UPDATE
 SET
@@ -192,6 +172,7 @@ SET
     current_stock = EXCLUDED.current_stock,
     minimum_stock = EXCLUDED.minimum_stock,
     barcode = EXCLUDED.barcode,
+    product_date = EXCLUDED.product_date,
     is_active = TRUE;
 
 INSERT INTO product_inventory (product_id, store_id, current_stock, minimum_stock)

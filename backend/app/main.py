@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,7 +9,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.staticfiles import StaticFiles
 
-from app.api.routes import auth, brands, categories, dashboard, products, purchases, sales, stock, subcategories
+from app.api.routes import auth, brands, categories, dashboard, products, purchases, sales, stock, subcategories, purchase_documents
 from app.core.config import get_settings
 from app.core.exceptions import error_payload
 from app.core.logging import configure_logging
@@ -30,6 +32,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers.setdefault("X-Request-ID", request_id)
+    return response
 
 settings.product_upload_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/uploads/products", StaticFiles(directory=settings.product_upload_dir), name="product_uploads")
@@ -58,6 +69,7 @@ app.include_router(subcategories.router, prefix=settings.api_v1_prefix)
 app.include_router(sales.router, prefix=settings.api_v1_prefix)
 app.include_router(products.router, prefix=settings.api_v1_prefix)
 app.include_router(purchases.router, prefix=settings.api_v1_prefix)
+app.include_router(purchase_documents.router, prefix=settings.api_v1_prefix)
 app.include_router(stock.router, prefix=settings.api_v1_prefix)
 
 

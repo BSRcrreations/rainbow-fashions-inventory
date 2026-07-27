@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.models.enums import SaleStatus
 from app.schemas.common import ORMBaseModel
 
 
@@ -17,6 +18,10 @@ class SaleItemCreate(BaseModel):
     product_id: UUID
     quantity: int = Field(gt=0)
     unit_price: Optional[Decimal] = Field(default=None, ge=0)
+
+
+class SaleItemUpdate(SaleItemCreate):
+    pass
 
 
 class SaleCreate(BaseModel):
@@ -35,6 +40,48 @@ class SaleCreate(BaseModel):
         return value.strip() or None
 
 
+class SaleUpdate(BaseModel):
+    customer_name: Optional[str] = Field(default=None, max_length=180)
+    payment_mode: PaymentMode
+    discount: Decimal = Field(default=Decimal("0"), ge=0)
+    edit_reason: str = Field(min_length=3, max_length=300)
+    version: int = Field(gt=0)
+    items: list[SaleItemUpdate] = Field(min_length=1)
+
+    @field_validator("customer_name", "edit_reason", mode="before")
+    @classmethod
+    def normalize_text(cls, value: Optional[str]) -> Optional[str]:
+        if not isinstance(value, str):
+            return value
+        return value.strip() or None
+
+
+class SaleVoidRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=300)
+    version: int = Field(gt=0)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        return value.strip() if isinstance(value, str) else value
+
+
+class SaleReturnItemCreate(BaseModel):
+    sale_item_id: UUID
+    quantity: int = Field(gt=0)
+
+
+class SaleReturnCreate(BaseModel):
+    reason: str = Field(min_length=3, max_length=300)
+    refund_method: Optional[PaymentMode] = None
+    items: list[SaleReturnItemCreate] = Field(min_length=1)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_return_reason(cls, value: str) -> str:
+        return value.strip() if isinstance(value, str) else value
+
+
 class SaleItemRead(ORMBaseModel):
     id: UUID
     product_id: UUID
@@ -43,6 +90,10 @@ class SaleItemRead(ORMBaseModel):
     unit_price: Decimal
     unit_cost: Decimal
     line_total: Decimal
+    sku_snapshot: Optional[str] = None
+    barcode_snapshot: Optional[str] = None
+    size_snapshot: Optional[str] = None
+    color_snapshot: Optional[str] = None
 
 
 class CashierRead(ORMBaseModel):
@@ -60,9 +111,39 @@ class SaleRead(ORMBaseModel):
     total_amount: Decimal
     cost_amount: Decimal
     profit_amount: Decimal
+    status: SaleStatus
+    version: int
+    edit_reason: Optional[str] = None
+    void_reason: Optional[str] = None
     sale_date: datetime
     cashier: Optional[CashierRead] = None
     items: list[SaleItemRead] = Field(default_factory=list)
+
+
+class SaleAuditRead(ORMBaseModel):
+    id: UUID
+    action: str
+    reason: Optional[str]
+    performed_by: Optional[UUID]
+    before_data: Optional[dict] = None
+    after_data: Optional[dict] = None
+    created_at: datetime
+
+
+class SaleReturnItemRead(ORMBaseModel):
+    id: UUID
+    sale_item_id: UUID
+    quantity: int
+    refund_amount: Decimal
+
+
+class SaleReturnRead(ORMBaseModel):
+    id: UUID
+    reason: str
+    refund_method: Optional[str]
+    refund_amount: Decimal
+    created_at: datetime
+    items: list[SaleReturnItemRead] = Field(default_factory=list)
 
 
 class SaleListMeta(BaseModel):

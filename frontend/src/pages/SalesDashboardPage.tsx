@@ -64,7 +64,7 @@ export default function SalesDashboardPage() {
             <StatCard label={`${periodName} Profit`} value={money(data.selected.profit)} tone="amber" icon={TrendingUp} />
           </section>
 
-          <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_4px_18px_rgba(15,23,42,0.05)]">
+          <section className="ds-surface overflow-hidden shadow-md">
             <div className="border-b border-slate-100 px-5 py-4 sm:px-6"><h2 className="text-lg font-semibold text-slate-950">{periodName} Collection</h2><p className="mt-1 text-sm text-slate-500">Collected across completed invoices for this period</p></div>
             <CollectionRow icon={Banknote} label="Cash Collection" value={data.collection?.cash ?? "0"} tone="cash" />
             <CollectionRow icon={Smartphone} label="UPI Collection" value={data.collection?.upi ?? "0"} tone="upi" />

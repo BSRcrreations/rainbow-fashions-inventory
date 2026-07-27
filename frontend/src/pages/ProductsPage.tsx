@@ -1,8 +1,9 @@
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Download, Edit3, FileDown, FileUp, Filter, ImagePlus, PackageOpen, Plus, RefreshCw, Search, Trash2, Wand2, X } from "lucide-react";
+import { Barcode, ChevronLeft, ChevronRight, Download, Edit3, FileDown, FileUp, Filter, ImagePlus, PackageOpen, Plus, RefreshCw, Search, Trash2, Wand2, X } from "lucide-react";
 import { api } from "../api/client";
 import ConfirmDialog from "../components/ConfirmDialog";
+import BarcodeLabelDialog from "../components/BarcodeLabelDialog";
 import Dialog from "../components/Dialog";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
@@ -14,6 +15,7 @@ import { Button } from "../components/ui/button";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import type { CategoryHierarchy, PaginatedProducts, PricingType, Product } from "../types";
 import { money } from "../utils/format";
+import { productVariantLabel } from "../utils/product";
 
 type SortBy = "name" | "sku" | "selling_price" | "purchase_price" | "stock" | "created_at" | "updated_at";
 type SortDir = "asc" | "desc";
@@ -25,8 +27,10 @@ interface ProductFormState {
   brand_id: string;
   sku: string;
   name: string;
-  size: string;
-  color: string;
+  has_sizes: boolean;
+  sizes: string[];
+  has_colors: boolean;
+  colors: string[];
   purchase_price: string;
   selling_price: string;
   pricing_type: PricingType;
@@ -34,6 +38,7 @@ interface ProductFormState {
   current_stock: string;
   minimum_stock: string;
   barcode: string;
+  product_date: string;
   is_active: boolean;
 }
 
@@ -43,8 +48,10 @@ const emptyForm: ProductFormState = {
   brand_id: "",
   sku: "",
   name: "",
-  size: "",
-  color: "",
+  has_sizes: false,
+  sizes: [],
+  has_colors: false,
+  colors: [],
   purchase_price: "",
   selling_price: "",
   pricing_type: "OWN_PRICE",
@@ -52,18 +59,26 @@ const emptyForm: ProductFormState = {
   current_stock: "0",
   minimum_stock: "0",
   barcode: "",
+  product_date: new Date().toISOString().slice(0, 10),
   is_active: true,
 };
 
 function formFromProduct(product: Product): ProductFormState {
+  const variants = product.variants ?? [];
+  const sizes = Array.from(new Set(variants.map((variant) => variant.size).filter((value): value is string => Boolean(value))));
+  const colors = Array.from(new Set(variants.map((variant) => variant.color).filter((value): value is string => Boolean(value))));
+  if (!sizes.length && product.size) sizes.push(product.size);
+  if (!colors.length && product.color) colors.push(product.color);
   return {
     category_id: product.category_id,
     subcategory_id: product.subcategory_id,
     brand_id: product.brand_id,
     sku: product.sku ?? "",
     name: product.name,
-    size: product.size,
-    color: product.color,
+    has_sizes: sizes.length > 0,
+    sizes,
+    has_colors: colors.length > 0,
+    colors,
     purchase_price: String(product.purchase_price),
     selling_price: String(product.selling_price),
     pricing_type: product.pricing_type,
@@ -71,6 +86,7 @@ function formFromProduct(product: Product): ProductFormState {
     current_stock: String(product.current_stock),
     minimum_stock: String(product.minimum_stock),
     barcode: product.barcode ?? "",
+    product_date: product.product_date,
     is_active: product.is_active,
   };
 }
@@ -119,6 +135,7 @@ export default function ProductsPage() {
   const [bulkQty, setBulkQty] = useState("1");
   const [bulkDirection, setBulkDirection] = useState<"INCREASE" | "DECREASE">("INCREASE");
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [printTarget, setPrintTarget] = useState<Product | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -246,19 +263,24 @@ export default function ProductsPage() {
   }
 
   function validateForm() {
-    const requiredFields: Array<[Exclude<keyof ProductFormState, "is_active">, string]> = [
+    const requiredFields: Array<["category_id" | "subcategory_id" | "brand_id" | "name" | "purchase_price" | "selling_price" | "product_date", string]> = [
       ["category_id", "Category is required"],
       ["subcategory_id", "Subcategory is required"],
       ["brand_id", "Brand is required"],
       ["name", "Product name is required"],
-      ["size", "Size is required"],
-      ["color", "Color is required"],
       ["purchase_price", "Cost is required"],
       ["selling_price", "Price is required"],
+      ["product_date", "Product date is required"],
     ];
     for (const [key, message] of requiredFields) {
       if (!form[key].trim()) return message;
     }
+    const sizes = form.sizes.map((value) => value.trim()).filter(Boolean);
+    const colors = form.colors.map((value) => value.trim()).filter(Boolean);
+    if (form.has_sizes && !sizes.length) return "Add at least one size or turn off sizes";
+    if (form.has_colors && !colors.length) return "Add at least one color or turn off colors";
+    if (new Set(sizes.map((value) => value.toLocaleLowerCase())).size !== sizes.length) return "Sizes must be unique";
+    if (new Set(colors.map((value) => value.toLocaleLowerCase())).size !== colors.length) return "Colors must be unique";
     const purchasePrice = Number(form.purchase_price);
     const sellingPrice = Number(form.selling_price);
     const currentStock = Number(form.current_stock);
@@ -273,34 +295,61 @@ export default function ProductsPage() {
   }
 
   function payload() {
+    const sizes = form.has_sizes ? form.sizes.map((value) => value.trim()).filter(Boolean) : [];
+    const colors = form.has_colors ? form.colors.map((value) => value.trim()).filter(Boolean) : [];
     return {
-      ...form,
+      category_id: form.category_id,
+      subcategory_id: form.subcategory_id,
+      brand_id: form.brand_id,
       sku: form.sku.trim() || null,
       name: form.name.trim(),
-      size: form.size.trim(),
-      color: form.color.trim(),
+      size: sizes[0] ?? null,
+      color: colors[0] ?? null,
+      sizes,
+      colors,
       purchase_price: Number(form.purchase_price),
       selling_price: Number(form.selling_price),
       mrp: form.mrp ? Number(form.mrp) : null,
       current_stock: Number(form.current_stock),
       minimum_stock: Number(form.minimum_stock),
       barcode: form.barcode.trim() || null,
+      product_date: form.product_date,
       is_active: form.is_active,
+      pricing_type: form.pricing_type,
     };
   }
 
+  function setVariantEnabled(kind: "sizes" | "colors", enabled: boolean) {
+    const flag = kind === "sizes" ? "has_sizes" : "has_colors";
+    setForm((current) => ({ ...current, [flag]: enabled, [kind]: enabled ? (current[kind].length ? current[kind] : [""]) : [] }));
+  }
+
+  function setVariantValue(kind: "sizes" | "colors", index: number, value: string) {
+    setForm((current) => ({ ...current, [kind]: current[kind].map((item, itemIndex) => itemIndex === index ? value : item) }));
+  }
+
+  function addVariantValue(kind: "sizes" | "colors") {
+    setForm((current) => ({ ...current, [kind]: [...current[kind], ""] }));
+  }
+
+  function removeVariantValue(kind: "sizes" | "colors", index: number) {
+    setForm((current) => ({ ...current, [kind]: current[kind].filter((_, itemIndex) => itemIndex !== index) }));
+  }
+
   const saveMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ print }: { print: boolean }) => {
+      void print;
       const validationError = validateForm();
       if (validationError) throw new Error(validationError);
       const product = editing ? await api.put<Product>(`/products/${editing.id}`, payload()) : await api.post<Product>("/products", payload());
       if (imageFile) {
         const body = new FormData();
         body.append("file", imageFile);
-        await api.post<Product>(`/products/${product.id}/image`, body);
+        return api.post<Product>(`/products/${product.id}/image`, body);
       }
+      return product;
     },
-    onSuccess: () => {
+    onSuccess: (product, variables) => {
       toast.success(editing ? "Product updated" : "Product added");
       setForm(emptyForm);
       setEditing(null);
@@ -308,6 +357,7 @@ export default function ProductsPage() {
       setImageFile(null);
       setError("");
       invalidateProducts();
+      if (variables.print) setPrintTarget(product);
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : "Unable to save product";
@@ -548,7 +598,7 @@ export default function ProductsPage() {
       </div>
 
       <Dialog open={formOpen} title={editing ? "Edit product" : "Add product"} description={editing ? `Update ${editing.name} without changing its stock history.` : "Add the essentials now. You can edit details later."} onClose={cancelEdit} maxWidth="xl">
-      <form onSubmit={(event: FormEvent) => { event.preventDefault(); saveMutation.mutate(); }} className="grid gap-4 sm:grid-cols-2">
+      <form onSubmit={(event: FormEvent) => { event.preventDefault(); saveMutation.mutate({ print: false }); }} className="grid gap-4 sm:grid-cols-2">
         <label className="field-label">Category<span>*</span>
         <select autoFocus className="field-input" value={form.category_id} onChange={(event) => setForm({ ...form, category_id: event.target.value, subcategory_id: "", brand_id: "" })} disabled={saveMutation.isPending}>
           <option value="">Category</option>
@@ -582,8 +632,19 @@ export default function ProductsPage() {
           <Button type="button" variant="secondary" size="icon" onClick={() => void generateCode("barcode")} title="Generate barcode"><Wand2 size={16} /></Button>
         </div>
         </label>
-        <label className="field-label">Size<span>*</span><input className="field-input" placeholder="e.g. M" value={form.size} onChange={(event) => setForm({ ...form, size: event.target.value })} disabled={saveMutation.isPending} /></label>
-        <label className="field-label">Color<span>*</span><input className="field-input" placeholder="e.g. Black" value={form.color} onChange={(event) => setForm({ ...form, color: event.target.value })} disabled={saveMutation.isPending} /></label>
+        <label className="field-label">Product date<span>*</span><input className="field-input" type="date" value={form.product_date} onChange={(event) => setForm({ ...form, product_date: event.target.value })} disabled={saveMutation.isPending} /></label>
+        <div className="grid gap-3 rounded-lg border border-border bg-surface-subtle p-4 sm:col-span-2 sm:grid-cols-2">
+          <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border bg-surface px-3 text-sm font-semibold text-slate-700">
+            <input type="checkbox" checked={form.has_colors} onChange={(event) => setVariantEnabled("colors", event.target.checked)} disabled={saveMutation.isPending} />
+            This product has Colors
+          </label>
+          <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border bg-surface px-3 text-sm font-semibold text-slate-700">
+            <input type="checkbox" checked={form.has_sizes} onChange={(event) => setVariantEnabled("sizes", event.target.checked)} disabled={saveMutation.isPending} />
+            This product has Sizes
+          </label>
+        </div>
+        {form.has_colors ? <div className="space-y-3 rounded-lg border border-border p-4 sm:col-span-2"><div><div className="text-sm font-semibold text-foreground">Colors</div><div className="mt-1 text-xs text-muted">Add every color this product is available in.</div></div>{form.colors.map((color, index) => <div key={`color-${index}`} className="flex gap-2"><input className="field-input min-w-0 flex-1" aria-label={`Color ${index + 1}`} placeholder="e.g. Black" value={color} onChange={(event) => setVariantValue("colors", index, event.target.value)} disabled={saveMutation.isPending} />{form.colors.length > 1 ? <Button type="button" variant="ghost" size="icon" onClick={() => removeVariantValue("colors", index)} aria-label={`Remove color ${index + 1}`}><X size={17} /></Button> : null}</div>)}<Button type="button" variant="secondary" size="sm" onClick={() => addVariantValue("colors")} disabled={saveMutation.isPending}><Plus size={16} /> Add Another</Button></div> : null}
+        {form.has_sizes ? <div className="space-y-3 rounded-lg border border-border p-4 sm:col-span-2"><div><div className="text-sm font-semibold text-foreground">Sizes</div><div className="mt-1 text-xs text-muted">Add every size this product is available in.</div></div>{form.sizes.map((size, index) => <div key={`size-${index}`} className="flex gap-2"><input className="field-input min-w-0 flex-1" aria-label={`Size ${index + 1}`} placeholder="e.g. M" value={size} onChange={(event) => setVariantValue("sizes", index, event.target.value)} disabled={saveMutation.isPending} />{form.sizes.length > 1 ? <Button type="button" variant="ghost" size="icon" onClick={() => removeVariantValue("sizes", index)} aria-label={`Remove size ${index + 1}`}><X size={17} /></Button> : null}</div>)}<Button type="button" variant="secondary" size="sm" onClick={() => addVariantValue("sizes")} disabled={saveMutation.isPending}><Plus size={16} /> Add Another</Button></div> : null}
         <label className="field-label">Cost price<span>*</span><input className="field-input" placeholder="0.00" type="number" min="0" step="0.01" value={form.purchase_price} onChange={(event) => setForm({ ...form, purchase_price: event.target.value })} disabled={saveMutation.isPending} /></label>
         <label className="field-label">Selling price<span>*</span><input className="field-input" placeholder="0.00" type="number" min="0" step="0.01" value={form.selling_price} onChange={(event) => setForm({ ...form, selling_price: event.target.value })} disabled={saveMutation.isPending} /></label>
         <label className="field-label">Pricing<select className="field-input" value={form.pricing_type} onChange={(event) => setForm({ ...form, pricing_type: event.target.value as PricingType })} disabled={saveMutation.isPending}>
@@ -616,6 +677,9 @@ export default function ProductsPage() {
           <Button type="button" variant="secondary" onClick={cancelEdit} disabled={saveMutation.isPending}>Cancel</Button>
           <Button type="submit" disabled={saveMutation.isPending}>
             <Plus size={16} /> {saveMutation.isPending ? "Saving" : editing ? "Update product" : "Add product"}
+          </Button>
+          <Button type="button" variant="secondary" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate({ print: true })}>
+            <Barcode size={16} /> {saveMutation.isPending ? "Saving" : "Save & Print Barcode"}
           </Button>
         </div>
       </form>
@@ -653,7 +717,7 @@ export default function ProductsPage() {
                     <div className="truncate font-semibold text-slate-950"><HighlightText text={product.name} query={debouncedSearch} /></div>
                     <div className="mt-0.5 truncate text-xs text-slate-500"><HighlightText text={product.category?.name} query={debouncedSearch} /> · <HighlightText text={product.subcategory?.name} query={debouncedSearch} /> · <HighlightText text={product.brand?.name} query={debouncedSearch} /></div>
                     <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600">
-                      <span>{product.size} / {product.color}</span>
+                      <span>{productVariantLabel(product)}</span>
                       <span>{product.sku || product.barcode || "No code"}</span>
                     </div>
                   </div>
@@ -665,6 +729,7 @@ export default function ProductsPage() {
                   </div>
                   <div className="flex gap-1">
                     <Button type="button" variant="secondary" size="sm" onClick={() => beginEdit(product)}><Edit3 size={15} /> Edit</Button>
+                    <Button type="button" variant="ghost" size="icon" onClick={() => setPrintTarget(product)} title="Print barcode"><Barcode size={16} /></Button>
                     <Button type="button" variant="ghost" size="icon" className="text-rose-700" onClick={() => setDeleteTarget(product)} title="Delete product"><Trash2 size={16} /></Button>
                   </div>
                 </div>
@@ -703,7 +768,7 @@ export default function ProductsPage() {
                     <div><HighlightText text={product.sku || "-"} query={debouncedSearch} /></div>
                     <div className="text-slate-500"><HighlightText text={product.barcode || "-"} query={debouncedSearch} /></div>
                   </td>
-                  <td className="px-4 py-3">{product.size} / {product.color}</td>
+                  <td className="px-4 py-3">{productVariantLabel(product)}</td>
                   <td className="px-4 py-3">{money(product.selling_price)}</td>
                   <td className="px-4 py-3">{money(product.purchase_price)}</td>
                   <td className="px-4 py-3">
@@ -719,6 +784,7 @@ export default function ProductsPage() {
                   <td className="px-4 py-3 text-right">
                     <div className="flex justify-end gap-2">
                       <Button type="button" variant="secondary" size="icon" onClick={() => beginEdit(product)} title="Edit product"><Edit3 size={16} /></Button>
+                      <Button type="button" variant="ghost" size="icon" onClick={() => setPrintTarget(product)} title="Print barcode"><Barcode size={16} /></Button>
                       <Button type="button" variant="ghost" size="icon" className="text-rose-700 hover:bg-rose-50" onClick={() => setDeleteTarget(product)} title="Delete product"><Trash2 size={17} /></Button>
                     </div>
                   </td>
@@ -757,6 +823,7 @@ export default function ProductsPage() {
         onCancel={() => setDeleteTarget(null)}
         onConfirm={() => deleteTarget ? deleteMutation.mutate(deleteTarget.id) : undefined}
       />
+      <BarcodeLabelDialog open={Boolean(printTarget)} product={printTarget} onClose={() => setPrintTarget(null)} />
       <ConfirmDialog
         open={bulkDeleteOpen}
         title="Delete selected products"

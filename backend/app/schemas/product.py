@@ -20,8 +20,8 @@ class ProductBase(BaseModel):
     brand_id: UUID
     sku: Optional[str] = Field(default=None, max_length=80)
     name: str = Field(min_length=2, max_length=180)
-    size: str = Field(min_length=1, max_length=60)
-    color: str = Field(min_length=1, max_length=80)
+    size: Optional[str] = Field(default=None, min_length=1, max_length=60)
+    color: Optional[str] = Field(default=None, min_length=1, max_length=80)
     purchase_price: Decimal = Field(ge=0)
     selling_price: Decimal = Field(ge=0)
     pricing_type: PricingType
@@ -29,6 +29,7 @@ class ProductBase(BaseModel):
     current_stock: int = Field(default=0, ge=0)
     minimum_stock: int = Field(default=0, ge=0)
     barcode: Optional[str] = Field(default=None, max_length=80)
+    product_date: date
     image_url: Optional[str] = Field(default=None, max_length=500)
     is_active: bool = True
 
@@ -40,12 +41,20 @@ class ProductBase(BaseModel):
         stripped = value.strip()
         return stripped or None
 
-    @field_validator("name", "size", "color", mode="before")
+    @field_validator("name", mode="before")
     @classmethod
     def normalize_required_text(cls, value: str) -> str:
         if not isinstance(value, str):
             return value
         return value.strip()
+
+    @field_validator("size", "color", mode="before")
+    @classmethod
+    def normalize_optional_variant_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        return stripped or None
 
     @model_validator(mode="after")
     def validate_pricing(self) -> "ProductBase":
@@ -55,7 +64,25 @@ class ProductBase(BaseModel):
 
 
 class ProductCreate(ProductBase):
-    pass
+    colors: list[str] = Field(default_factory=list, max_length=50)
+    sizes: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("colors", "sizes", mode="before")
+    @classmethod
+    def normalize_variant_values(cls, values: object) -> object:
+        if not isinstance(values, list):
+            return values
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            normalized = value.strip()
+            key = normalized.casefold()
+            if normalized and key not in seen:
+                seen.add(key)
+                result.append(normalized)
+        return result
 
 
 class ProductUpdate(BaseModel):
@@ -73,8 +100,11 @@ class ProductUpdate(BaseModel):
     current_stock: Optional[int] = Field(default=None, ge=0)
     minimum_stock: Optional[int] = Field(default=None, ge=0)
     barcode: Optional[str] = Field(default=None, max_length=80)
+    product_date: Optional[date] = None
     image_url: Optional[str] = Field(default=None, max_length=500)
     is_active: Optional[bool] = None
+    colors: Optional[list[str]] = Field(default=None, max_length=50)
+    sizes: Optional[list[str]] = Field(default=None, max_length=50)
 
     @field_validator("sku", "barcode", mode="before")
     @classmethod
@@ -89,7 +119,33 @@ class ProductUpdate(BaseModel):
     def normalize_required_text(cls, value: Optional[str]) -> Optional[str]:
         if value is None or not isinstance(value, str):
             return value
-        return value.strip()
+        stripped = value.strip()
+        return stripped or None
+
+    @field_validator("colors", "sizes", mode="before")
+    @classmethod
+    def normalize_variant_values(cls, values: object) -> object:
+        if values is None or not isinstance(values, list):
+            return values
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            normalized = value.strip()
+            key = normalized.casefold()
+            if normalized and key not in seen:
+                seen.add(key)
+                result.append(normalized)
+        return result
+
+
+class ProductVariantRead(ORMBaseModel):
+    id: UUID
+    product_id: UUID
+    color: Optional[str] = None
+    size: Optional[str] = None
+    created_at: datetime
 
 
 class ProductRead(ProductBase, ORMBaseModel):
@@ -99,6 +155,7 @@ class ProductRead(ProductBase, ORMBaseModel):
     category: Optional[CategoryRead] = None
     subcategory: Optional[SubCategoryRead] = None
     brand: Optional[BrandRead] = None
+    variants: list[ProductVariantRead] = Field(default_factory=list)
 
 
 class ProductListMeta(BaseModel):

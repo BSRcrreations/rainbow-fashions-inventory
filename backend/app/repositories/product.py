@@ -6,11 +6,12 @@ from typing import Literal, Optional
 from uuid import UUID
 
 from sqlalchemy import func, or_
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.models.brand import Brand
 from app.models.category import Category
 from app.models.product import Product
+from app.models.product_variant import ProductVariant
 from app.models.stock_history import StockHistory
 from app.models.subcategory import SubCategory
 from app.repositories.base import BaseRepository
@@ -76,7 +77,7 @@ class ProductRepository(BaseRepository[Product]):
         created_from: Optional[date] = None,
         created_to: Optional[date] = None,
     ):
-        query = self.db.query(Product).options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand))
+        query = self.db.query(Product).options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand), selectinload(Product.variants))
         if search:
             pattern = f"%{search.strip()}%"
             query = query.join(Product.category).join(Product.subcategory).join(Product.brand).filter(
@@ -85,6 +86,7 @@ class ProductRepository(BaseRepository[Product]):
                     Product.name.ilike(pattern),
                     Product.color.ilike(pattern),
                     Product.size.ilike(pattern),
+                    Product.variants.any(or_(ProductVariant.color.ilike(pattern), ProductVariant.size.ilike(pattern))),
                     Product.barcode.ilike(pattern),
                     Brand.name.ilike(pattern),
                     Category.name.ilike(pattern),
@@ -130,7 +132,7 @@ class ProductRepository(BaseRepository[Product]):
     def get_with_relations(self, product_id: UUID) -> Optional[Product]:
         return (
             self.db.query(Product)
-            .options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand))
+            .options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand), selectinload(Product.variants))
             .filter(Product.id == product_id)
             .first()
         )
@@ -141,8 +143,6 @@ class ProductRepository(BaseRepository[Product]):
         subcategory_id: UUID,
         brand_id: UUID,
         name: str,
-        size: str,
-        color: str,
         exclude_id: Optional[UUID] = None,
     ) -> Optional[Product]:
         query = self.db.query(Product).filter(
@@ -150,8 +150,6 @@ class ProductRepository(BaseRepository[Product]):
             Product.subcategory_id == subcategory_id,
             Product.brand_id == brand_id,
             func.lower(Product.name) == name.strip().lower(),
-            func.lower(Product.size) == size.strip().lower(),
-            func.lower(Product.color) == color.strip().lower(),
         )
         if exclude_id:
             query = query.filter(Product.id != exclude_id)
@@ -162,6 +160,14 @@ class ProductRepository(BaseRepository[Product]):
         if exclude_id:
             query = query.filter(Product.id != exclude_id)
         return query.first()
+
+    def get_by_barcode_with_relations(self, barcode: str) -> Optional[Product]:
+        return (
+            self.db.query(Product)
+            .options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand), selectinload(Product.variants))
+            .filter(func.lower(Product.barcode) == barcode.strip().lower())
+            .first()
+        )
 
     def get_by_sku(self, sku: str, exclude_id: Optional[UUID] = None) -> Optional[Product]:
         query = self.db.query(Product).filter(func.lower(Product.sku) == sku.strip().lower())

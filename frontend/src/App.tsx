@@ -5,9 +5,11 @@ import LoginPage from "./pages/LoginPage";
 import SalesDashboardPage from "./pages/SalesDashboardPage";
 import SalesHistoryPage from "./pages/SalesHistoryPage";
 import NewSalePage from "./pages/NewSalePage";
+import EditSalePage from "./pages/EditSalePage";
 import ProductsPage from "./pages/ProductsPage";
 import CategoriesPage from "./pages/CategoriesPage";
 import PurchasesPage from "./pages/PurchasesPage";
+import PurchaseDetailPage from "./pages/PurchaseDetailPage";
 import StockPage from "./pages/StockPage";
 import StockAdjustmentPage from "./pages/StockAdjustmentPage";
 
@@ -20,10 +22,12 @@ export default function App() {
           <Route index element={<SalesDashboardPage />} />
           <Route path="/sales" element={<NewSalePage />} />
           <Route path="/sales/history" element={<SalesHistoryPage />} />
+          <Route path="/sales/:saleId/edit" element={<EditSalePage />} />
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/categories" element={<CategoriesPage />} />
           <Route path="/brands" element={<Navigate to="/categories" replace />} />
           <Route path="/purchases" element={<PurchasesPage />} />
+          <Route path="/purchases/:purchaseId" element={<PurchaseDetailPage />} />
           <Route path="/stock" element={<StockPage />} />
           <Route path="/stock/adjustment" element={<StockAdjustmentPage />} />
         </Route>

@@ -8,6 +8,7 @@ Sales and hierarchy additions:
 - `GET|POST /subcategories` and `PUT|DELETE /subcategories/{id}` manage category-owned subcategories.
 - `GET /brands?category_id={id}` filters brands by category; brand create requires `category_id`.
 - Product create/update requires `category_id`, `subcategory_id`, and `brand_id`; mismatched parent categories return a validation error.
+- Product `size` and `color` are optional compatibility fields. Create/update accepts optional `sizes: string[]` and `colors: string[]`; responses include linked `variants`. Supplying neither list creates a product without variants.
 - `GET /sales/dashboard?preset=today|yesterday|week|month|custom` returns KPIs, trends, rankings, recent sales, and stock alerts. Custom ranges require `start_date` and `end_date`.
 - `GET /sales` returns paginated, searchable sales history with payment and date filters.
 - `POST /sales` creates an atomic sale and related stock movements.
@@ -130,21 +131,40 @@ Image rules:
 - Maximum product image size is 5 MB.
 - Images are stored with generated filenames.
 - Products store a relative `image_url`, for example `/uploads/products/{filename}.webp`.
+- `product_date` is required when creating a product and is returned with every product response.
+- `GET /products/barcode/{barcode}` performs an authenticated exact barcode lookup and returns the normal product response with category, subcategory, brand, and variants. It is declared before the UUID product route.
+- A missing barcode returns `404`; inactive and out-of-stock products are returned so POS can give the cashier a specific message.
 
 Import/export:
 
 - CSV import/export is supported.
 - XLSX import/export is supported when `openpyxl` is installed.
 - Invalid import rows are skipped and returned in an error report.
-- Import expects existing brand and category names.
+- Import expects existing brand and category names and a valid `product_date` in `YYYY-MM-DD` form.
 
 Purchases:
 
 - `GET /purchases`
-- `POST /purchases/upload`
+- `GET /purchases/{purchase_id}` returns the complete store-scoped detail record, document metadata, processing job, totals, and audit history.
+- `PATCH /purchases/{purchase_id}` updates only supplied draft/review fields and supports optimistic `version` checks.
+- `POST /purchases/{purchase_id}/validate` validates invoice and item readiness without changing stock.
+- `POST /purchases/{purchase_id}/cancel` cancels an unconfirmed purchase and records a reason.
+- `GET /purchases/{purchase_id}/document` streams the protected original invoice without exposing a storage path.
+- `POST /purchases/{purchase_id}/items`, `PATCH /purchases/{purchase_id}/items/{item_id}`, and `DELETE /purchases/{purchase_id}/items/{item_id}` manage editable draft lines.
+- `POST /purchase-documents/upload` accepts multipart field `file` and returns `202 Accepted` with `document_id`, `job_id`, and `request_id`.
+- `GET /purchase-documents/jobs/{job_id}` reports queued, processing, review-ready, or failed recognition states.
+- `POST /purchase-documents/{document_id}/retry` queues a failed document again and returns `202 Accepted`.
+- `POST /purchases/from-document` creates the editable purchase draft after the job is `REVIEW_REQUIRED`.
 - `GET /purchases/{purchase_id}`
 - `PUT /purchases/{purchase_id}/review`
 - `POST /purchases/{purchase_id}/confirm`
+
+Purchase upload validation:
+
+- Supported invoices: JPG, JPEG, PNG, WEBP, HEIC, HEIF, and PDF.
+- Maximum invoice size is 15 MB; extension, declared MIME type, and file signature must agree.
+- Upload only stores the file and queues recognition. Stock changes only after `confirm`.
+- Mock OCR never fabricates supplier, invoice, or item details; a real OCR provider must be configured for extraction.
 
 Stock:
 
@@ -178,3 +198,18 @@ API errors return a stable `detail` object:
   }
 }
 ```
+# Sale corrections and returns
+
+Sales are scoped to the authenticated user's store. Staff can create, view, list, export, and print invoices. Managers and owners can additionally edit, return, and void sales.
+
+- `PATCH /api/v1/sales/{sale_id}` updates invoice items, payment, customer, and discount using the required optimistic-lock `version` and `edit_reason`.
+- `POST /api/v1/sales/{sale_id}/returns` restores selected, still-returnable quantities and creates a customer-return record.
+- `POST /api/v1/sales/{sale_id}/void` restores unreturned quantities and retains the invoice as `VOIDED`.
+- `GET /api/v1/sales/{sale_id}/audit` and `GET /api/v1/sales/{sale_id}/returns` are manager/owner audit views.
+
+All monetary values are recalculated server-side. A stale sale version returns `409 Conflict`.
+# Purchase Intake
+
+`POST /api/v1/purchase-documents/upload` stores a store-scoped invoice and returns `202 Accepted` before recognition begins. The client polls `GET /api/v1/purchase-documents/jobs/{job_id}`, can retry a failed job with `POST /api/v1/purchase-documents/{document_id}/retry`, and calls `POST /api/v1/purchases/from-document` only after the job is review-ready. It accepts JPG, JPEG, PNG, WEBP, HEIC/HEIF, and PDF invoices up to 15 MB, validates their signatures, and never updates stock.
+
+`PUT /api/v1/purchases/{purchase_id}/review` requires `purchase_date`; it can include optional invoice and received dates plus `duplicate_acknowledged` when the duplicate warning has been reviewed. `POST /api/v1/purchases/{purchase_id}/confirm` is the only purchase action that writes inventory movements and stock.

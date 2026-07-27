@@ -1,7 +1,8 @@
 export type UserRole = "OWNER" | "MANAGER" | "STAFF";
 export type PricingType = "MRP" | "OWN_PRICE";
 export type PurchaseStatus = "DRAFT" | "REVIEWED" | "CONFIRMED" | "CANCELLED";
-export type StockMovementType = "PURCHASE" | "SALE" | "CUSTOMER_RETURN" | "SUPPLIER_RETURN" | "DAMAGE" | "MANUAL_ADJUSTMENT";
+export type StockMovementType = "PURCHASE" | "SALE" | "CUSTOMER_RETURN" | "SUPPLIER_RETURN" | "DAMAGE" | "MANUAL_ADJUSTMENT" | "SALE_EDIT_RETURN" | "SALE_EDIT_DECREASE" | "SALE_VOID";
+export type SaleStatus = "COMPLETED" | "EDITED" | "PARTIALLY_RETURNED" | "RETURNED" | "VOIDED";
 
 export interface User {
   id: string;
@@ -59,8 +60,9 @@ export interface Product {
   brand_id: string;
   sku?: string | null;
   name: string;
-  size: string;
-  color: string;
+  size?: string | null;
+  color?: string | null;
+  variants: ProductVariant[];
   purchase_price: string;
   selling_price: string;
   pricing_type: PricingType;
@@ -68,6 +70,7 @@ export interface Product {
   current_stock: number;
   minimum_stock: number;
   barcode?: string | null;
+  product_date: string;
   image_url?: string | null;
   is_active: boolean;
   category?: Category | null;
@@ -75,14 +78,29 @@ export interface Product {
   brand?: Brand | null;
 }
 
+export interface ProductVariant {
+  id: string;
+  product_id: string;
+  color?: string | null;
+  size?: string | null;
+  created_at: string;
+}
+
 export interface SaleItem {
   id: string;
   product_id: string;
   product_name: string;
+  barcode?: string | null;
+  supplier_product_code?: string | null;
+  unit: string;
   quantity: number;
   unit_price: string;
   unit_cost: string;
   line_total: string;
+  sku_snapshot?: string | null;
+  barcode_snapshot?: string | null;
+  size_snapshot?: string | null;
+  color_snapshot?: string | null;
 }
 
 export interface Sale {
@@ -95,9 +113,32 @@ export interface Sale {
   total_amount: string;
   cost_amount: string;
   profit_amount: string;
+  status: SaleStatus;
+  version: number;
+  edit_reason?: string | null;
+  void_reason?: string | null;
   sale_date: string;
   cashier?: { id: string; full_name: string } | null;
   items: SaleItem[];
+}
+
+export interface SaleReturn {
+  id: string;
+  reason: string;
+  refund_method?: string | null;
+  refund_amount: string;
+  created_at: string;
+  items: Array<{ id: string; sale_item_id: string; quantity: number; refund_amount: string }>;
+}
+
+export interface SaleAudit {
+  id: string;
+  action: string;
+  reason?: string | null;
+  performed_by?: string | null;
+  before_data?: Record<string, unknown> | null;
+  after_data?: Record<string, unknown> | null;
+  created_at: string;
 }
 
 export interface PaginatedSales {
@@ -152,25 +193,71 @@ export interface PurchaseItem {
   brand_name?: string | null;
   category_name?: string | null;
   product_name: string;
+  barcode?: string | null;
+  supplier_product_code?: string | null;
+  hsn_sac?: string | null;
+  unit: string;
   size: string;
   color: string;
   quantity: number;
   purchase_price: string;
+  discount: string;
+  tax_amount: string;
+  tax_rate: string;
   mrp?: string | null;
   line_total: string;
   confidence?: string | null;
+  match_status: string;
+  batch_number?: string | null;
+  expiry_date?: string | null;
+  user_verified: boolean;
 }
 
 export interface Purchase {
   id: string;
+  store_id?: string | null;
+  supplier_id?: string | null;
+  uploaded_file_id?: string | null;
+  purchase_document_id?: string | null;
+  processing_job_id?: string | null;
   invoice_number?: string | null;
+  purchase_date: string;
   invoice_date?: string | null;
+  received_date?: string | null;
+  due_date?: string | null;
   supplier_name?: string | null;
+  payment_mode: string;
+  amount_paid: string;
+  place_of_supply?: string | null;
+  purchase_reference?: string | null;
+  notes?: string | null;
+  warehouse?: string | null;
+  currency: string;
   status: PurchaseStatus;
   total_amount: string;
+  subtotal: string;
+  discount: string;
+  tax_amount: string;
+  packaging_amount: string;
+  freight_amount: string;
+  round_off: string;
+  image_hash?: string | null;
+  ai_processing_status: string;
+  workflow_status: string;
+  version: number;
+  total_quantity: number;
+  balance_due: string;
   created_at: string;
+  updated_at: string;
   confirmed_at?: string | null;
   items: PurchaseItem[];
+}
+
+export interface PurchaseDetail extends Purchase {
+  supplier?: { id: string; name: string; gst_number?: string | null; address?: string | null; phone?: string | null; email?: string | null } | null;
+  document?: { id: string; original_filename: string; content_type: string; file_size_bytes: number; sha256: string } | null;
+  processing_job?: PurchaseDocumentJob | null;
+  audit_history: Array<{ id: string; action: string; reason?: string | null; before_data?: Record<string, unknown> | null; after_data?: Record<string, unknown> | null; performed_by?: string | null; created_at: string }>;
 }
 
 export interface StockHistory {
@@ -221,4 +308,24 @@ export interface PurchaseUploadResponse {
     items: PurchaseItem[];
   };
   review_items: PurchaseItem[];
+  duplicate_warning?: string | null;
+}
+
+export interface PurchaseDocumentAccepted {
+  document_id: string;
+  job_id: string;
+  status: string;
+  request_id: string;
+}
+
+export interface PurchaseDocumentJob {
+  id: string;
+  document_id: string;
+  status: string;
+  progress: number;
+  message: string;
+  request_id: string;
+  error_code?: string | null;
+  error_message?: string | null;
+  result?: { extracted_invoice: PurchaseUploadResponse["extracted_invoice"]; review_items: PurchaseItem[]; warnings: string[] } | null;
 }

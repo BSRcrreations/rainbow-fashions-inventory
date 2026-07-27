@@ -44,8 +44,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           return (
             <div
               key={toast.id}
-              className={`flex items-start gap-3 rounded-md border bg-white px-4 py-3 text-sm shadow-lg ${
-                toast.tone === "success" ? "border-teal-200 text-teal-800" : "border-rose-200 text-rose-800"
+              className={`ds-dialog flex items-start gap-3 px-4 py-3 text-sm ${
+                toast.tone === "success" ? "border-emerald-200 text-success" : "border-red-200 text-error"
               }`}
             >
               <Icon size={18} className="mt-0.5 shrink-0" />

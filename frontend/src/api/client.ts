@@ -18,6 +18,33 @@ export class ApiError extends Error {
   }
 }
 
+type ApiErrorField = { field?: string; loc?: Array<string | number>; message?: string; msg?: string };
+
+function fallbackMessage(status: number): string {
+  if (status === 403) return "You do not have permission to perform this action.";
+  if (status === 404) return "The requested invoice was not found.";
+  if (status === 409) return "This invoice was changed by another user. Reload it before saving.";
+  if (status === 422) return "Please correct the highlighted information and try again.";
+  if (status >= 500) return "The server could not complete this request. Please try again.";
+  return "The request could not be completed.";
+}
+
+export async function toApiError(response: Response): Promise<ApiError> {
+  const raw = await response.text();
+  let payload: unknown = raw;
+  try { payload = raw ? JSON.parse(raw) : undefined; } catch { /* Non-JSON responses use their text below. */ }
+  const body = payload && typeof payload === "object" ? payload as Record<string, unknown> : undefined;
+  const detail = body?.detail;
+  const detailObject = detail && typeof detail === "object" && !Array.isArray(detail) ? detail as Record<string, unknown> : undefined;
+  const validation = Array.isArray(detail) ? detail as ApiErrorField[] : detailObject?.fields;
+  const fields = Array.isArray(validation) ? validation.map((field: ApiErrorField) => ({ field: field.field ?? field.loc?.filter((part: string | number) => part !== "body").join(".") ?? "field", message: field.message ?? field.msg ?? "Invalid value" })) : undefined;
+  const validationMessage = fields?.length ? fields.map((field) => `${field.field}: ${field.message}`).join("; ") : undefined;
+  const detailMessage = typeof detail === "string" ? detail : typeof detailObject?.message === "string" ? detailObject.message : typeof body?.message === "string" ? body.message : undefined;
+  const message = validationMessage ?? (response.status >= 500 ? fallbackMessage(response.status) : detailMessage ?? (typeof payload === "string" && payload.trim() ? payload.trim() : fallbackMessage(response.status)));
+  const code = typeof detailObject?.code === "string" ? detailObject.code : typeof body?.code === "string" ? body.code : undefined;
+  return new ApiError(message, response.status, code, fields);
+}
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -45,15 +72,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
   if (!response.ok) {
     handleUnauthorized(response.status);
-    const error = await response.json().catch(() => ({ detail: "Request failed" }));
-    const detail = error.detail;
-    if (typeof detail === "string") {
-      throw new ApiError(detail, response.status);
-    }
-    if (detail && typeof detail === "object") {
-      throw new ApiError(detail.message ?? "Request failed", response.status, detail.code, detail.fields);
-    }
-    throw new ApiError("Request failed", response.status);
+    throw await toApiError(response);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -66,11 +85,7 @@ async function requestBlob(path: string): Promise<Blob> {
   const response = await fetch(`${API_BASE_URL}${path}`, { headers });
   if (!response.ok) {
     handleUnauthorized(response.status);
-    const error = await response.json().catch(() => ({ detail: "Request failed" }));
-    const detail = error.detail;
-    if (typeof detail === "string") throw new ApiError(detail, response.status);
-    if (detail && typeof detail === "object") throw new ApiError(detail.message ?? "Request failed", response.status, detail.code, detail.fields);
-    throw new ApiError("Request failed", response.status);
+    throw await toApiError(response);
   }
   return response.blob();
 }
@@ -83,11 +98,7 @@ async function requestBlobWithBody(path: string, body: unknown): Promise<Blob> {
   const response = await fetch(`${API_BASE_URL}${path}`, { method: "POST", headers, body: JSON.stringify(body ?? {}) });
   if (!response.ok) {
     handleUnauthorized(response.status);
-    const error = await response.json().catch(() => ({ detail: "Request failed" }));
-    const detail = error.detail;
-    if (typeof detail === "string") throw new ApiError(detail, response.status);
-    if (detail && typeof detail === "object") throw new ApiError(detail.message ?? "Request failed", response.status, detail.code, detail.fields);
-    throw new ApiError("Request failed", response.status);
+    throw await toApiError(response);
   }
   return response.blob();
 }
@@ -106,5 +117,6 @@ export const api = {
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "POST", body: body instanceof FormData ? body : JSON.stringify(body ?? {}) }),
   put: <T>(path: string, body: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
-  delete: (path: string) => request<void>(path, { method: "DELETE" })
+  patch: <T>(path: string, body: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
+  delete: <T = void>(path: string) => request<T>(path, { method: "DELETE" })
 };
