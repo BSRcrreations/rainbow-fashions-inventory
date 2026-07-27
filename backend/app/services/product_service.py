@@ -122,16 +122,27 @@ class ProductService:
             raise not_found("Product")
         return product
 
+    def get_by_barcode(self, barcode: str) -> Product:
+        normalized = barcode.strip()
+        if not normalized:
+            raise bad_request("Barcode is required")
+        product = self.repo.get_by_barcode_with_relations(normalized)
+        if not product:
+            raise not_found("Product for this barcode")
+        return product
+
     def create(self, payload: ProductCreate) -> Product:
         self._ensure_hierarchy(payload.category_id, payload.subcategory_id, payload.brand_id)
         self._validate_unique_product(payload.category_id, payload.subcategory_id, payload.brand_id, payload.name)
         if payload.sku and self.repo.get_by_sku(payload.sku):
             raise conflict("SKU already exists")
-        if payload.barcode and self.repo.get_by_barcode(payload.barcode):
+        barcode = payload.barcode or self.generate_code("barcode")
+        if self.repo.get_by_barcode(barcode):
             raise conflict("Barcode already exists")
         colors = payload.colors or ([payload.color] if payload.color else [])
         sizes = payload.sizes or ([payload.size] if payload.size else [])
         product_data = payload.model_dump(exclude={"colors", "sizes"})
+        product_data["barcode"] = barcode
         product_data["color"] = colors[0] if colors else None
         product_data["size"] = sizes[0] if sizes else None
         product = Product(**product_data)
@@ -203,10 +214,10 @@ class ProductService:
     def generate_code(self, kind: str) -> str:
         if kind not in {"sku", "barcode"}:
             raise bad_request("Code kind must be sku or barcode")
-        prefix = "RF-SKU" if kind == "sku" else "89"
+        prefix = "RF-SKU" if kind == "sku" else "RF"
         for _ in range(10):
             suffix = uuid4().hex[:10].upper()
-            value = f"{prefix}-{suffix}" if kind == "sku" else f"{prefix}{suffix[:10]}"
+            value = f"{prefix}-{suffix}" if kind == "sku" else f"{prefix}{suffix[:14]}"
             duplicate = self.repo.get_by_sku(value) if kind == "sku" else self.repo.get_by_barcode(value)
             if not duplicate:
                 return value
@@ -271,11 +282,12 @@ class ProductService:
         products = self.repo.list_by_ids(product_ids) if product_ids else self.repo.list_with_relations(0, 10000)
         output = StringIO()
         writer = csv.writer(output)
-        writer.writerow(["sku", "barcode", "name", "brand", "category", "subcategory", "size", "color", "purchase_price", "selling_price", "stock", "minimum_stock", "active"])
+        writer.writerow(["sku", "barcode", "product_date", "name", "brand", "category", "subcategory", "size", "color", "purchase_price", "selling_price", "stock", "minimum_stock", "active"])
         for product in products:
             writer.writerow([
                 product.sku or "",
                 product.barcode or "",
+                product.product_date.isoformat(),
                 product.name,
                 product.brand.name if product.brand else "",
                 product.category.name if product.category else "",
@@ -322,6 +334,7 @@ class ProductService:
                 payload = ProductCreate(
                     sku=row.get("sku") or None,
                     barcode=row.get("barcode") or None,
+                    product_date=date.fromisoformat((row.get("product_date") or "").strip()),
                     category_id=category.id,
                     subcategory_id=subcategory.id,
                     brand_id=brand.id,
@@ -355,8 +368,8 @@ class ProductService:
     def template_csv(self) -> str:
         output = StringIO()
         writer = csv.writer(output)
-        writer.writerow(["sku", "barcode", "name", "brand", "category", "subcategory", "size", "color", "purchase_price", "selling_price", "stock", "minimum_stock", "active"])
-        writer.writerow(["RF-SKU-SAMPLE", "890000000001", "Cotton Kurti", "Rainbow", "Kurtis", "General", "M", "Blue", "500", "799", "10", "2", "true"])
+        writer.writerow(["sku", "barcode", "product_date", "name", "brand", "category", "subcategory", "size", "color", "purchase_price", "selling_price", "stock", "minimum_stock", "active"])
+        writer.writerow(["RF-SKU-SAMPLE", "RF00000000000001", date.today().isoformat(), "Cotton Kurti", "Rainbow", "Kurtis", "General", "M", "Blue", "500", "799", "10", "2", "true"])
         return output.getvalue()
 
     def _ensure_hierarchy(self, category_id: UUID, subcategory_id: UUID, brand_id: UUID) -> None:

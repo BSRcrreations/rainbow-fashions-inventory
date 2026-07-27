@@ -5,6 +5,7 @@ CREATE TYPE pricing_type AS ENUM ('MRP', 'OWN_PRICE');
 CREATE TYPE purchase_status AS ENUM ('DRAFT', 'REVIEWED', 'CONFIRMED', 'CANCELLED');
 CREATE TYPE stock_movement_type AS ENUM ('PURCHASE', 'SALE', 'CUSTOMER_RETURN', 'SUPPLIER_RETURN', 'DAMAGE', 'MANUAL_ADJUSTMENT');
 CREATE TYPE upload_file_type AS ENUM ('INVOICE_IMAGE', 'INVOICE_PDF', 'PRODUCT_IMAGE');
+CREATE TYPE document_job_status AS ENUM ('UPLOADED', 'QUEUED', 'PREPROCESSING', 'OCR_RUNNING', 'AI_EXTRACTION', 'PRODUCT_MATCHING', 'VALIDATING', 'REVIEW_REQUIRED', 'COMPLETED', 'FAILED');
 
 CREATE TABLE stores (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -95,6 +96,7 @@ CREATE TABLE products (
     current_stock INTEGER NOT NULL DEFAULT 0,
     minimum_stock INTEGER NOT NULL DEFAULT 0,
     barcode VARCHAR(80),
+    product_date DATE NOT NULL DEFAULT CURRENT_DATE,
     image_url VARCHAR(500),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -149,25 +151,72 @@ CREATE TABLE uploaded_files (
     CONSTRAINT uq_uploaded_files_stored_filename UNIQUE (stored_filename)
 );
 
+CREATE TABLE purchase_documents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    uploaded_file_id UUID NOT NULL REFERENCES uploaded_files(id) ON DELETE RESTRICT,
+    sha256 VARCHAR(64) NOT NULL,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX ix_purchase_documents_store_id ON purchase_documents(store_id);
+CREATE INDEX ix_purchase_documents_sha256 ON purchase_documents(sha256);
+
+CREATE TABLE document_processing_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES purchase_documents(id) ON DELETE CASCADE,
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    status document_job_status NOT NULL DEFAULT 'QUEUED',
+    progress INTEGER NOT NULL DEFAULT 0,
+    message VARCHAR(240) NOT NULL DEFAULT 'Queued for invoice recognition',
+    request_id VARCHAR(36) NOT NULL,
+    provider VARCHAR(40) NOT NULL DEFAULT 'mock',
+    result JSONB,
+    error_code VARCHAR(80),
+    error_message VARCHAR(300),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX ix_document_processing_jobs_document_id ON document_processing_jobs(document_id);
+CREATE INDEX ix_document_processing_jobs_store_id ON document_processing_jobs(store_id);
+CREATE INDEX ix_document_processing_jobs_request_id ON document_processing_jobs(request_id);
+
 CREATE TABLE purchases (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     store_id UUID REFERENCES stores(id) ON DELETE SET NULL,
     supplier_id UUID REFERENCES suppliers(id) ON DELETE SET NULL,
     uploaded_file_id UUID REFERENCES uploaded_files(id) ON DELETE SET NULL,
+    purchase_document_id UUID REFERENCES purchase_documents(id) ON DELETE SET NULL UNIQUE,
+    processing_job_id UUID REFERENCES document_processing_jobs(id) ON DELETE SET NULL,
     invoice_number VARCHAR(120),
     purchase_date DATE NOT NULL DEFAULT CURRENT_DATE,
     invoice_date DATE,
     received_date DATE,
+    due_date DATE,
     supplier_name VARCHAR(180),
+    payment_mode VARCHAR(40) NOT NULL DEFAULT 'CREDIT',
+    amount_paid NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    place_of_supply VARCHAR(120),
+    purchase_reference VARCHAR(120),
+    notes VARCHAR(1000),
+    warehouse VARCHAR(120),
+    currency VARCHAR(3) NOT NULL DEFAULT 'INR',
     status purchase_status NOT NULL DEFAULT 'DRAFT',
     extracted_payload JSONB NOT NULL DEFAULT '{}'::JSONB,
     reviewed_payload JSONB NOT NULL DEFAULT '{}'::JSONB,
     subtotal NUMERIC(12, 2) NOT NULL DEFAULT 0,
     discount NUMERIC(12, 2) NOT NULL DEFAULT 0,
     tax_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    packaging_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    freight_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    round_off NUMERIC(12, 2) NOT NULL DEFAULT 0,
     total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
     image_hash VARCHAR(64),
     ai_processing_status VARCHAR(40) NOT NULL DEFAULT 'DRAFT',
+    version INTEGER NOT NULL DEFAULT 1,
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
     confirmed_by UUID REFERENCES users(id) ON DELETE SET NULL,
     confirmed_at TIMESTAMPTZ,
@@ -191,6 +240,7 @@ CREATE TABLE purchase_items (
     product_name VARCHAR(180) NOT NULL,
     barcode VARCHAR(80),
     supplier_product_code VARCHAR(120),
+    hsn_sac VARCHAR(40),
     unit VARCHAR(40) NOT NULL DEFAULT 'Each',
     size VARCHAR(60) NOT NULL,
     color VARCHAR(80) NOT NULL,
@@ -198,6 +248,7 @@ CREATE TABLE purchase_items (
     purchase_price NUMERIC(12, 2) NOT NULL,
     discount NUMERIC(12, 2) NOT NULL DEFAULT 0,
     tax_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    tax_rate NUMERIC(5, 2) NOT NULL DEFAULT 0,
     mrp NUMERIC(12, 2),
     line_total NUMERIC(12, 2) NOT NULL,
     confidence NUMERIC(5, 4),
@@ -215,6 +266,19 @@ CREATE TABLE purchase_items (
         confidence IS NULL OR (confidence >= 0 AND confidence <= 1)
     )
 );
+
+CREATE TABLE purchase_audits (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    purchase_id UUID NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+    action VARCHAR(80) NOT NULL,
+    reason VARCHAR(500),
+    before_data JSONB,
+    after_data JSONB,
+    performed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX ix_purchase_audits_purchase_id ON purchase_audits(purchase_id);
 
 CREATE TABLE sales (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -161,6 +161,14 @@ class ProductRepository(BaseRepository[Product]):
             query = query.filter(Product.id != exclude_id)
         return query.first()
 
+    def get_by_barcode_with_relations(self, barcode: str) -> Optional[Product]:
+        return (
+            self.db.query(Product)
+            .options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand), selectinload(Product.variants))
+            .filter(func.lower(Product.barcode) == barcode.strip().lower())
+            .first()
+        )
+
     def get_by_sku(self, sku: str, exclude_id: Optional[UUID] = None) -> Optional[Product]:
         query = self.db.query(Product).filter(func.lower(Product.sku) == sku.strip().lower())
         if exclude_id:

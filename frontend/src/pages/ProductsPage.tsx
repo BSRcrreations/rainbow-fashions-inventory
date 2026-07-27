@@ -1,8 +1,9 @@
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Download, Edit3, FileDown, FileUp, Filter, ImagePlus, PackageOpen, Plus, RefreshCw, Search, Trash2, Wand2, X } from "lucide-react";
+import { Barcode, ChevronLeft, ChevronRight, Download, Edit3, FileDown, FileUp, Filter, ImagePlus, PackageOpen, Plus, RefreshCw, Search, Trash2, Wand2, X } from "lucide-react";
 import { api } from "../api/client";
 import ConfirmDialog from "../components/ConfirmDialog";
+import BarcodeLabelDialog from "../components/BarcodeLabelDialog";
 import Dialog from "../components/Dialog";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
@@ -37,6 +38,7 @@ interface ProductFormState {
   current_stock: string;
   minimum_stock: string;
   barcode: string;
+  product_date: string;
   is_active: boolean;
 }
 
@@ -57,6 +59,7 @@ const emptyForm: ProductFormState = {
   current_stock: "0",
   minimum_stock: "0",
   barcode: "",
+  product_date: new Date().toISOString().slice(0, 10),
   is_active: true,
 };
 
@@ -83,6 +86,7 @@ function formFromProduct(product: Product): ProductFormState {
     current_stock: String(product.current_stock),
     minimum_stock: String(product.minimum_stock),
     barcode: product.barcode ?? "",
+    product_date: product.product_date,
     is_active: product.is_active,
   };
 }
@@ -131,6 +135,7 @@ export default function ProductsPage() {
   const [bulkQty, setBulkQty] = useState("1");
   const [bulkDirection, setBulkDirection] = useState<"INCREASE" | "DECREASE">("INCREASE");
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [printTarget, setPrintTarget] = useState<Product | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -258,13 +263,14 @@ export default function ProductsPage() {
   }
 
   function validateForm() {
-    const requiredFields: Array<["category_id" | "subcategory_id" | "brand_id" | "name" | "purchase_price" | "selling_price", string]> = [
+    const requiredFields: Array<["category_id" | "subcategory_id" | "brand_id" | "name" | "purchase_price" | "selling_price" | "product_date", string]> = [
       ["category_id", "Category is required"],
       ["subcategory_id", "Subcategory is required"],
       ["brand_id", "Brand is required"],
       ["name", "Product name is required"],
       ["purchase_price", "Cost is required"],
       ["selling_price", "Price is required"],
+      ["product_date", "Product date is required"],
     ];
     for (const [key, message] of requiredFields) {
       if (!form[key].trim()) return message;
@@ -307,6 +313,7 @@ export default function ProductsPage() {
       current_stock: Number(form.current_stock),
       minimum_stock: Number(form.minimum_stock),
       barcode: form.barcode.trim() || null,
+      product_date: form.product_date,
       is_active: form.is_active,
       pricing_type: form.pricing_type,
     };
@@ -330,17 +337,19 @@ export default function ProductsPage() {
   }
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ print }: { print: boolean }) => {
+      void print;
       const validationError = validateForm();
       if (validationError) throw new Error(validationError);
       const product = editing ? await api.put<Product>(`/products/${editing.id}`, payload()) : await api.post<Product>("/products", payload());
       if (imageFile) {
         const body = new FormData();
         body.append("file", imageFile);
-        await api.post<Product>(`/products/${product.id}/image`, body);
+        return api.post<Product>(`/products/${product.id}/image`, body);
       }
+      return product;
     },
-    onSuccess: () => {
+    onSuccess: (product, variables) => {
       toast.success(editing ? "Product updated" : "Product added");
       setForm(emptyForm);
       setEditing(null);
@@ -348,6 +357,7 @@ export default function ProductsPage() {
       setImageFile(null);
       setError("");
       invalidateProducts();
+      if (variables.print) setPrintTarget(product);
     },
     onError: (err) => {
       const message = err instanceof Error ? err.message : "Unable to save product";
@@ -588,7 +598,7 @@ export default function ProductsPage() {
       </div>
 
       <Dialog open={formOpen} title={editing ? "Edit product" : "Add product"} description={editing ? `Update ${editing.name} without changing its stock history.` : "Add the essentials now. You can edit details later."} onClose={cancelEdit} maxWidth="xl">
-      <form onSubmit={(event: FormEvent) => { event.preventDefault(); saveMutation.mutate(); }} className="grid gap-4 sm:grid-cols-2">
+      <form onSubmit={(event: FormEvent) => { event.preventDefault(); saveMutation.mutate({ print: false }); }} className="grid gap-4 sm:grid-cols-2">
         <label className="field-label">Category<span>*</span>
         <select autoFocus className="field-input" value={form.category_id} onChange={(event) => setForm({ ...form, category_id: event.target.value, subcategory_id: "", brand_id: "" })} disabled={saveMutation.isPending}>
           <option value="">Category</option>
@@ -622,6 +632,7 @@ export default function ProductsPage() {
           <Button type="button" variant="secondary" size="icon" onClick={() => void generateCode("barcode")} title="Generate barcode"><Wand2 size={16} /></Button>
         </div>
         </label>
+        <label className="field-label">Product date<span>*</span><input className="field-input" type="date" value={form.product_date} onChange={(event) => setForm({ ...form, product_date: event.target.value })} disabled={saveMutation.isPending} /></label>
         <div className="grid gap-3 rounded-lg border border-border bg-surface-subtle p-4 sm:col-span-2 sm:grid-cols-2">
           <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border bg-surface px-3 text-sm font-semibold text-slate-700">
             <input type="checkbox" checked={form.has_colors} onChange={(event) => setVariantEnabled("colors", event.target.checked)} disabled={saveMutation.isPending} />
@@ -666,6 +677,9 @@ export default function ProductsPage() {
           <Button type="button" variant="secondary" onClick={cancelEdit} disabled={saveMutation.isPending}>Cancel</Button>
           <Button type="submit" disabled={saveMutation.isPending}>
             <Plus size={16} /> {saveMutation.isPending ? "Saving" : editing ? "Update product" : "Add product"}
+          </Button>
+          <Button type="button" variant="secondary" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate({ print: true })}>
+            <Barcode size={16} /> {saveMutation.isPending ? "Saving" : "Save & Print Barcode"}
           </Button>
         </div>
       </form>
@@ -715,6 +729,7 @@ export default function ProductsPage() {
                   </div>
                   <div className="flex gap-1">
                     <Button type="button" variant="secondary" size="sm" onClick={() => beginEdit(product)}><Edit3 size={15} /> Edit</Button>
+                    <Button type="button" variant="ghost" size="icon" onClick={() => setPrintTarget(product)} title="Print barcode"><Barcode size={16} /></Button>
                     <Button type="button" variant="ghost" size="icon" className="text-rose-700" onClick={() => setDeleteTarget(product)} title="Delete product"><Trash2 size={16} /></Button>
                   </div>
                 </div>
@@ -769,6 +784,7 @@ export default function ProductsPage() {
                   <td className="px-4 py-3 text-right">
                     <div className="flex justify-end gap-2">
                       <Button type="button" variant="secondary" size="icon" onClick={() => beginEdit(product)} title="Edit product"><Edit3 size={16} /></Button>
+                      <Button type="button" variant="ghost" size="icon" onClick={() => setPrintTarget(product)} title="Print barcode"><Barcode size={16} /></Button>
                       <Button type="button" variant="ghost" size="icon" className="text-rose-700 hover:bg-rose-50" onClick={() => setDeleteTarget(product)} title="Delete product"><Trash2 size={17} /></Button>
                     </div>
                   </td>
@@ -807,6 +823,7 @@ export default function ProductsPage() {
         onCancel={() => setDeleteTarget(null)}
         onConfirm={() => deleteTarget ? deleteMutation.mutate(deleteTarget.id) : undefined}
       />
+      <BarcodeLabelDialog open={Boolean(printTarget)} product={printTarget} onClose={() => setPrintTarget(null)} />
       <ConfirmDialog
         open={bulkDeleteOpen}
         title="Delete selected products"

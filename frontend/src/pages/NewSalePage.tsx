@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Banknote, CheckCircle2, CreditCard, Minus, PackageOpen, Plus, ReceiptText, Search, ShoppingCart, Smartphone, Trash2, WalletCards, X } from "lucide-react";
 import { api } from "../api/client";
@@ -11,7 +11,7 @@ import { useToast } from "../components/ToastProvider";
 import { Button } from "../components/ui/button";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import type { Product, Sale } from "../types";
-import { money } from "../utils/format";
+import { money, shortDate } from "../utils/format";
 import { productVariantLabel } from "../utils/product";
 
 type PaymentMode = "CASH" | "UPI" | "CARD" | "BANK" | "OTHER";
@@ -28,7 +28,11 @@ export default function NewSalePage() {
   const toast = useToast();
   const queryClient = useQueryClient();
   const searchRef = useRef<HTMLInputElement>(null);
+  const barcodeRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
+  const [barcode, setBarcode] = useState("");
+  const [scannedProduct, setScannedProduct] = useState<Product | null>(null);
+  const [scanError, setScanError] = useState("");
   const debouncedSearch = useDebouncedValue(search, 300);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [customerName, setCustomerName] = useState("");
@@ -47,7 +51,7 @@ export default function NewSalePage() {
   const total = Math.max(0, subtotal - discountAmount);
   const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
 
-  function addProduct(product: Product) {
+  function addProduct(product: Product, focusTarget: HTMLInputElement | null = searchRef.current) {
     if (product.current_stock <= 0) { toast.error(`${product.name} is out of stock`); return; }
     setError("");
     setCart((current) => {
@@ -59,7 +63,46 @@ export default function NewSalePage() {
       return [...current, { product, quantity: 1 }];
     });
     setSearch("");
-    searchRef.current?.focus();
+    focusTarget?.focus();
+  }
+
+  const scanMutation = useMutation({
+    mutationFn: (value: string) => api.get<Product>(`/products/barcode/${encodeURIComponent(value)}`),
+    onSuccess: (product) => {
+      setScannedProduct(product);
+      if (!product.is_active) {
+        setScanError(`${product.name} is inactive and cannot be sold`);
+        return;
+      }
+      if (product.current_stock <= 0) {
+        setScanError(`${product.name} is out of stock`);
+        return;
+      }
+      setScanError("");
+      addProduct(product, barcodeRef.current);
+    },
+    onError: (cause) => {
+      setScannedProduct(null);
+      const message = cause instanceof Error ? cause.message : "Unknown barcode";
+      setScanError(message.toLowerCase().includes("not found") ? "Unknown barcode. Check the label and try again." : message);
+    },
+    onSettled: () => {
+      setBarcode("");
+      window.requestAnimationFrame(() => barcodeRef.current?.focus());
+    },
+  });
+
+  function scanBarcode() {
+    const value = barcode.trim();
+    if (!value || scanMutation.isPending) return;
+    setScanError("");
+    scanMutation.mutate(value);
+  }
+
+  function onBarcodeKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    scanBarcode();
   }
 
   function changeQuantity(productId: string, change: number) {
@@ -108,7 +151,8 @@ export default function NewSalePage() {
       <PageHeader title="New Sale" subtitle="Search or scan products, build the cart, and complete checkout" />
       <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
         <section className="min-w-0">
-          <div className="mb-4 flex h-12 items-center rounded-lg border border-slate-200 bg-white px-4 shadow-sm"><Search size={19} className="shrink-0 text-slate-400" /><input ref={searchRef} autoFocus aria-label="Search or scan products" className="min-w-0 flex-1 border-0 px-3 outline-none" placeholder="Search product, SKU, or scan barcode" value={search} onChange={(event) => setSearch(event.target.value)} />{search ? <button type="button" onClick={() => setSearch("")} aria-label="Clear product search"><X size={18} className="text-slate-400" /></button> : null}</div>
+          <div className="mb-4 rounded-lg border border-primary-200 bg-primary-50/60 p-3 shadow-sm"><label className="flex items-center gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-primary-700 text-white"><PackageOpen size={19} /></div><div className="min-w-0 flex-1"><div className="text-sm font-semibold text-foreground">Barcode scanner</div><input ref={barcodeRef} autoFocus aria-label="Scan product barcode" className="mt-1 w-full border-0 bg-transparent p-0 text-sm outline-none placeholder:text-slate-400" placeholder="Scan barcode and press Enter" value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={onBarcodeKeyDown} autoComplete="off" /></div>{scanMutation.isPending ? <span className="text-xs font-semibold text-primary-700">Looking up</span> : null}</label>{scanError ? <p className="mt-2 text-sm font-medium text-rose-700">{scanError}</p> : null}{scannedProduct ? <div className="mt-3 grid gap-2 border-t border-primary-100 pt-3 text-xs text-slate-700 sm:grid-cols-2"><span><strong>{scannedProduct.name}</strong> · {productVariantLabel(scannedProduct)}</span><span>Barcode: {scannedProduct.barcode ?? "-"}</span><span>Date: {shortDate(scannedProduct.product_date)}</span><span>{money(scannedProduct.selling_price)} · {scannedProduct.current_stock} available</span></div> : null}</div>
+          <div className="mb-4 flex h-12 items-center rounded-lg border border-slate-200 bg-white px-4 shadow-sm"><Search size={19} className="shrink-0 text-slate-400" /><input ref={searchRef} aria-label="Search products" className="min-w-0 flex-1 border-0 px-3 outline-none" placeholder="Search product, SKU, brand, or category" value={search} onChange={(event) => setSearch(event.target.value)} />{search ? <button type="button" onClick={() => setSearch("")} aria-label="Clear product search"><X size={18} className="text-slate-400" /></button> : null}</div>
           {productsQuery.isLoading ? <SkeletonRows rows={6} /> : productsQuery.error ? <ErrorState message={productsQuery.error instanceof Error ? productsQuery.error.message : "Unable to load products"} /> : products.length ? (
             <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">{products.map((product) => <button key={product.id} type="button" disabled={product.current_stock <= 0} onClick={() => addProduct(product)} className="group flex min-h-28 items-start gap-3 rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-teal-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-55"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-400"><PackageOpen size={21} /></div><div className="min-w-0 flex-1"><div className="truncate font-semibold text-slate-950">{product.name}</div><div className="mt-1 truncate text-xs text-slate-500">{productVariantLabel(product)} · {product.brand?.name}</div><div className="mt-3 flex items-center justify-between gap-2"><strong className="text-teal-800">{money(product.selling_price)}</strong><span className={`text-xs font-semibold ${product.current_stock ? "text-slate-500" : "text-red-600"}`}>{product.current_stock ? `${product.current_stock} in stock` : "Out of stock"}</span></div></div></button>)}</div>
           ) : <div className="rounded-lg border border-slate-200 bg-white"><EmptyState icon={PackageOpen} title="No products found" description="Try a product name, SKU, barcode, brand, or category." /></div>}

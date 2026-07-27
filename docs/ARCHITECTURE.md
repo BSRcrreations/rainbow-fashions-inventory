@@ -23,7 +23,7 @@ Key decisions:
 - Repository classes isolate persistence queries.
 - Service classes own business rules and transaction boundaries.
 - OCR is behind an interface in `app/ai`.
-- Purchases are queue/draft/review/confirm to prevent accidental stock changes; upload commits the job before background recognition begins.
+- Purchases are queue/draft/review/confirm to prevent accidental stock changes; upload commits the job before background recognition begins. Purchase edits use optimistic versions and append purchase audit records; only confirmation writes stock history.
 - Catalog and product duplicate/delete rules live in services and repositories, not React.
 - API errors are normalized in FastAPI exception handlers before reaching the client.
 - Product images are stored as uploaded files and referenced from products by `image_url`.
@@ -35,7 +35,7 @@ Key decisions:
 Future modules can add tables that reference existing IDs:
 
 - Billing and POS can reference `products`, `stores`, and `stock_history`.
-- Barcode and QR code modules can extend product identifiers without changing product variants.
+- Product barcodes use the existing `products.barcode` column. Product dates, exact barcode lookup, and Code 128 label rendering extend the catalog without a separate identifier table.
 - Supplier and customer modules can expand from the existing supplier-ready purchase design.
 - Mobile apps can use the same REST API.
 

@@ -131,17 +131,26 @@ Image rules:
 - Maximum product image size is 5 MB.
 - Images are stored with generated filenames.
 - Products store a relative `image_url`, for example `/uploads/products/{filename}.webp`.
+- `product_date` is required when creating a product and is returned with every product response.
+- `GET /products/barcode/{barcode}` performs an authenticated exact barcode lookup and returns the normal product response with category, subcategory, brand, and variants. It is declared before the UUID product route.
+- A missing barcode returns `404`; inactive and out-of-stock products are returned so POS can give the cashier a specific message.
 
 Import/export:
 
 - CSV import/export is supported.
 - XLSX import/export is supported when `openpyxl` is installed.
 - Invalid import rows are skipped and returned in an error report.
-- Import expects existing brand and category names.
+- Import expects existing brand and category names and a valid `product_date` in `YYYY-MM-DD` form.
 
 Purchases:
 
 - `GET /purchases`
+- `GET /purchases/{purchase_id}` returns the complete store-scoped detail record, document metadata, processing job, totals, and audit history.
+- `PATCH /purchases/{purchase_id}` updates only supplied draft/review fields and supports optimistic `version` checks.
+- `POST /purchases/{purchase_id}/validate` validates invoice and item readiness without changing stock.
+- `POST /purchases/{purchase_id}/cancel` cancels an unconfirmed purchase and records a reason.
+- `GET /purchases/{purchase_id}/document` streams the protected original invoice without exposing a storage path.
+- `POST /purchases/{purchase_id}/items`, `PATCH /purchases/{purchase_id}/items/{item_id}`, and `DELETE /purchases/{purchase_id}/items/{item_id}` manage editable draft lines.
 - `POST /purchase-documents/upload` accepts multipart field `file` and returns `202 Accepted` with `document_id`, `job_id`, and `request_id`.
 - `GET /purchase-documents/jobs/{job_id}` reports queued, processing, review-ready, or failed recognition states.
 - `POST /purchase-documents/{document_id}/retry` queues a failed document again and returns `202 Accepted`.
@@ -155,6 +164,7 @@ Purchase upload validation:
 - Supported invoices: JPG, JPEG, PNG, WEBP, HEIC, HEIF, and PDF.
 - Maximum invoice size is 15 MB; extension, declared MIME type, and file signature must agree.
 - Upload only stores the file and queues recognition. Stock changes only after `confirm`.
+- Mock OCR never fabricates supplier, invoice, or item details; a real OCR provider must be configured for extraction.
 
 Stock:
 

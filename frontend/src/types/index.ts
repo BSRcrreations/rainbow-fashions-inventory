@@ -70,6 +70,7 @@ export interface Product {
   current_stock: number;
   minimum_stock: number;
   barcode?: string | null;
+  product_date: string;
   image_url?: string | null;
   is_active: boolean;
   category?: Category | null;
@@ -194,6 +195,7 @@ export interface PurchaseItem {
   product_name: string;
   barcode?: string | null;
   supplier_product_code?: string | null;
+  hsn_sac?: string | null;
   unit: string;
   size: string;
   color: string;
@@ -201,6 +203,7 @@ export interface PurchaseItem {
   purchase_price: string;
   discount: string;
   tax_amount: string;
+  tax_rate: string;
   mrp?: string | null;
   line_total: string;
   confidence?: string | null;
@@ -212,19 +215,49 @@ export interface PurchaseItem {
 
 export interface Purchase {
   id: string;
+  store_id?: string | null;
+  supplier_id?: string | null;
+  uploaded_file_id?: string | null;
+  purchase_document_id?: string | null;
+  processing_job_id?: string | null;
   invoice_number?: string | null;
   purchase_date: string;
   invoice_date?: string | null;
   received_date?: string | null;
+  due_date?: string | null;
   supplier_name?: string | null;
+  payment_mode: string;
+  amount_paid: string;
+  place_of_supply?: string | null;
+  purchase_reference?: string | null;
+  notes?: string | null;
+  warehouse?: string | null;
+  currency: string;
   status: PurchaseStatus;
   total_amount: string;
   subtotal: string;
   discount: string;
   tax_amount: string;
+  packaging_amount: string;
+  freight_amount: string;
+  round_off: string;
+  image_hash?: string | null;
+  ai_processing_status: string;
+  workflow_status: string;
+  version: number;
+  total_quantity: number;
+  balance_due: string;
   created_at: string;
+  updated_at: string;
   confirmed_at?: string | null;
   items: PurchaseItem[];
+}
+
+export interface PurchaseDetail extends Purchase {
+  supplier?: { id: string; name: string; gst_number?: string | null; address?: string | null; phone?: string | null; email?: string | null } | null;
+  document?: { id: string; original_filename: string; content_type: string; file_size_bytes: number; sha256: string } | null;
+  processing_job?: PurchaseDocumentJob | null;
+  audit_history: Array<{ id: string; action: string; reason?: string | null; before_data?: Record<string, unknown> | null; after_data?: Record<string, unknown> | null; performed_by?: string | null; created_at: string }>;
 }
 
 export interface StockHistory {

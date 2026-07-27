@@ -16,7 +16,8 @@
 - Dashboard summary cards, inventory value, low stock, and recent stock movements with loading, empty, and error states.
 - Categories with create, edit, delete, search, duplicate validation, delete guard for referenced products, confirmation dialog, toasts, skeleton, empty state, and responsive layout.
 - Brands with the same completed CRUD UX and backend rules as categories.
-- Products with create/edit dialogs, advanced search, collapsible filters, filter chips, sorting, server-side pagination, active/inactive status, SKU, barcode, duplicate validation, compressed image upload/replace/delete, bulk operations, import/export, keyboard shortcuts, mobile cards, and desktop table views.
+- Products with create/edit dialogs, required product dates, automatic unique Code 128-compatible barcodes, barcode label printing, advanced search, collapsible filters, filter chips, sorting, server-side pagination, active/inactive status, SKU, duplicate validation, compressed image upload/replace/delete, bulk operations, import/export, keyboard shortcuts, mobile cards, and desktop table views.
+- New Sale POS with a dedicated scanner-friendly barcode field. An Enter-terminated scan performs exact lookup, shows the matched product, and adds one unit without exceeding available stock.
 - Purchases with invoice upload, OCR review, editable review lines, confirmation flow, and stock changes only after confirmation.
 - Stock with manual adjustments, stock history, filters, CSV export, validation, and negative-stock prevention.
 - Dashboard improvements with latest products, distribution charts, and top-selling placeholder.
@@ -45,10 +46,8 @@
 3. Billing/POS
 4. Expenses
 5. Reports
-6. Barcode scanner
-7. Thermal printer
-8. Settings
-9. Backup and restore UI
+6. Settings
+7. Backup and restore UI
 
 ## Engineering Rule
 
@@ -69,4 +68,4 @@ After each module:
 The sales module keeps completed invoices immutable as financial records. Corrections append inventory movements and audit records instead of rewriting stock history. Sale edits use the difference between old and new quantities, customer returns restore only remaining quantities, and voiding restores every unreturned item.
 # Purchase Intake
 
-Purchases use a queue, draft, review, confirm workflow. Upload commits the document and processing job before its background task begins; the client polls the store-scoped job, displays progress, and can retry a failed recognition. OCR output remains editable until confirmation; purchase, invoice, received, created, and updated dates remain distinct. Product matching prioritizes barcode, SKU, then exact normalized name/variant. Purchase records, documents, and processing jobs are constrained to the authenticated user's store.
+Purchases use a queue, draft, review, confirm workflow. The list opens a dedicated Purchase Details page with invoice preview, editable header fields, dates, payment details, item rows, live totals, inventory impact, processing diagnostics, and audit history. Upload commits the document and processing job before its background task begins; the client polls the store-scoped job, displays progress, and can retry a failed recognition. OCR output remains editable until confirmation, and the local mock provider never invents supplier or invoice data. Purchase, invoice, received, due, created, updated, and confirmed dates remain distinct. Purchase records, documents, processing jobs, and document streaming are constrained to the authenticated user's store.

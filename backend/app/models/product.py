@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -31,6 +31,7 @@ class Product(Base):
     current_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     minimum_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     barcode: Mapped[Optional[str]] = mapped_column(String(80), unique=True, index=True)
+    product_date: Mapped[date] = mapped_column(Date, nullable=False, server_default=func.current_date())
     image_url: Mapped[Optional[str]] = mapped_column(String(500))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
