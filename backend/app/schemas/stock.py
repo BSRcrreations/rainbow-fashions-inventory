@@ -21,8 +21,8 @@ class StockAdjustmentCreate(BaseModel):
 class StockProductRead(ORMBaseModel):
     id: UUID
     name: str
-    size: str
-    color: str
+    size: Optional[str] = None
+    color: Optional[str] = None
     sku: Optional[str]
 
 

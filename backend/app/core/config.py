@@ -26,11 +26,14 @@ class Settings(BaseSettings):
     upload_dir: Path = Path("app/uploads")
     invoice_upload_dir: Path = Path("app/uploads/invoices")
     product_upload_dir: Path = Path("app/uploads/products")
-    max_upload_size_mb: int = 10
+    max_upload_size_mb: int = 15
     max_product_image_size_mb: int = 5
     allowed_invoice_content_types: set[str] = {
         "image/jpeg",
         "image/png",
+        "image/webp",
+        "image/heic",
+        "image/heif",
         "application/pdf",
     }
     allowed_product_image_content_types: set[str] = {

@@ -8,7 +8,15 @@ const classes: Record<string, string> = {
   CUSTOMER_RETURN: "bg-sky-100 text-sky-800",
   SUPPLIER_RETURN: "bg-violet-100 text-violet-800",
   DAMAGE: "bg-red-100 text-red-800",
-  MANUAL_ADJUSTMENT: "bg-amber-100 text-amber-800"
+  MANUAL_ADJUSTMENT: "bg-amber-100 text-amber-800",
+  SALE_EDIT_RETURN: "bg-sky-100 text-sky-800",
+  SALE_EDIT_DECREASE: "bg-orange-100 text-orange-800",
+  SALE_VOID: "bg-red-100 text-red-800",
+  COMPLETED: "bg-emerald-100 text-emerald-800",
+  EDITED: "bg-blue-100 text-blue-800",
+  PARTIALLY_RETURNED: "bg-amber-100 text-amber-800",
+  RETURNED: "bg-violet-100 text-violet-800",
+  VOIDED: "bg-red-100 text-red-800",
 };
 
 const labels: Record<string, string> = {
@@ -18,6 +26,9 @@ const labels: Record<string, string> = {
   SUPPLIER_RETURN: "Supplier Return",
   DAMAGE: "Damage",
   MANUAL_ADJUSTMENT: "Manual Adjustment",
+  SALE_EDIT_RETURN: "Sale edit return",
+  SALE_EDIT_DECREASE: "Sale edit decrease",
+  SALE_VOID: "Sale void",
 };
 
 export default function StatusBadge({ value }: { value: string }) {

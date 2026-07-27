@@ -5,7 +5,7 @@
 - Sales Dashboard: today/week/month/all-time KPIs, selected-range sales and profit trends, product/category/brand rankings, recent sales, low-stock, and out-of-stock signals.
 - Sales History: debounced invoice/customer/payment/cashier search, date and payment filters, responsive invoice detail, print, PDF, and Excel export.
 - Category hierarchy: brands and subcategories are managed inside Categories and cannot exist without a parent category.
-- Product form: category-first selection loads only valid subcategories and brands for that category.
+- Product form: category-first selection loads only valid subcategories and brands. Color and size controls are opt-in, support multiple values, and persist as linked product variants.
 - New Sale POS: stock-aware product search, cart quantities, customer/payment/discount capture, atomic checkout, invoice creation, profit calculation, stock decrement, and sale movement history.
 - Inventory: current stock levels and a filterable audit trail with explicit purchase, sale, return, damage, and manual adjustment reasons.
 - Stock Adjustment: separate manager workflow with a required reason, reference, and before/after stock preview.
@@ -64,3 +64,9 @@ After each module:
 - Run checks again.
 - Update API and module docs.
 - Produce a commit message.
+# Sales corrections, returns, and voids
+
+The sales module keeps completed invoices immutable as financial records. Corrections append inventory movements and audit records instead of rewriting stock history. Sale edits use the difference between old and new quantities, customer returns restore only remaining quantities, and voiding restores every unreturned item.
+# Purchase Intake
+
+Purchases use a queue, draft, review, confirm workflow. Upload commits the document and processing job before its background task begins; the client polls the store-scoped job, displays progress, and can retry a failed recognition. OCR output remains editable until confirmation; purchase, invoice, received, created, and updated dates remain distinct. Product matching prioritizes barcode, SKU, then exact normalized name/variant. Purchase records, documents, and processing jobs are constrained to the authenticated user's store.

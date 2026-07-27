@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date as date_type
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID
@@ -8,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.models.enums import PurchaseStatus
+from app.models.enums import DocumentJobStatus
 from app.schemas.common import ORMBaseModel
 
 
@@ -22,13 +24,16 @@ class ExtractedInvoiceItem(BaseModel):
     mrp: Optional[Decimal] = Field(default=None, ge=0)
     total_amount: Decimal = Field(ge=0)
     matched_product_id: Optional[UUID] = None
+    barcode: Optional[str] = None
+    unit: str = "Each"
     confidence: Optional[Decimal] = Field(default=None, ge=0, le=1)
 
 
 class ExtractedInvoice(BaseModel):
     supplier: Optional[str] = None
     invoice_number: Optional[str] = None
-    date: Optional[date] = None
+    # Keep the public `date` field while avoiding a postponed-annotation name collision.
+    date: Optional[date_type] = None
     total_amount: Decimal = Field(default=0, ge=0)
     items: list[ExtractedInvoiceItem] = Field(default_factory=list)
 
@@ -41,20 +46,81 @@ class PurchaseItemReview(BaseModel):
     brand_name: Optional[str] = None
     category_name: Optional[str] = None
     product_name: str = Field(min_length=1, max_length=180)
-    size: str = Field(min_length=1, max_length=60)
-    color: str = Field(min_length=1, max_length=80)
+    barcode: Optional[str] = Field(default=None, max_length=80)
+    supplier_product_code: Optional[str] = Field(default=None, max_length=120)
+    hsn_sac: Optional[str] = Field(default=None, max_length=40)
+    unit: str = Field(default="Each", min_length=1, max_length=40)
+    size: str = Field(default="", max_length=60)
+    color: str = Field(default="", max_length=80)
     quantity: int = Field(gt=0)
     purchase_price: Decimal = Field(ge=0)
+    discount: Decimal = Field(default=Decimal("0"), ge=0)
+    tax_amount: Decimal = Field(default=Decimal("0"), ge=0)
+    tax_rate: Decimal = Field(default=Decimal("0"), ge=0, le=100)
     mrp: Optional[Decimal] = Field(default=None, ge=0)
     line_total: Decimal = Field(ge=0)
     confidence: Optional[Decimal] = Field(default=None, ge=0, le=1)
+    match_status: str = "NOT_FOUND"
+    batch_number: Optional[str] = Field(default=None, max_length=120)
+    expiry_date: Optional[date_type] = None
+    user_verified: bool = False
 
 
 class PurchaseReviewUpdate(BaseModel):
     supplier_name: Optional[str] = None
     invoice_number: Optional[str] = None
-    invoice_date: Optional[date] = None
+    purchase_date: date_type
+    invoice_date: Optional[date_type] = None
+    received_date: Optional[date_type] = None
+    duplicate_acknowledged: bool = False
     items: list[PurchaseItemReview] = Field(min_length=1)
+
+
+class PurchasePatch(BaseModel):
+    supplier_id: Optional[UUID] = None
+    supplier_name: Optional[str] = Field(default=None, max_length=180)
+    invoice_number: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    purchase_date: Optional[date_type] = None
+    invoice_date: Optional[date_type] = None
+    received_date: Optional[date_type] = None
+    due_date: Optional[date_type] = None
+    payment_mode: Optional[str] = Field(default=None, max_length=40)
+    amount_paid: Optional[Decimal] = Field(default=None, ge=0)
+    place_of_supply: Optional[str] = Field(default=None, max_length=120)
+    purchase_reference: Optional[str] = Field(default=None, max_length=120)
+    notes: Optional[str] = Field(default=None, max_length=1000)
+    warehouse: Optional[str] = Field(default=None, max_length=120)
+    currency: Optional[str] = Field(default=None, min_length=3, max_length=3)
+    packaging_amount: Optional[Decimal] = Field(default=None, ge=0)
+    freight_amount: Optional[Decimal] = Field(default=None, ge=0)
+    round_off: Optional[Decimal] = None
+    reason: Optional[str] = Field(default=None, max_length=500)
+    version: Optional[int] = Field(default=None, ge=1)
+
+
+class PurchaseItemPatch(BaseModel):
+    product_id: Optional[UUID] = None
+    matched_product_id: Optional[UUID] = None
+    category_id: Optional[UUID] = None
+    brand_id: Optional[UUID] = None
+    brand_name: Optional[str] = Field(default=None, max_length=120)
+    category_name: Optional[str] = Field(default=None, max_length=120)
+    product_name: Optional[str] = Field(default=None, min_length=1, max_length=180)
+    barcode: Optional[str] = Field(default=None, max_length=80)
+    supplier_product_code: Optional[str] = Field(default=None, max_length=120)
+    hsn_sac: Optional[str] = Field(default=None, max_length=40)
+    unit: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    size: Optional[str] = Field(default=None, max_length=60)
+    color: Optional[str] = Field(default=None, max_length=80)
+    quantity: Optional[int] = Field(default=None, gt=0)
+    purchase_price: Optional[Decimal] = Field(default=None, ge=0)
+    discount: Optional[Decimal] = Field(default=None, ge=0)
+    tax_rate: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    tax_amount: Optional[Decimal] = Field(default=None, ge=0)
+    mrp: Optional[Decimal] = Field(default=None, ge=0)
+    match_status: Optional[str] = Field(default=None, max_length=40)
+    reason: Optional[str] = Field(default=None, max_length=500)
+    version: Optional[int] = Field(default=None, ge=1)
 
 
 class PurchaseItemRead(PurchaseItemReview, ORMBaseModel):
@@ -66,20 +132,114 @@ class PurchaseRead(ORMBaseModel):
     store_id: Optional[UUID]
     supplier_id: Optional[UUID]
     uploaded_file_id: Optional[UUID]
+    purchase_document_id: Optional[UUID]
+    processing_job_id: Optional[UUID]
     invoice_number: Optional[str]
-    invoice_date: Optional[date]
+    purchase_date: date_type
+    invoice_date: Optional[date_type]
+    received_date: Optional[date_type]
+    due_date: Optional[date_type]
     supplier_name: Optional[str]
+    payment_mode: str
+    amount_paid: Decimal
+    place_of_supply: Optional[str]
+    purchase_reference: Optional[str]
+    notes: Optional[str]
+    warehouse: Optional[str]
+    currency: str
     status: PurchaseStatus
     extracted_payload: dict
     reviewed_payload: dict
+    subtotal: Decimal
+    discount: Decimal
+    tax_amount: Decimal
+    packaging_amount: Decimal
+    freight_amount: Decimal
+    round_off: Decimal
     total_amount: Decimal
+    image_hash: Optional[str]
+    ai_processing_status: str
+    version: int
+    workflow_status: str
+    total_quantity: int
+    balance_due: Decimal
     confirmed_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
     items: list[PurchaseItemRead] = Field(default_factory=list)
 
 
+class PurchaseSupplierRead(BaseModel):
+    id: UUID
+    name: str
+    gst_number: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+
+
+class PurchaseDocumentRead(BaseModel):
+    id: UUID
+    original_filename: str
+    content_type: str
+    file_size_bytes: int
+    sha256: str
+
+
+class PurchaseAuditRead(BaseModel):
+    id: UUID
+    action: str
+    reason: Optional[str] = None
+    before_data: Optional[dict] = None
+    after_data: Optional[dict] = None
+    performed_by: Optional[str] = None
+    created_at: datetime
+
+
+class PurchaseDetailRead(PurchaseRead):
+    supplier: Optional[PurchaseSupplierRead] = None
+    document: Optional[PurchaseDocumentRead] = None
+    processing_job: Optional["DocumentJobRead"] = None
+    audit_history: list[PurchaseAuditRead] = Field(default_factory=list)
+
+
+class PurchaseValidationRead(BaseModel):
+    valid: bool
+    messages: list[str] = Field(default_factory=list)
+    subtotal: Decimal
+    discount: Decimal
+    tax_amount: Decimal
+    total_amount: Decimal
+
+
 class PurchaseUploadResponse(BaseModel):
     purchase: PurchaseRead
     extracted_invoice: ExtractedInvoice
     review_items: list[PurchaseItemReview]
+    duplicate_warning: Optional[str] = None
+
+
+class PurchaseDocumentAccepted(BaseModel):
+    document_id: UUID
+    job_id: UUID
+    status: DocumentJobStatus
+    request_id: str
+
+
+class DocumentJobRead(ORMBaseModel):
+    id: UUID
+    document_id: UUID
+    status: DocumentJobStatus
+    progress: int
+    message: str
+    request_id: str
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    result: Optional[dict] = None
+
+
+class PurchaseFromDocumentCreate(BaseModel):
+    job_id: UUID
+
+
+PurchaseDetailRead.model_rebuild()

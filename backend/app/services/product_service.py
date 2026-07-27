@@ -17,6 +17,7 @@ from app.models.enums import StockMovementType
 from app.models.brand import Brand
 from app.models.category import Category
 from app.models.product import Product
+from app.models.product_variant import ProductVariant
 from app.models.product_inventory import ProductInventory
 from app.models.stock_history import StockHistory
 from app.models.subcategory import SubCategory
@@ -123,12 +124,18 @@ class ProductService:
 
     def create(self, payload: ProductCreate) -> Product:
         self._ensure_hierarchy(payload.category_id, payload.subcategory_id, payload.brand_id)
-        self._validate_unique_variant(payload.category_id, payload.subcategory_id, payload.brand_id, payload.name, payload.size, payload.color)
+        self._validate_unique_product(payload.category_id, payload.subcategory_id, payload.brand_id, payload.name)
         if payload.sku and self.repo.get_by_sku(payload.sku):
             raise conflict("SKU already exists")
         if payload.barcode and self.repo.get_by_barcode(payload.barcode):
             raise conflict("Barcode already exists")
-        product = Product(**payload.model_dump())
+        colors = payload.colors or ([payload.color] if payload.color else [])
+        sizes = payload.sizes or ([payload.size] if payload.size else [])
+        product_data = payload.model_dump(exclude={"colors", "sizes"})
+        product_data["color"] = colors[0] if colors else None
+        product_data["size"] = sizes[0] if sizes else None
+        product = Product(**product_data)
+        self._replace_variants(product, colors, sizes)
         self.repo.add(product)
         self.db.commit()
         return self.get(product.id)
@@ -136,24 +143,35 @@ class ProductService:
     def update(self, product_id: UUID, payload: ProductUpdate) -> Product:
         product = self.get(product_id)
         data = payload.model_dump(exclude_unset=True)
+        colors = data.pop("colors", None)
+        sizes = data.pop("sizes", None)
         next_category_id = data.get("category_id", product.category_id)
         next_subcategory_id = data.get("subcategory_id", product.subcategory_id)
         next_brand_id = data.get("brand_id", product.brand_id)
         next_name = data.get("name", product.name)
-        next_size = data.get("size", product.size)
-        next_color = data.get("color", product.color)
         next_pricing_type = data.get("pricing_type", product.pricing_type)
         next_mrp = data.get("mrp", product.mrp)
         if next_pricing_type.value == "MRP" and next_mrp is None:
             raise bad_request("MRP is required when pricing_type is MRP")
         self._ensure_hierarchy(next_category_id, next_subcategory_id, next_brand_id)
-        self._validate_unique_variant(next_category_id, next_subcategory_id, next_brand_id, next_name, next_size, next_color, exclude_id=product_id)
+        self._validate_unique_product(next_category_id, next_subcategory_id, next_brand_id, next_name, exclude_id=product_id)
         if data.get("sku") and self.repo.get_by_sku(data["sku"], exclude_id=product_id):
             raise conflict("SKU already exists")
         if data.get("barcode") and self.repo.get_by_barcode(data["barcode"], exclude_id=product_id):
             raise conflict("Barcode already exists")
         for key, value in data.items():
             setattr(product, key, value)
+        if colors is not None or sizes is not None:
+            existing_colors, existing_sizes = self._current_variant_values(product)
+            next_colors = colors if colors is not None else existing_colors
+            next_sizes = sizes if sizes is not None else existing_sizes
+            product.color = next_colors[0] if next_colors else None
+            product.size = next_sizes[0] if next_sizes else None
+            self._replace_variants(product, next_colors, next_sizes)
+        elif "color" in data or "size" in data:
+            legacy_colors = [product.color] if product.color else []
+            legacy_sizes = [product.size] if product.size else []
+            self._replace_variants(product, legacy_colors, legacy_sizes)
         self.db.commit()
         return self.get(product.id)
 
@@ -208,7 +226,7 @@ class ProductService:
         products = self._products_for_bulk(payload.product_ids)
         for product in products:
             self._ensure_hierarchy(payload.category_id, product.subcategory_id, product.brand_id)
-            self._validate_unique_variant(payload.category_id, product.subcategory_id, product.brand_id, product.name, product.size, product.color, product.id)
+            self._validate_unique_product(payload.category_id, product.subcategory_id, product.brand_id, product.name, product.id)
             product.category_id = payload.category_id
         self.db.commit()
         return {"updated": len(products)}
@@ -219,7 +237,7 @@ class ProductService:
         products = self._products_for_bulk(payload.product_ids)
         for product in products:
             self._ensure_hierarchy(product.category_id, product.subcategory_id, payload.brand_id)
-            self._validate_unique_variant(product.category_id, product.subcategory_id, payload.brand_id, product.name, product.size, product.color, product.id)
+            self._validate_unique_product(product.category_id, product.subcategory_id, payload.brand_id, product.name, product.id)
             product.brand_id = payload.brand_id
         self.db.commit()
         return {"updated": len(products)}
@@ -355,19 +373,40 @@ class ProductService:
         if brand.category_id != category_id:
             raise bad_request("Brand does not belong to the selected category")
 
-    def _validate_unique_variant(
+    def _validate_unique_product(
         self,
         category_id: UUID,
         subcategory_id: UUID,
         brand_id: UUID,
         name: str,
-        size: str,
-        color: str,
         exclude_id: Optional[UUID] = None,
     ) -> None:
-        duplicate = self.repo.get_duplicate(category_id, subcategory_id, brand_id, name, size, color, exclude_id)
+        duplicate = self.repo.get_duplicate(category_id, subcategory_id, brand_id, name, exclude_id)
         if duplicate:
-            raise conflict("Product variant already exists for this category, subcategory, brand, name, size, and color")
+            raise conflict("Product already exists for this category, subcategory, brand, and name")
+
+    @staticmethod
+    def _current_variant_values(product: Product) -> tuple[list[str], list[str]]:
+        colors = list(dict.fromkeys(variant.color for variant in product.variants if variant.color))
+        sizes = list(dict.fromkeys(variant.size for variant in product.variants if variant.size))
+        if not colors and product.color:
+            colors = [product.color]
+        if not sizes and product.size:
+            sizes = [product.size]
+        return colors, sizes
+
+    @staticmethod
+    def _replace_variants(product: Product, colors: list[str], sizes: list[str]) -> None:
+        product.variants.clear()
+        if colors and sizes:
+            combinations = ((color, size) for color in colors for size in sizes)
+        elif colors:
+            combinations = ((color, None) for color in colors)
+        elif sizes:
+            combinations = ((None, size) for size in sizes)
+        else:
+            return
+        product.variants.extend(ProductVariant(color=color, size=size) for color, size in combinations)
 
     def _products_for_bulk(self, product_ids: list[UUID]) -> list[Product]:
         products = self.repo.list_by_ids(product_ids)

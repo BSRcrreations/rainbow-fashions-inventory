@@ -2,86 +2,159 @@
 @tailwind components;
 @tailwind utilities;
 
-@media print {
-  body * { visibility: hidden; }
-  #printable-invoice, #printable-invoice * { visibility: visible; }
-  #printable-invoice { position: absolute; inset: 0; width: 100%; padding: 24px; background: white; }
+@layer base {
+  :root {
+    /* Brand and semantic color tokens. Values are RGB channels for Tailwind opacity support. */
+    --color-primary-50: 240 253 250;
+    --color-primary-100: 204 251 241;
+    --color-primary-200: 153 246 228;
+    --color-primary-300: 94 234 212;
+    --color-primary-400: 45 212 191;
+    --color-primary-500: 20 184 166;
+    --color-primary-600: 13 148 136;
+    --color-primary-700: 15 118 110;
+    --color-primary-800: 17 94 89;
+    --color-primary-900: 19 78 74;
+    --color-secondary: 37 99 235;
+    --color-success: 5 150 105;
+    --color-warning: 217 119 6;
+    --color-error: 220 38 38;
+
+    --color-neutral-50: 248 250 252;
+    --color-neutral-100: 241 245 249;
+    --color-neutral-200: 226 232 240;
+    --color-neutral-300: 203 213 225;
+    --color-neutral-400: 148 163 184;
+    --color-neutral-500: 100 116 139;
+    --color-neutral-600: 71 85 105;
+    --color-neutral-700: 51 65 85;
+    --color-neutral-800: 30 41 59;
+    --color-neutral-900: 15 23 42;
+    --color-neutral-950: 2 6 23;
+    --color-foreground: 17 24 39;
+    --color-muted: 100 116 139;
+    --color-background: 244 247 250;
+    --color-surface: 255 255 255;
+    --color-surface-subtle: 248 250 252;
+    --color-border: 226 232 240;
+
+    --font-sans: Inter;
+    --font-size-xs: 0.75rem;
+    --font-size-sm: 0.875rem;
+    --font-size-base: 1rem;
+    --font-size-lg: 1.125rem;
+    --font-size-title: 2.25rem;
+    --line-height-body: 1.5;
+
+    --radius-sm: 0.375rem;
+    --radius-md: 0.5rem;
+    --radius-lg: 0.75rem;
+    --radius-xl: 1rem;
+    --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.06);
+    --shadow-md: 0 4px 14px rgb(15 23 42 / 0.08);
+    --shadow-lg: 0 12px 28px rgb(15 23 42 / 0.1);
+    --shadow-xl: 0 22px 48px rgb(15 23 42 / 0.14);
+
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.25rem;
+    --space-6: 1.5rem;
+    --space-8: 2rem;
+    --icon-sm: 1rem;
+    --icon-md: 1.25rem;
+    --icon-lg: 1.5rem;
+    --control-height-sm: 2.5rem;
+    --control-height: 2.75rem;
+    --control-height-lg: 3rem;
+    --motion-fast: 160ms;
+    --motion-base: 220ms;
+
+    color: rgb(var(--color-foreground));
+    background: rgb(var(--color-background));
+    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * { border-color: rgb(var(--color-border)); }
+  body { margin: 0; min-width: 320px; background: rgb(var(--color-background)); }
+  button, input, select, textarea { font: inherit; }
+  button, a, input, select, textarea { transition-duration: var(--motion-fast); }
+  ::selection { background: rgb(var(--color-primary-200)); color: rgb(var(--color-primary-900)); }
 }
 
-:root {
-  color: #111827;
-  background: #f4f7fa;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+@layer components {
+  .focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-primary-600 focus:ring-offset-2 focus:ring-offset-background;
+  }
 
-body {
-  margin: 0;
-  min-width: 320px;
-  background: #f4f7fa;
-}
+  .ds-surface {
+    @apply rounded-lg border border-border bg-surface shadow-sm;
+  }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
+  .ds-card {
+    @apply ds-surface transition-all duration-200 hover:shadow-md;
+  }
 
-.focus-ring {
-  @apply focus:outline-none focus:ring-2 focus:ring-teal-600 focus:ring-offset-2;
-}
+  .ds-dialog-backdrop {
+    @apply fixed inset-0 z-40 bg-slate-950/45 backdrop-blur-sm;
+  }
 
-.field-label {
-  @apply grid gap-2 text-sm font-semibold text-slate-700;
-}
+  .ds-dialog {
+    @apply rounded-lg border border-border bg-surface shadow-xl;
+  }
 
-.field-label > span {
-  @apply ml-0.5 text-rose-600;
-}
+  .field-label {
+    @apply grid gap-2 text-sm font-semibold text-slate-700;
+  }
 
-.field-input {
-  @apply focus-ring h-11 w-full rounded-lg border border-slate-200 bg-white px-3.5 font-normal text-slate-900 shadow-sm transition duration-200 placeholder:text-slate-400 hover:border-slate-300 disabled:bg-slate-50 disabled:text-slate-500;
-}
+  .field-label > span { @apply ml-0.5 text-error; }
 
-.filter-chip {
-  @apply inline-flex h-7 items-center gap-1 rounded-full border border-teal-200 bg-teal-50 px-2.5 font-medium text-teal-800 transition hover:bg-teal-100;
-}
+  .field-input {
+    @apply focus-ring h-control w-full rounded-lg border border-border bg-surface px-3.5 font-normal text-foreground shadow-sm transition placeholder:text-slate-400 hover:border-slate-300 disabled:cursor-not-allowed disabled:bg-surface-subtle disabled:text-muted;
+  }
 
-main section.rounded-md,
-main div.rounded-md.border.border-line.bg-white {
-  border-color: rgb(226 232 240 / 0.9);
-  box-shadow: 0 4px 18px rgb(15 23 42 / 0.04);
+  .filter-chip {
+    @apply inline-flex h-7 items-center gap-1 rounded-full border border-primary-200 bg-primary-50 px-2.5 font-medium text-primary-800 transition hover:bg-primary-100;
+  }
+
+  .ds-table-wrap { @apply overflow-hidden rounded-lg border border-border bg-surface shadow-sm; }
+  .ds-table { @apply w-full divide-y divide-border text-sm; }
+  .ds-table thead { @apply sticky top-0 z-[2] bg-surface-subtle text-left text-xs uppercase text-muted; }
+  .ds-table tbody { @apply divide-y divide-border; }
+  .ds-table tbody tr { @apply transition-colors even:bg-slate-50/50 hover:bg-primary-50/80; }
+  .ds-table th, .ds-table td { @apply px-4 py-3; }
+
+  .ds-badge { @apply inline-flex items-center rounded-md px-2 py-1 text-xs font-semibold; }
+  .ds-empty { @apply grid place-items-center px-4 py-12 text-center; }
 }
 
 main table thead {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: #f8fafc;
+  background: rgb(var(--color-surface-subtle));
 }
 
-main table tbody tr {
-  transition: background-color 180ms ease;
-}
+main table tbody tr { transition: background-color var(--motion-fast) ease; }
+main table tbody tr:nth-child(even) { background: rgb(var(--color-neutral-50) / 0.5); }
+main table tbody tr:hover { background: rgb(var(--color-primary-50) / 0.85); }
 
-main table tbody tr:nth-child(even) {
-  background: rgb(248 250 252 / 0.5);
-}
-
-main table tbody tr:hover {
-  background: rgb(240 253 250 / 0.85);
-}
-
-.page-enter {
-  animation: page-enter 220ms ease-out both;
-}
+.page-enter { animation: page-enter var(--motion-base) ease-out both; }
 
 @keyframes page-enter {
   from { opacity: 0; transform: translateY(5px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@media print {
+  body * { visibility: hidden; }
+  #printable-invoice, #printable-invoice * { visibility: visible; }
+  #printable-invoice { position: absolute; inset: 0; width: 100%; padding: 24px; background: white; }
 }
 
 @media (prefers-reduced-motion: reduce) {
