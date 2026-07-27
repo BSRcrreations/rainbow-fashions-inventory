@@ -212,6 +212,11 @@ class PurchaseValidationRead(BaseModel):
     total_amount: Decimal
 
 
+class PurchaseCancelRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+    version: Optional[int] = Field(default=None, ge=1)
+
+
 class PurchaseUploadResponse(BaseModel):
     purchase: PurchaseRead
     extracted_invoice: ExtractedInvoice

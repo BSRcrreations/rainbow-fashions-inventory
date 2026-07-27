@@ -7,14 +7,14 @@ from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
-from fastapi import UploadFile
+from fastapi import HTTPException, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.ai.factory import get_ocr_service
 from app.ai.invoice_parser import InvoiceParser
-from app.core.exceptions import bad_request, conflict, not_found
+from app.core.exceptions import bad_request, conflict, error_payload, not_found
 from app.models.brand import Brand
 from app.models.category import Category
 from app.models.enums import PricingType, PurchaseStatus, StockMovementType
@@ -204,6 +204,12 @@ class PurchaseService:
             ],
         )
         return PurchaseDetailRead.model_validate(base)
+
+    def invoice_file(self, purchase_id: UUID, current_user: User):
+        purchase = self.get(purchase_id, current_user)
+        if not purchase.uploaded_file:
+            raise not_found("Invoice document")
+        return purchase.uploaded_file
 
     def patch(self, purchase_id: UUID, payload: PurchasePatch, current_user: User) -> Purchase:
         purchase = self.get(purchase_id, current_user)
@@ -614,7 +620,10 @@ class PurchaseService:
     @staticmethod
     def _validate_version(purchase: Purchase, version: Optional[int]) -> None:
         if version is not None and purchase.version != version:
-            raise conflict("This purchase was changed by another user. Reload and review the latest version.")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error_payload("This purchase was changed by another user. Reload and review the latest version.", "PURCHASE_MODIFIED"),
+            )
 
     def _assert_unique_invoice(self, purchase: Purchase, store_id: UUID) -> None:
         duplicate = self.repo.find_duplicate_invoice(store_id, purchase.supplier_id, purchase.supplier_name, purchase.invoice_number, purchase.id)

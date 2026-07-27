@@ -9,6 +9,7 @@ import EditSalePage from "./pages/EditSalePage";
 import ProductsPage from "./pages/ProductsPage";
 import CategoriesPage from "./pages/CategoriesPage";
 import PurchasesPage from "./pages/PurchasesPage";
+import PurchaseDetailPage from "./pages/PurchaseDetailPage";
 import StockPage from "./pages/StockPage";
 import StockAdjustmentPage from "./pages/StockAdjustmentPage";
 
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="/categories" element={<CategoriesPage />} />
           <Route path="/brands" element={<Navigate to="/categories" replace />} />
           <Route path="/purchases" element={<PurchasesPage />} />
+          <Route path="/purchases/:purchaseId" element={<PurchaseDetailPage />} />
           <Route path="/stock" element={<StockPage />} />
           <Route path="/stock/adjustment" element={<StockAdjustmentPage />} />
         </Route>

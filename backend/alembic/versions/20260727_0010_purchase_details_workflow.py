@@ -50,8 +50,8 @@ def upgrade() -> None:
     )
     op.create_index("ix_purchase_audits_purchase_id", "purchase_audits", ["purchase_id"])
 
-    # Remove only known pre-production OCR placeholder drafts; confirmed records remain intact.
-    op.execute("DELETE FROM purchases WHERE supplier_name = 'ARK Distributors' AND status IN ('DRAFT', 'REVIEWED')")
+    # Remove only the known pre-production OCR placeholder invoice.
+    op.execute("DELETE FROM purchases WHERE supplier_name = 'ARK Distributors' AND invoice_number = 'ARK-INV-1001' AND status IN ('DRAFT', 'REVIEWED')")
     op.execute("DELETE FROM suppliers WHERE name = 'ARK Distributors' AND NOT EXISTS (SELECT 1 FROM purchases WHERE purchases.supplier_id = suppliers.id)")
 
 
