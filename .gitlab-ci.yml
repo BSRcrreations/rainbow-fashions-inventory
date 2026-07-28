@@ -1,0 +1,190 @@
+stages:
+  - validate
+  - docker
+  - package
+  - deploy
+  - verify
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+variables:
+  DEPLOY_BRANCH: "shop-inventory"
+  DEPLOY_PATH: "/opt/rainbow-fashions"
+  DEPLOY_URL: "http://178.238.237.182"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+default:
+  interruptible: true
+
+backend_tests:
+  stage: validate
+  image: python:3.12-slim
+  cache:
+    key: backend-pip
+    paths:
+      - .cache/pip
+  before_script:
+    - python --version
+    - apt-get update
+    - apt-get install -y --no-install-recommends build-essential libpq-dev
+    - python -m pip install --upgrade pip
+    - pip install -r backend/requirements.txt
+  script:
+    - cd backend
+    - pytest
+
+frontend_quality:
+  stage: validate
+  image: node:20-alpine
+  cache:
+    key:
+      files:
+        - frontend/package-lock.json
+    paths:
+      - frontend/.npm/
+  before_script:
+    - cd frontend
+    - npm ci --cache .npm --prefer-offline
+  script:
+    - npm run lint
+    - npm run typecheck
+    - npm run build
+  artifacts:
+    expire_in: 1 week
+    paths:
+      - frontend/dist/
+
+docker_compose_build:
+  stage: docker
+  image: docker:27-cli
+  services:
+    - name: docker:27-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - docker version
+    - docker compose version
+  script:
+    - docker compose config
+    - docker compose build
+
+package_release:
+  stage: package
+  image: alpine:3.20
+  needs:
+    - backend_tests
+    - frontend_quality
+    - docker_compose_build
+  script:
+    - apk add --no-cache tar
+    - tar -czf rainbow-fashions-${CI_COMMIT_SHORT_SHA}.tar.gz --exclude=.git --exclude=frontend/node_modules --exclude=frontend/dist --exclude=backend/.env --exclude=backend/app/uploads .
+  artifacts:
+    expire_in: 1 week
+    paths:
+      - rainbow-fashions-${CI_COMMIT_SHORT_SHA}.tar.gz
+  rules:
+    - if: $CI_COMMIT_BRANCH == $DEPLOY_BRANCH
+
+.deploy_ssh:
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache openssh-client
+    - test -n "$DEPLOY_HOST"
+    - test -n "$DEPLOY_USER"
+    - test -n "$DEPLOY_SSH_PRIVATE_KEY"
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+    - chmod 600 ~/.ssh/id_ed25519
+    - ssh-keyscan -p "${DEPLOY_PORT:-22}" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+  rules:
+    - if: $CI_COMMIT_BRANCH == $DEPLOY_BRANCH
+      when: manual
+
+deploy_phase_1_upload:
+  extends: .deploy_ssh
+  stage: deploy
+  needs:
+    - package_release
+  resource_group: rainbow-fashions-production
+  environment:
+    name: production
+    url: $DEPLOY_URL
+  script:
+    - export RELEASE_DIR="$DEPLOY_PATH/releases/$CI_COMMIT_SHORT_SHA"
+    - ssh -p "${DEPLOY_PORT:-22}" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$RELEASE_DIR'"
+    - scp -P "${DEPLOY_PORT:-22}" "rainbow-fashions-${CI_COMMIT_SHORT_SHA}.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:$RELEASE_DIR/release.tar.gz"
+    - ssh -p "${DEPLOY_PORT:-22}" "$DEPLOY_USER@$DEPLOY_HOST" "tar -xzf '$RELEASE_DIR/release.tar.gz' -C '$RELEASE_DIR' && rm -f '$RELEASE_DIR/release.tar.gz'"
+
+deploy_phase_2_backup:
+  extends: .deploy_ssh
+  stage: deploy
+  needs:
+    - deploy_phase_1_upload
+  resource_group: rainbow-fashions-production
+  environment:
+    name: production
+    url: $DEPLOY_URL
+  allow_failure: true
+  script:
+    - |
+      ssh -p "${DEPLOY_PORT:-22}" "$DEPLOY_USER@$DEPLOY_HOST" "
+        set -e
+        APP_DIR='$DEPLOY_PATH'
+        BACKUP_DIR=\"\$APP_DIR/backups\"
+        mkdir -p \"\$BACKUP_DIR\"
+        if [ -d \"\$APP_DIR/current\" ]; then
+          cd \"\$APP_DIR/current\"
+          docker compose ps postgres >/dev/null 2>&1
+          docker compose exec -T postgres pg_dump -U inventory_user -d inventory_db > \"\$BACKUP_DIR/inventory_db_${CI_COMMIT_SHORT_SHA}_$(date +%Y%m%d_%H%M%S).sql\"
+        else
+          echo 'No current release found; skipping database backup.'
+        fi
+      "
+
+deploy_phase_3_activate:
+  extends: .deploy_ssh
+  stage: deploy
+  needs:
+    - deploy_phase_2_backup
+  resource_group: rainbow-fashions-production
+  environment:
+    name: production
+    url: $DEPLOY_URL
+  script:
+    - |
+      ssh -p "${DEPLOY_PORT:-22}" "$DEPLOY_USER@$DEPLOY_HOST" "
+        set -e
+        APP_DIR='$DEPLOY_PATH'
+        RELEASE_DIR=\"\$APP_DIR/releases/$CI_COMMIT_SHORT_SHA\"
+        test -d \"\$RELEASE_DIR\"
+        ln -sfn \"\$RELEASE_DIR\" \"\$APP_DIR/current\"
+        cd \"\$APP_DIR/current\"
+        if [ -f \"\$APP_DIR/shared/backend.env\" ]; then
+          cp \"\$APP_DIR/shared/backend.env\" backend/.env
+        fi
+        docker compose build
+        docker compose up -d postgres
+        docker compose run --rm backend alembic upgrade head
+        docker compose up -d --remove-orphans
+        docker compose ps
+      "
+
+deploy_phase_4_verify:
+  stage: verify
+  image: curlimages/curl:8.11.1
+  needs:
+    - deploy_phase_3_activate
+  environment:
+    name: production
+    url: $DEPLOY_URL
+  script:
+    - curl --fail --retry 12 --retry-delay 5 "$DEPLOY_URL/"
+    - curl --fail --retry 12 --retry-delay 5 "$DEPLOY_URL/health"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $DEPLOY_BRANCH

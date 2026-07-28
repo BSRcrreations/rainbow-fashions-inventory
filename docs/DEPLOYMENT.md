@@ -47,3 +47,8 @@ deployment/scripts/restore_postgres.sh ./backups/rainbow_inventory_YYYYMMDD_HHMM
 ```
 
 Backups older than 30 days are removed by the backup script.
+
+## GitLab CI/CD
+
+The `shop-inventory` branch is deployed in manual phases through GitLab CI.
+See `docs/CI_CD.md` for required variables, server layout, and release steps.
