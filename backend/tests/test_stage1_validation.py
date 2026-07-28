@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import uuid4
@@ -65,6 +66,13 @@ class FakeCatalogRepo:
 
 
 class Stage1ValidationTests(unittest.TestCase):
+    def test_purchase_tax_rate_is_limited_to_a_valid_percentage(self) -> None:
+        patch = PurchasePatch(invoice_tax_rate=Decimal("18"), version=4)
+
+        self.assertEqual(patch.invoice_tax_rate, Decimal("18"))
+        with self.assertRaises(ValidationError):
+            PurchasePatch(invoice_tax_rate=Decimal("100.01"))
+
     def test_dashboard_distribution_accepts_text_label(self) -> None:
         item = DistributionItem(label="In stock", value=5)
 
