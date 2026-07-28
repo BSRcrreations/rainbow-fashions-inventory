@@ -76,7 +76,8 @@ package_release:
     - docker_compose_build
   script:
     - apk add --no-cache tar
-    - tar -czf rainbow-fashions-${CI_COMMIT_SHORT_SHA}.tar.gz --exclude=.git --exclude=rainbow-fashions-${CI_COMMIT_SHORT_SHA}.tar.gz --exclude=frontend/node_modules --exclude=frontend/dist --exclude=backend/.env --exclude=backend/app/uploads .
+    - tar -czf /tmp/rainbow-fashions-${CI_COMMIT_SHORT_SHA}.tar.gz --exclude=.git --exclude=frontend/node_modules --exclude=frontend/dist --exclude=backend/.env --exclude=backend/app/uploads .
+    - mv /tmp/rainbow-fashions-${CI_COMMIT_SHORT_SHA}.tar.gz .
   artifacts:
     expire_in: 1 week
     paths:
