@@ -55,7 +55,7 @@ def export_sales(
     current_user: User = Depends(get_current_user),
 ) -> Response:
     service = SaleService(db)
-    records = service.export_records(search, payment_mode, start_date, end_date, invoice_number, customer_name, cashier_name, current_user=current_user)
+    records = service.export_records(search, payment_mode, start_date, end_date, invoice_number, customer_name, cashier_name, status_filter, current_user=current_user)
     if format == "pdf":
         return Response(
             content=service.export_pdf(records),
@@ -80,6 +80,7 @@ def list_sales(
     invoice_number: Optional[str] = None,
     customer_name: Optional[str] = None,
     cashier_name: Optional[str] = None,
+    status_filter: Optional[str] = None,
     sort: Literal["newest", "oldest", "total"] = "newest",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
