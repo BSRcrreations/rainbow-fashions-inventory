@@ -23,12 +23,14 @@ Key decisions:
 - Repository classes isolate persistence queries.
 - Service classes own business rules and transaction boundaries.
 - OCR is behind an interface in `app/ai`.
-- Purchases are queue/draft/review/confirm to prevent accidental stock changes; upload commits the job before background recognition begins. Purchase edits use optimistic versions and append purchase audit records; only confirmation writes stock history.
+- Purchases are queue/draft/review/confirm to prevent accidental stock changes; upload commits the job before background recognition begins. Purchase edits use optimistic versions and append purchase audit records; only confirmation writes stock history. `services/discount_calculator.py` is the server-side decimal authority for purchase discount, tax, invoice allocation, and free-quantity cost calculations.
 - Catalog and product duplicate/delete rules live in services and repositories, not React.
 - API errors are normalized in FastAPI exception handlers before reaching the client.
 - Product images are stored as uploaded files and referenced from products by `image_url`.
 - Product list enhancements are implemented in the product repository query layer and exposed through an additive `paginated=true` API mode, keeping the original list response backward compatible.
 - Bulk product operations run through `ProductService` so duplicate checks and stock protections remain centralized.
+- Destructive product operations are isolated in `ProductDeletionService`: it locks selected rows, derives the store from the authenticated owner, checks dependent records, records immutable deletion audits, and commits or rolls back as a single unit.
+- Purchase and sale deletion is handled by `DestructiveActionService`. It verifies only the environment-managed Argon2id `DELETE_AUTH_PASSWORD_HASH`, rate-limits failed attempts by store and user, requires idempotency keys, and creates immutable audit records without storing passwords.
 - Import/export is handled by product API routes and service validation; invalid import rows are skipped and reported.
 - `stores` and `product_inventory` support future multi-store work without redesign.
 

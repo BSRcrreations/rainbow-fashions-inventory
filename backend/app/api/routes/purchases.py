@@ -5,11 +5,11 @@ from uuid import UUID
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_owner
 from app.database.session import get_db
 from app.models.user import User
 from app.schemas.purchase import (
@@ -23,16 +23,29 @@ from app.schemas.purchase import (
     PurchaseReviewUpdate,
     PurchaseUploadResponse,
     PurchaseValidationRead,
+    PurchaseDeleteCheckRequest,
+    PurchaseDeleteRequest,
 )
+from app.services.destructive_action_service import DestructiveActionService
 from app.services.purchase_service import PurchaseService
 
 
 router = APIRouter(prefix="/purchases", tags=["Purchases"])
 
 
+@router.post("/delete-check")
+def check_purchase_delete(payload: PurchaseDeleteCheckRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_owner)):
+    return DestructiveActionService(db).check_purchases(payload.purchase_ids, current_user, request.state.request_id)
+
+
+@router.post("/delete")
+def delete_purchases(payload: PurchaseDeleteRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_owner)):
+    return DestructiveActionService(db).delete_purchases(payload.purchase_ids, payload.delete_password, request.headers.get("Idempotency-Key", ""), current_user, request.state.request_id, request.client.host if request.client else None)
+
+
 @router.get("", response_model=list[PurchaseRead])
-def list_purchases(skip: int = 0, limit: int = 50, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> list:
-    return PurchaseService(db).list(current_user, skip, limit)
+def list_purchases(skip: int = 0, limit: int = 50, status_filter: Optional[str] = Query(default=None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> list:
+    return PurchaseService(db).list(current_user, skip, limit, status_filter)
 
 
 @router.post("/upload", response_model=PurchaseUploadResponse, status_code=status.HTTP_201_CREATED)
@@ -63,6 +76,11 @@ def get_purchase_document(purchase_id: UUID, download: bool = False, db: Session
         filename=uploaded.original_filename if download else None,
         content_disposition_type="attachment" if download else "inline",
     )
+
+
+@router.get("/{purchase_id}/document/preview")
+def get_purchase_document_preview(purchase_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> Response:
+    return Response(content=PurchaseService(db).invoice_preview(purchase_id, current_user), media_type="image/jpeg")
 
 
 @router.patch("/{purchase_id}", response_model=PurchaseRead)

@@ -19,6 +19,7 @@ class Store(Base):
     address: Mapped[Optional[str]] = mapped_column(Text)
     phone: Mapped[Optional[str]] = mapped_column(String(30))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    allow_test_data_purge: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -32,3 +33,4 @@ class Store(Base):
     purchases = relationship("Purchase", back_populates="store")
     stock_movements = relationship("StockHistory", back_populates="store")
     sales = relationship("Sale", back_populates="store")
+    products = relationship("Product", back_populates="store")

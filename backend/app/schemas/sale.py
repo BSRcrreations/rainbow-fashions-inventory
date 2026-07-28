@@ -14,6 +14,14 @@ from app.schemas.common import ORMBaseModel
 PaymentMode = Literal["CASH", "CARD", "UPI", "BANK", "OTHER"]
 
 
+class SaleDeleteCheckRequest(BaseModel):
+    sale_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
+class SaleDeleteRequest(SaleDeleteCheckRequest):
+    delete_password: str = Field(min_length=1, max_length=256)
+
+
 class SaleItemCreate(BaseModel):
     product_id: UUID
     quantity: int = Field(gt=0)

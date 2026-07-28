@@ -7,14 +7,16 @@ const TOKEN_KEY = "rainbow_inventory_token";
 export class ApiError extends Error {
   status: number;
   code?: string;
+  requestId?: string;
   fields?: Array<{ field: string; message: string }>;
 
-  constructor(message: string, status: number, code?: string, fields?: Array<{ field: string; message: string }>) {
+  constructor(message: string, status: number, code?: string, fields?: Array<{ field: string; message: string }>, requestId?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.fields = fields;
+    this.requestId = requestId;
   }
 }
 
@@ -29,6 +31,12 @@ function fallbackMessage(status: number): string {
   return "The request could not be completed.";
 }
 
+function safeRawMessage(raw: string, status: number): string {
+  const message = raw.trim();
+  if (!message || message.length > 500 || /traceback|sqlalchemy|psycopg|<html|<!doctype/i.test(message)) return fallbackMessage(status);
+  return message;
+}
+
 export async function toApiError(response: Response): Promise<ApiError> {
   const raw = await response.text();
   let payload: unknown = raw;
@@ -40,9 +48,10 @@ export async function toApiError(response: Response): Promise<ApiError> {
   const fields = Array.isArray(validation) ? validation.map((field: ApiErrorField) => ({ field: field.field ?? field.loc?.filter((part: string | number) => part !== "body").join(".") ?? "field", message: field.message ?? field.msg ?? "Invalid value" })) : undefined;
   const validationMessage = fields?.length ? fields.map((field) => `${field.field}: ${field.message}`).join("; ") : undefined;
   const detailMessage = typeof detail === "string" ? detail : typeof detailObject?.message === "string" ? detailObject.message : typeof body?.message === "string" ? body.message : undefined;
-  const message = validationMessage ?? (response.status >= 500 ? fallbackMessage(response.status) : detailMessage ?? (typeof payload === "string" && payload.trim() ? payload.trim() : fallbackMessage(response.status)));
+  const message = validationMessage ?? detailMessage ?? (typeof payload === "string" ? safeRawMessage(payload, response.status) : fallbackMessage(response.status));
   const code = typeof detailObject?.code === "string" ? detailObject.code : typeof body?.code === "string" ? body.code : undefined;
-  return new ApiError(message, response.status, code, fields);
+  const requestId = typeof detailObject?.request_id === "string" ? detailObject.request_id : typeof body?.request_id === "string" ? body.request_id : response.headers.get("X-Request-ID") ?? undefined;
+  return new ApiError(message, response.status, code, fields, requestId);
 }
 
 export function getToken(): string | null {
@@ -114,8 +123,8 @@ export const api = {
   get: <T>(path: string) => request<T>(path),
   getBlob: (path: string) => requestBlob(path),
   postBlob: (path: string, body?: unknown) => requestBlobWithBody(path, body),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "POST", body: body instanceof FormData ? body : JSON.stringify(body ?? {}) }),
+  post: <T>(path: string, body?: unknown, headers?: HeadersInit) =>
+    request<T>(path, { method: "POST", headers, body: body instanceof FormData ? body : JSON.stringify(body ?? {}) }),
   put: <T>(path: string, body: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   delete: <T = void>(path: string) => request<T>(path, { method: "DELETE" })

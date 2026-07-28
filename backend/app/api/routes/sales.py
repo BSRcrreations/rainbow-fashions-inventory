@@ -4,18 +4,29 @@ from datetime import date
 from typing import Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_manager_or_owner
+from app.api.deps import get_current_user, require_manager_or_owner, require_owner
 from app.database.session import get_db
 from app.models.user import User
-from app.schemas.sale import SaleAuditRead, SaleCreate, SaleListResponse, SaleRead, SaleReturnCreate, SaleReturnRead, SaleUpdate, SaleVoidRequest, SalesDashboardResponse
+from app.schemas.sale import SaleAuditRead, SaleCreate, SaleDeleteCheckRequest, SaleDeleteRequest, SaleListResponse, SaleRead, SaleReturnCreate, SaleReturnRead, SaleUpdate, SaleVoidRequest, SalesDashboardResponse
+from app.services.destructive_action_service import DestructiveActionService
 from app.services.sale_service import SaleService
 
 
 router = APIRouter(prefix="/sales", tags=["Sales"])
+
+
+@router.post("/delete-check")
+def check_sale_delete(payload: SaleDeleteCheckRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_owner)):
+    return DestructiveActionService(db).check_sales(payload.sale_ids, current_user, request.state.request_id)
+
+
+@router.post("/delete")
+def delete_sales(payload: SaleDeleteRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_owner)):
+    return DestructiveActionService(db).delete_sales(payload.sale_ids, payload.delete_password, request.headers.get("Idempotency-Key", ""), current_user, request.state.request_id, request.client.host if request.client else None)
 
 
 @router.get("/dashboard", response_model=SalesDashboardResponse)
@@ -39,6 +50,7 @@ def export_sales(
     invoice_number: Optional[str] = None,
     customer_name: Optional[str] = None,
     cashier_name: Optional[str] = None,
+    status_filter: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
@@ -72,7 +84,7 @@ def list_sales(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return SaleService(db).list_paginated(page, page_size, search, payment_mode, start_date, end_date, invoice_number, customer_name, cashier_name, current_user, sort)
+    return SaleService(db).list_paginated(page, page_size, search, payment_mode, start_date, end_date, invoice_number, customer_name, cashier_name, status_filter, current_user, sort)
 
 
 @router.post("", response_model=SaleRead, status_code=status.HTTP_201_CREATED)

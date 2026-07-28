@@ -101,7 +101,7 @@
   }
 
   .ds-dialog-backdrop {
-    @apply fixed inset-0 z-40 bg-slate-950/45 backdrop-blur-sm;
+    @apply fixed inset-0 z-40 overscroll-contain bg-slate-950/45 backdrop-blur-sm;
   }
 
   .ds-dialog {

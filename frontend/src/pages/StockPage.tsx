@@ -13,8 +13,8 @@ import { Button } from "../components/ui/button";
 import type { Product, StockHistory, StockMovementType } from "../types";
 import { money, shortDate } from "../utils/format";
 
-const movementTypes: StockMovementType[] = ["PURCHASE", "SALE", "SALE_EDIT_RETURN", "SALE_EDIT_DECREASE", "SALE_VOID", "CUSTOMER_RETURN", "SUPPLIER_RETURN", "DAMAGE", "MANUAL_ADJUSTMENT"];
-const movementLabels: Record<StockMovementType, string> = { PURCHASE: "Purchase", SALE: "Sale", SALE_EDIT_RETURN: "Sale edit return", SALE_EDIT_DECREASE: "Sale edit decrease", SALE_VOID: "Sale void", CUSTOMER_RETURN: "Customer Return", SUPPLIER_RETURN: "Supplier Return", DAMAGE: "Damage", MANUAL_ADJUSTMENT: "Manual Adjustment" };
+const movementTypes: StockMovementType[] = ["PURCHASE", "PURCHASE_VOID", "SALE", "SALE_EDIT_RETURN", "SALE_EDIT_DECREASE", "SALE_VOID", "CUSTOMER_RETURN", "SUPPLIER_RETURN", "DAMAGE", "MANUAL_ADJUSTMENT"];
+const movementLabels: Record<StockMovementType, string> = { PURCHASE: "Purchase", PURCHASE_VOID: "Purchase void", SALE: "Sale", SALE_EDIT_RETURN: "Sale edit return", SALE_EDIT_DECREASE: "Sale edit decrease", SALE_VOID: "Sale void", CUSTOMER_RETURN: "Customer Return", SUPPLIER_RETURN: "Supplier Return", DAMAGE: "Damage", MANUAL_ADJUSTMENT: "Manual Adjustment" };
 
 export default function StockPage() {
   const toast = useToast();

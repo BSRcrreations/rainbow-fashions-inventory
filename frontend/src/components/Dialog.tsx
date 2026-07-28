@@ -34,12 +34,12 @@ export default function Dialog({ open, title, description, children, onClose, ma
   if (!open) return null;
 
   return (
-    <div className="ds-dialog-backdrop flex items-end justify-center p-0 sm:items-center sm:p-4" role="presentation">
+    <div className="ds-dialog-backdrop flex items-end justify-center overflow-y-auto p-2 sm:items-center sm:p-6" role="presentation">
       <section
         aria-describedby={description ? "dialog-description" : undefined}
         aria-labelledby="dialog-title"
         aria-modal="true"
-        className={`ds-dialog flex max-h-[94vh] w-full flex-col rounded-b-none sm:rounded-lg ${widths[maxWidth]}`}
+        className={`ds-dialog flex max-h-[calc(100dvh-1rem)] w-full flex-col overflow-hidden sm:max-h-[calc(100dvh-3rem)] ${widths[maxWidth]}`}
         role="dialog"
       >
         <header className="flex items-start justify-between gap-4 border-b border-border px-4 py-4 sm:px-6">
@@ -51,7 +51,7 @@ export default function Dialog({ open, title, description, children, onClose, ma
             <X size={18} />
           </Button>
         </header>
-        <div className="overflow-y-auto px-4 py-5 sm:px-6">{children}</div>
+        <div className="min-h-0 overflow-y-auto break-words px-4 py-5 sm:px-6">{children}</div>
       </section>
     </div>
   );

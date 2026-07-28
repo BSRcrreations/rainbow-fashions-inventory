@@ -17,6 +17,7 @@ class PurchaseStatus(str, Enum):
     REVIEWED = "REVIEWED"
     CONFIRMED = "CONFIRMED"
     CANCELLED = "CANCELLED"
+    VOIDED = "VOIDED"
 
 
 class StockMovementType(str, Enum):
@@ -29,9 +30,12 @@ class StockMovementType(str, Enum):
     SALE_EDIT_RETURN = "SALE_EDIT_RETURN"
     SALE_EDIT_DECREASE = "SALE_EDIT_DECREASE"
     SALE_VOID = "SALE_VOID"
+    PURCHASE_VOID = "PURCHASE_VOID"
 
 
 class SaleStatus(str, Enum):
+    DRAFT = "DRAFT"
+    CANCELLED = "CANCELLED"
     COMPLETED = "COMPLETED"
     EDITED = "EDITED"
     PARTIALLY_RETURNED = "PARTIALLY_RETURNED"

@@ -180,6 +180,7 @@ class SaleService:
         invoice_number: Optional[str] = None,
         customer_name: Optional[str] = None,
         cashier_name: Optional[str] = None,
+        status_filter: Optional[str] = None,
         current_user: Optional[User] = None,
         sort: str = "newest",
     ) -> SaleListResponse:
@@ -188,7 +189,7 @@ class SaleService:
         start_at, end_at = self._optional_bounds(start_date, end_date)
         if current_user is None:
             raise bad_request("Current user is required")
-        items, total = self.repo.list_paginated(page, page_size, search, payment_mode, start_at, end_at, invoice_number, customer_name, cashier_name, self._store_id(current_user), sort)
+        items, total = self.repo.list_paginated(page, page_size, search, payment_mode, start_at, end_at, invoice_number, customer_name, cashier_name, status_filter, self._store_id(current_user), sort)
         return SaleListResponse(
             items=items,
             meta={
@@ -349,7 +350,7 @@ class SaleService:
         start_at, end_at = self._optional_bounds(start_date, end_date)
         if current_user is None:
             raise bad_request("Current user is required")
-        items, _ = self.repo.list_paginated(1, 10000, search, payment_mode, start_at, end_at, invoice_number, customer_name, cashier_name, self._store_id(current_user))
+        items, _ = self.repo.list_paginated(1, 10000, search, payment_mode, start_at, end_at, invoice_number, customer_name, cashier_name, None, self._store_id(current_user))
         return items
 
     def _metric(self, start_date: date, end_date: date, store_id: UUID) -> SalesMetric:

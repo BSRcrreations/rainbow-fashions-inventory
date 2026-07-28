@@ -25,8 +25,8 @@ export default function ConfirmDialog({
 }: ConfirmDialogProps) {
   if (!open) return null;
   return (
-    <div className="ds-dialog-backdrop grid place-items-center px-4">
-      <div className="ds-dialog w-full max-w-md p-5">
+    <div className="ds-dialog-backdrop grid place-items-center overflow-y-auto p-4">
+      <div className="ds-dialog max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto break-words p-5">
         <div className="mb-4 flex items-start gap-3">
           <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-red-50 text-error">
             <AlertTriangle size={18} />

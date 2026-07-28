@@ -7,17 +7,21 @@ from io import BytesIO, StringIO
 from typing import Optional, Union
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_manager_or_owner
+from app.api.deps import get_current_user, require_manager_or_owner, require_owner
+from app.core.exceptions import forbidden
+from app.models.enums import UserRole
 from app.database.session import get_db
 from app.models.user import User
 from app.schemas.product import (
     ProductBulkBrandUpdate,
+    ProductBulkDeleteRequest,
     ProductBulkCategoryUpdate,
     ProductBulkIds,
+    ProductBulkPurgeTestDataRequest,
     ProductBulkStockUpdate,
     ProductCodeResponse,
     ProductCreate,
@@ -27,6 +31,7 @@ from app.schemas.product import (
     ProductUpdate,
 )
 from app.services.product_service import ProductService
+from app.services.product_deletion_service import ProductDeletionService
 
 
 router = APIRouter(prefix="/products", tags=["Products"])
@@ -129,7 +134,7 @@ async def import_products(
     file: UploadFile = File(...),
     update_existing: bool = False,
     db: Session = Depends(get_db),
-    _: User = Depends(require_manager_or_owner),
+    current_user: User = Depends(require_manager_or_owner),
 ):
     content = await file.read()
     rows: list[dict[str, str]]
@@ -152,12 +157,14 @@ async def import_products(
     else:
         text = content.decode("utf-8-sig")
         rows = list(csv.DictReader(StringIO(text)))
-    return ProductService(db).import_products(rows, update_existing)
+    return ProductService(db).import_products(rows, update_existing, current_user.store_id)
 
 
 @router.post("", response_model=ProductRead, status_code=status.HTTP_201_CREATED)
-def create_product(payload: ProductCreate, db: Session = Depends(get_db), _: User = Depends(require_manager_or_owner)):
-    return ProductService(db).create(payload)
+def create_product(payload: ProductCreate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+    if payload.is_test_data and current_user.role != UserRole.OWNER:
+        raise forbidden("Only an owner can mark a product as test data")
+    return ProductService(db).create(payload, current_user.store_id)
 
 
 @router.get("/barcode/{barcode}", response_model=ProductRead)
@@ -171,7 +178,9 @@ def get_product(product_id: UUID, db: Session = Depends(get_db), _: User = Depen
 
 
 @router.put("/{product_id}", response_model=ProductRead)
-def update_product(product_id: UUID, payload: ProductUpdate, db: Session = Depends(get_db), _: User = Depends(require_manager_or_owner)):
+def update_product(product_id: UUID, payload: ProductUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+    if payload.is_test_data is True and current_user.role != UserRole.OWNER:
+        raise forbidden("Only an owner can mark a product as test data")
     return ProductService(db).update(product_id, payload)
 
 
@@ -190,9 +199,45 @@ def delete_product_image(product_id: UUID, db: Session = Depends(get_db), _: Use
     return ProductService(db).delete_image(product_id)
 
 
-@router.post("/bulk/delete")
-def bulk_delete_products(payload: ProductBulkIds, db: Session = Depends(get_db), _: User = Depends(require_manager_or_owner)):
-    return ProductService(db).bulk_delete(payload)
+@router.post("/bulk-delete-check")
+def check_bulk_product_delete(
+    payload: ProductBulkIds,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+):
+    return ProductDeletionService(db).check(payload.product_ids, current_user, request.state.request_id)
+
+
+@router.post("/bulk-delete")
+def permanently_delete_products(
+    payload: ProductBulkDeleteRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+):
+    return ProductDeletionService(db).permanently_delete(payload.product_ids, payload.confirmation, current_user, request.state.request_id)
+
+
+@router.post("/bulk-purge-test-data")
+def purge_bulk_test_products(
+    payload: ProductBulkPurgeTestDataRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+):
+    return ProductDeletionService(db).purge_test_data(payload.product_ids, payload.confirmation, payload.reason, current_user, request.state.request_id)
+
+
+@router.post("/bulk/delete", deprecated=True)
+def bulk_delete_products_legacy(
+    payload: ProductBulkDeleteRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+):
+    """Compatibility alias. It now enforces the same typed owner confirmation."""
+    return ProductDeletionService(db).permanently_delete(payload.product_ids, payload.confirmation, current_user, request.state.request_id)
 
 
 @router.post("/bulk/category")
@@ -228,7 +273,6 @@ def bulk_export_products(payload: ProductBulkIds, format: str = "csv", db: Sessi
     )
 
 
-@router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_product(product_id: UUID, db: Session = Depends(get_db), _: User = Depends(require_manager_or_owner)) -> Response:
-    ProductService(db).delete(product_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT, deprecated=True)
+def delete_product(product_id: UUID, db: Session = Depends(get_db), _: User = Depends(require_owner)) -> Response:
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail={"message": "Use the typed permanent-delete confirmation workflow.", "code": "PRODUCT_DELETE_CONFIRMATION_REQUIRED"})
