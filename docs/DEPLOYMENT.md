@@ -11,7 +11,7 @@ docker compose up --build
 Open:
 
 ```text
-http://localhost:8080
+http://localhost
 ```
 
 ## Services

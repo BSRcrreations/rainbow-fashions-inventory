@@ -6,20 +6,12 @@ The pipeline deploys the `shop-inventory` branch to:
 http://178.238.237.182/
 ```
 
-## Required GitLab CI variables
+## GitLab CI variables
 
-Set these in GitLab under **Settings > CI/CD > Variables**:
-
-```text
-DEPLOY_HOST=178.238.237.182
-DEPLOY_USER=<ssh-user>
-DEPLOY_SSH_PRIVATE_KEY=<private-key-with-server-access>
-```
-
-Optional variables:
+The production runner runs on the deployment server, so no SSH deploy variables are required.
+Optional overrides can be set in GitLab under **Settings > CI/CD > Variables**:
 
 ```text
-DEPLOY_PORT=22
 DEPLOY_PATH=/opt/rainbow-fashions
 DEPLOY_URL=http://178.238.237.182
 DEPLOY_BRANCH=shop-inventory
@@ -27,7 +19,7 @@ DEPLOY_BRANCH=shop-inventory
 
 ## Server layout
 
-The deploy jobs expect this layout on the server:
+The deploy jobs create and use this layout on the server:
 
 ```text
 /opt/rainbow-fashions/

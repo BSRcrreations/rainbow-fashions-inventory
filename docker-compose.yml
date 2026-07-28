@@ -22,7 +22,7 @@ services:
       - ./backend/.env.example
     environment:
       DATABASE_URL: postgresql+psycopg://inventory_user:inventory123@postgres:5432/inventory_db
-      CORS_ORIGINS: http://localhost,http://localhost:5173
+      CORS_ORIGINS: http://localhost,http://localhost:5173,http://178.238.237.182
     depends_on:
       postgres:
         condition: service_healthy
@@ -37,7 +37,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "8080:80"
+      - "80:80"
 
 volumes:
   postgres_data:
