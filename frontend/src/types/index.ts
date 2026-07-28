@@ -193,6 +193,7 @@ export interface PurchaseItem {
   brand_name?: string | null;
   category_name?: string | null;
   product_name: string;
+  proposed_product_name?: string | null;
   barcode?: string | null;
   supplier_product_code?: string | null;
   hsn_sac?: string | null;
@@ -205,11 +206,16 @@ export interface PurchaseItem {
   tax_amount: string;
   tax_rate: string;
   mrp?: string | null;
+  selling_price?: string | null;
   line_total: string;
   confidence?: string | null;
   match_status: string;
   batch_number?: string | null;
+  manufacturing_date?: string | null;
   expiry_date?: string | null;
+  create_new_product?: boolean;
+  variant_attributes?: Record<string, string>;
+  classification_verified?: boolean;
   user_verified: boolean;
 }
 
@@ -316,6 +322,7 @@ export interface PurchaseDocumentAccepted {
   job_id: string;
   status: string;
   request_id: string;
+  duplicate?: boolean;
 }
 
 export interface PurchaseDocumentJob {
@@ -325,6 +332,7 @@ export interface PurchaseDocumentJob {
   progress: number;
   message: string;
   request_id: string;
+  provider_name: string;
   error_code?: string | null;
   error_message?: string | null;
   result?: { extracted_invoice: PurchaseUploadResponse["extracted_invoice"]; review_items: PurchaseItem[]; warnings: string[] } | null;

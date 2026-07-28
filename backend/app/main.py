@@ -47,19 +47,34 @@ app.mount("/uploads/products", StaticFiles(directory=settings.product_upload_dir
 
 
 @app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     detail = exc.detail
-    payload = detail if isinstance(detail, dict) and "message" in detail else error_payload(str(detail), "http_error")
+    request_id = getattr(request.state, "request_id", None)
+    payload = detail.copy() if isinstance(detail, dict) and "message" in detail else error_payload(str(detail), "http_error")
+    payload.setdefault("request_id", request_id)
     return JSONResponse(status_code=exc.status_code, content={"detail": payload})
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     fields = [
         {"field": ".".join(str(part) for part in error["loc"] if part != "body"), "message": error["msg"]}
         for error in exc.errors()
     ]
-    return JSONResponse(status_code=422, content={"detail": error_payload("Validation failed", "validation_error", fields)})
+    return JSONResponse(
+        status_code=422,
+        content={"detail": error_payload("Validation failed", "validation_error", fields, getattr(request.state, "request_id", None))},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, _: Exception) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", None)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": error_payload("The server could not complete this request. Please try again.", "internal_error", request_id=request_id)},
+        headers={"X-Request-ID": request_id} if request_id else None,
+    )
 
 app.include_router(auth.router, prefix=settings.api_v1_prefix)
 app.include_router(dashboard.router, prefix=settings.api_v1_prefix)

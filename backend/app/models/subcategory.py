@@ -14,9 +14,10 @@ from app.database.base import Base
 
 class SubCategory(Base):
     __tablename__ = "subcategories"
-    __table_args__ = (UniqueConstraint("category_id", "name", name="uq_subcategories_category_name"),)
+    __table_args__ = (UniqueConstraint("store_id", "category_id", "name", name="uq_subcategories_store_category_name"),)
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    store_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"), nullable=False, index=True)
     category_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("categories.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     description: Mapped[Optional[str]] = mapped_column(Text)
@@ -26,3 +27,4 @@ class SubCategory(Base):
 
     category = relationship("Category", back_populates="subcategories")
     products = relationship("Product", back_populates="subcategory")
+    store = relationship("Store")

@@ -30,6 +30,10 @@ class ProductBase(BaseModel):
     minimum_stock: int = Field(default=0, ge=0)
     barcode: Optional[str] = Field(default=None, max_length=80)
     product_date: date
+    description: Optional[str] = Field(default=None, max_length=2000)
+    hsn_sac: Optional[str] = Field(default=None, max_length=40)
+    unit: str = Field(default="Each", min_length=1, max_length=40)
+    warehouse: Optional[str] = Field(default=None, max_length=120)
     image_url: Optional[str] = Field(default=None, max_length=500)
     is_active: bool = True
 
@@ -101,6 +105,10 @@ class ProductUpdate(BaseModel):
     minimum_stock: Optional[int] = Field(default=None, ge=0)
     barcode: Optional[str] = Field(default=None, max_length=80)
     product_date: Optional[date] = None
+    description: Optional[str] = Field(default=None, max_length=2000)
+    hsn_sac: Optional[str] = Field(default=None, max_length=40)
+    unit: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    warehouse: Optional[str] = Field(default=None, max_length=120)
     image_url: Optional[str] = Field(default=None, max_length=500)
     is_active: Optional[bool] = None
     colors: Optional[list[str]] = Field(default=None, max_length=50)

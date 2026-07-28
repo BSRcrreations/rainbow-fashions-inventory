@@ -25,6 +25,9 @@ from app.services.product_service import ProductService
 from app.services.sale_service import SaleService
 
 
+TEST_STORE_ID = uuid4()
+
+
 class FakeDb:
     def __init__(self) -> None:
         self.committed = False
@@ -43,9 +46,9 @@ class FakeCatalogRepo:
         self.deleted = False
 
     def get(self, record_id):
-        return SimpleNamespace(id=record_id, name="Existing")
+        return SimpleNamespace(id=record_id, name="Existing", store_id=TEST_STORE_ID)
 
-    def get_by_name(self, _: str):
+    def get_by_name(self, *_: object):
         return self.duplicate
 
     def add(self, instance):
@@ -88,7 +91,7 @@ class Stage1ValidationTests(unittest.TestCase):
         service.repo = FakeCatalogRepo(duplicate=SimpleNamespace(id=uuid4()))
 
         with self.assertRaises(HTTPException) as context:
-            service.create(CategoryCreate(name="Sarees", is_active=True))
+            service.create(CategoryCreate(name="Sarees", is_active=True), SimpleNamespace(store_id=TEST_STORE_ID))
 
         self.assertEqual(context.exception.status_code, 409)
 
@@ -98,7 +101,7 @@ class Stage1ValidationTests(unittest.TestCase):
         service.repo = FakeCatalogRepo(product_count=2)
 
         with self.assertRaises(HTTPException) as context:
-            service.delete(uuid4())
+            service.delete(uuid4(), SimpleNamespace(store_id=TEST_STORE_ID))
 
         self.assertEqual(context.exception.status_code, 400)
 
@@ -108,7 +111,7 @@ class Stage1ValidationTests(unittest.TestCase):
         service.repo = FakeCatalogRepo(product_count=1)
 
         with self.assertRaises(HTTPException) as context:
-            service.delete(uuid4())
+            service.delete(uuid4(), SimpleNamespace(store_id=TEST_STORE_ID))
 
         self.assertEqual(context.exception.status_code, 400)
 
@@ -256,8 +259,17 @@ class Stage1ValidationTests(unittest.TestCase):
 
         paths = {route.path for route in app.routes}
         self.assertIn("/api/v1/purchase-documents/upload", paths)
+        self.assertIn("/api/v1/purchase-documents/{document_id}", paths)
+        self.assertIn("/api/v1/purchase-documents/{document_id}/preview", paths)
         self.assertIn("/api/v1/purchase-documents/jobs/{job_id}", paths)
         self.assertIn("/api/v1/purchase-documents/{document_id}/retry", paths)
+
+    def test_document_job_includes_provider_name(self) -> None:
+        from app.models.purchase_document import DocumentProcessingJob
+
+        job = DocumentProcessingJob(provider="local")
+
+        self.assertEqual(job.provider_name, "local")
 
     def test_purchase_patch_allows_partial_invoice_update(self) -> None:
         patch = PurchasePatch(invoice_number="DS/26-27/05-A", version=4)

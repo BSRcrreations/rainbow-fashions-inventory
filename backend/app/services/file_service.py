@@ -22,15 +22,15 @@ class FileService:
         extension = Path(file.filename or "invoice").suffix.lower()
         allowed_extensions = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".pdf"}
         if file.content_type not in self.settings.allowed_invoice_content_types or extension not in allowed_extensions:
-            raise bad_request("Only JPG, JPEG, PNG, WEBP, HEIC, HEIF, and PDF invoice uploads are allowed")
+            raise bad_request("Only JPG, JPEG, PNG, WEBP, HEIC, HEIF, and PDF invoice uploads are allowed", "UNSUPPORTED_FILE_TYPE")
 
         content = await file.read()
         if not content:
-            raise bad_request("Uploaded file is empty")
+            raise bad_request("Uploaded file is empty", "EMPTY_FILE")
         if len(content) > self.settings.max_upload_size_bytes:
-            raise bad_request(f"Uploaded file exceeds {self.settings.max_upload_size_mb} MB")
+            raise bad_request(f"This invoice is larger than {self.settings.max_upload_size_mb} MB.", "FILE_TOO_LARGE")
         if not self._matches_invoice_signature(extension, content):
-            raise bad_request("The uploaded file content does not match its invoice file type")
+            raise bad_request("The uploaded file content does not match its invoice file type", "CORRUPTED_FILE")
 
         upload_dir = self.settings.invoice_upload_dir
         upload_dir.mkdir(parents=True, exist_ok=True)

@@ -35,35 +35,38 @@ CREATE TABLE users (
 
 CREATE TABLE categories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
     name VARCHAR(120) NOT NULL,
     description TEXT,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_categories_name UNIQUE (name)
+    CONSTRAINT uq_categories_store_name UNIQUE (store_id, name)
 );
 
 CREATE TABLE brands (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
     category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
     name VARCHAR(120) NOT NULL,
     description TEXT,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_brands_category_name UNIQUE (category_id, name),
+    CONSTRAINT uq_brands_store_category_name UNIQUE (store_id, category_id, name),
     CONSTRAINT uq_brands_id_category UNIQUE (id, category_id)
 );
 
 CREATE TABLE subcategories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
     category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
     name VARCHAR(120) NOT NULL,
     description TEXT,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_subcategories_category_name UNIQUE (category_id, name),
+    CONSTRAINT uq_subcategories_store_category_name UNIQUE (store_id, category_id, name),
     CONSTRAINT uq_subcategories_id_category UNIQUE (id, category_id)
 );
 
@@ -97,6 +100,10 @@ CREATE TABLE products (
     minimum_stock INTEGER NOT NULL DEFAULT 0,
     barcode VARCHAR(80),
     product_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    description TEXT,
+    hsn_sac VARCHAR(40),
+    unit VARCHAR(40) NOT NULL DEFAULT 'Each',
+    warehouse VARCHAR(120),
     image_url VARCHAR(500),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -238,6 +245,7 @@ CREATE TABLE purchase_items (
     brand_name VARCHAR(120),
     category_name VARCHAR(120),
     product_name VARCHAR(180) NOT NULL,
+    proposed_product_name VARCHAR(180),
     barcode VARCHAR(80),
     supplier_product_code VARCHAR(120),
     hsn_sac VARCHAR(40),
@@ -250,11 +258,18 @@ CREATE TABLE purchase_items (
     tax_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
     tax_rate NUMERIC(5, 2) NOT NULL DEFAULT 0,
     mrp NUMERIC(12, 2),
+    selling_price NUMERIC(12, 2),
     line_total NUMERIC(12, 2) NOT NULL,
     confidence NUMERIC(5, 4),
     match_status VARCHAR(40) NOT NULL DEFAULT 'NOT_FOUND',
     batch_number VARCHAR(120),
+    manufacturing_date DATE,
     expiry_date DATE,
+    create_new_product BOOLEAN NOT NULL DEFAULT FALSE,
+    variant_attributes JSONB NOT NULL DEFAULT '{}'::JSONB,
+    classification_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    classification_verified_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    classification_verified_at TIMESTAMPTZ,
     user_verified BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

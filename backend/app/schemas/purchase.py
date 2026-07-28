@@ -46,6 +46,7 @@ class PurchaseItemReview(BaseModel):
     brand_name: Optional[str] = None
     category_name: Optional[str] = None
     product_name: str = Field(min_length=1, max_length=180)
+    proposed_product_name: Optional[str] = Field(default=None, min_length=1, max_length=180)
     barcode: Optional[str] = Field(default=None, max_length=80)
     supplier_product_code: Optional[str] = Field(default=None, max_length=120)
     hsn_sac: Optional[str] = Field(default=None, max_length=40)
@@ -58,11 +59,16 @@ class PurchaseItemReview(BaseModel):
     tax_amount: Decimal = Field(default=Decimal("0"), ge=0)
     tax_rate: Decimal = Field(default=Decimal("0"), ge=0, le=100)
     mrp: Optional[Decimal] = Field(default=None, ge=0)
+    selling_price: Optional[Decimal] = Field(default=None, ge=0)
     line_total: Decimal = Field(ge=0)
     confidence: Optional[Decimal] = Field(default=None, ge=0, le=1)
     match_status: str = "NOT_FOUND"
     batch_number: Optional[str] = Field(default=None, max_length=120)
+    manufacturing_date: Optional[date_type] = None
     expiry_date: Optional[date_type] = None
+    create_new_product: bool = False
+    variant_attributes: dict[str, str] = Field(default_factory=dict)
+    classification_verified: bool = False
     user_verified: bool = False
 
 
@@ -106,6 +112,7 @@ class PurchaseItemPatch(BaseModel):
     brand_name: Optional[str] = Field(default=None, max_length=120)
     category_name: Optional[str] = Field(default=None, max_length=120)
     product_name: Optional[str] = Field(default=None, min_length=1, max_length=180)
+    proposed_product_name: Optional[str] = Field(default=None, min_length=1, max_length=180)
     barcode: Optional[str] = Field(default=None, max_length=80)
     supplier_product_code: Optional[str] = Field(default=None, max_length=120)
     hsn_sac: Optional[str] = Field(default=None, max_length=40)
@@ -118,7 +125,14 @@ class PurchaseItemPatch(BaseModel):
     tax_rate: Optional[Decimal] = Field(default=None, ge=0, le=100)
     tax_amount: Optional[Decimal] = Field(default=None, ge=0)
     mrp: Optional[Decimal] = Field(default=None, ge=0)
+    selling_price: Optional[Decimal] = Field(default=None, ge=0)
     match_status: Optional[str] = Field(default=None, max_length=40)
+    batch_number: Optional[str] = Field(default=None, max_length=120)
+    manufacturing_date: Optional[date_type] = None
+    expiry_date: Optional[date_type] = None
+    create_new_product: Optional[bool] = None
+    variant_attributes: Optional[dict[str, str]] = None
+    classification_verified: Optional[bool] = None
     reason: Optional[str] = Field(default=None, max_length=500)
     version: Optional[int] = Field(default=None, ge=1)
 
@@ -206,10 +220,29 @@ class PurchaseDetailRead(PurchaseRead):
 class PurchaseValidationRead(BaseModel):
     valid: bool
     messages: list[str] = Field(default_factory=list)
+    errors: list["PurchaseValidationError"] = Field(default_factory=list)
     subtotal: Decimal
     discount: Decimal
     tax_amount: Decimal
     total_amount: Decimal
+
+
+class PurchaseValidationError(BaseModel):
+    code: str
+    purchase_item_id: Optional[UUID] = None
+    field: Optional[str] = None
+    message: str
+
+
+class PurchaseItemClassificationPatch(BaseModel):
+    item_ids: list[UUID] = Field(min_length=1)
+    matched_product_id: Optional[UUID] = None
+    proposed_product_name: Optional[str] = Field(default=None, min_length=1, max_length=180)
+    category_id: Optional[UUID] = None
+    brand_id: Optional[UUID] = None
+    create_new_product: bool
+    reason: Optional[str] = Field(default=None, max_length=500)
+    version: Optional[int] = Field(default=None, ge=1)
 
 
 class PurchaseCancelRequest(BaseModel):
@@ -229,6 +262,7 @@ class PurchaseDocumentAccepted(BaseModel):
     job_id: UUID
     status: DocumentJobStatus
     request_id: str
+    duplicate: bool = False
 
 
 class DocumentJobRead(ORMBaseModel):
@@ -238,6 +272,7 @@ class DocumentJobRead(ORMBaseModel):
     progress: int
     message: str
     request_id: str
+    provider_name: str
     error_code: Optional[str] = None
     error_message: Optional[str] = None
     result: Optional[dict] = None
@@ -248,3 +283,4 @@ class PurchaseFromDocumentCreate(BaseModel):
 
 
 PurchaseDetailRead.model_rebuild()
+PurchaseValidationRead.model_rebuild()

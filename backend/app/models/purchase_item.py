@@ -6,7 +6,7 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -25,6 +25,7 @@ class PurchaseItem(Base):
     brand_name: Mapped[Optional[str]] = mapped_column(String(120))
     category_name: Mapped[Optional[str]] = mapped_column(String(120))
     product_name: Mapped[str] = mapped_column(String(180), nullable=False)
+    proposed_product_name: Mapped[Optional[str]] = mapped_column(String(180))
     barcode: Mapped[Optional[str]] = mapped_column(String(80), index=True)
     supplier_product_code: Mapped[Optional[str]] = mapped_column(String(120))
     hsn_sac: Mapped[Optional[str]] = mapped_column(String(40))
@@ -37,11 +38,18 @@ class PurchaseItem(Base):
     tax_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     tax_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=0)
     mrp: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))
+    selling_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))
     line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     confidence: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4))
     match_status: Mapped[str] = mapped_column(String(40), nullable=False, default="NOT_FOUND")
     batch_number: Mapped[Optional[str]] = mapped_column(String(120))
+    manufacturing_date: Mapped[Optional[date]] = mapped_column()
     expiry_date: Mapped[Optional[date]] = mapped_column()
+    create_new_product: Mapped[bool] = mapped_column(nullable=False, default=False)
+    variant_attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    classification_verified: Mapped[bool] = mapped_column(nullable=False, default=False)
+    classification_verified_by: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    classification_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     user_verified: Mapped[bool] = mapped_column(nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

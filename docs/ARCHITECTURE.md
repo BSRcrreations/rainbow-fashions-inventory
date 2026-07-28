@@ -22,10 +22,10 @@ Key decisions:
 - SQLAlchemy models mirror the PostgreSQL schema.
 - Repository classes isolate persistence queries.
 - Service classes own business rules and transaction boundaries.
-- OCR is behind an interface in `app/ai`.
+- OCR is behind an interface in `app/ai`. The local provider reads text-native PDFs through `pypdf` and invokes Tesseract for supported images, returning explicit safe failures when a format requires unavailable conversion or image-PDF OCR.
 - Purchases are queue/draft/review/confirm to prevent accidental stock changes; upload commits the job before background recognition begins. Purchase edits use optimistic versions and append purchase audit records; only confirmation writes stock history.
 - Catalog and product duplicate/delete rules live in services and repositories, not React.
-- API errors are normalized in FastAPI exception handlers before reaching the client.
+- API errors are normalized in FastAPI exception handlers before reaching the client. Error payloads and response headers include a request ID, while the frontend keeps error presentation separate from transport so a request can produce one local toast and one optional inline state.
 - Product images are stored as uploaded files and referenced from products by `image_url`.
 - Product list enhancements are implemented in the product repository query layer and exposed through an additive `paginated=true` API mode, keeping the original list response backward compatible.
 - Bulk product operations run through `ProductService` so duplicate checks and stock protections remain centralized.

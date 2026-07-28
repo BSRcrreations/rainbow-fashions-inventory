@@ -151,7 +151,8 @@ Purchases:
 - `POST /purchases/{purchase_id}/cancel` cancels an unconfirmed purchase and records a reason.
 - `GET /purchases/{purchase_id}/document` streams the protected original invoice without exposing a storage path.
 - `POST /purchases/{purchase_id}/items`, `PATCH /purchases/{purchase_id}/items/{item_id}`, and `DELETE /purchases/{purchase_id}/items/{item_id}` manage editable draft lines.
-- `POST /purchase-documents/upload` accepts multipart field `file` and returns `202 Accepted` with `document_id`, `job_id`, and `request_id`.
+- `POST /purchase-documents/upload` accepts multipart field `file` and returns `202 Accepted` with `document_id`, `job_id`, `request_id`, and `duplicate`. Re-uploading an identical document for the same store returns the existing document/job and does not schedule another job.
+- `GET /purchase-documents/{document_id}` returns protected document metadata; `GET /purchase-documents/{document_id}/preview` streams the protected original for an authenticated member of that store.
 - `GET /purchase-documents/jobs/{job_id}` reports queued, processing, review-ready, or failed recognition states.
 - `POST /purchase-documents/{document_id}/retry` queues a failed document again and returns `202 Accepted`.
 - `POST /purchases/from-document` creates the editable purchase draft after the job is `REVIEW_REQUIRED`.
@@ -210,6 +211,6 @@ Sales are scoped to the authenticated user's store. Staff can create, view, list
 All monetary values are recalculated server-side. A stale sale version returns `409 Conflict`.
 # Purchase Intake
 
-`POST /api/v1/purchase-documents/upload` stores a store-scoped invoice and returns `202 Accepted` before recognition begins. The client polls `GET /api/v1/purchase-documents/jobs/{job_id}`, can retry a failed job with `POST /api/v1/purchase-documents/{document_id}/retry`, and calls `POST /api/v1/purchases/from-document` only after the job is review-ready. It accepts JPG, JPEG, PNG, WEBP, HEIC/HEIF, and PDF invoices up to 15 MB, validates their signatures, and never updates stock.
+`POST /api/v1/purchase-documents/upload` stores a store-scoped invoice and returns `202 Accepted` before recognition begins. The client polls `GET /api/v1/purchase-documents/jobs/{job_id}`, can retry a failed job with `POST /api/v1/purchase-documents/{document_id}/retry`, and calls `POST /api/v1/purchases/from-document` only after the job is review-ready. It accepts JPG, JPEG, PNG, WEBP, HEIC/HEIF, and PDF invoices up to 15 MB, validates their signatures, and never updates stock. Duplicate documents return the existing job rather than creating another document or worker run. Every API error includes a request ID; document errors use safe codes such as `FILE_TOO_LARGE`, `CORRUPTED_FILE`, `ENCRYPTED_PDF`, and `HEIC_CONVERSION_NOT_AVAILABLE`.
 
 `PUT /api/v1/purchases/{purchase_id}/review` requires `purchase_date`; it can include optional invoice and received dates plus `duplicate_acknowledged` when the duplicate warning has been reviewed. `POST /api/v1/purchases/{purchase_id}/confirm` is the only purchase action that writes inventory movements and stock.

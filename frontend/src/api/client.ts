@@ -8,13 +8,15 @@ export class ApiError extends Error {
   status: number;
   code?: string;
   fields?: Array<{ field: string; message: string }>;
+  requestId?: string;
 
-  constructor(message: string, status: number, code?: string, fields?: Array<{ field: string; message: string }>) {
+  constructor(message: string, status: number, code?: string, fields?: Array<{ field: string; message: string }>, requestId?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.fields = fields;
+    this.requestId = requestId;
   }
 }
 
@@ -34,15 +36,16 @@ export async function toApiError(response: Response): Promise<ApiError> {
   let payload: unknown = raw;
   try { payload = raw ? JSON.parse(raw) : undefined; } catch { /* Non-JSON responses use their text below. */ }
   const body = payload && typeof payload === "object" ? payload as Record<string, unknown> : undefined;
-  const detail = body?.detail;
+  const detail = body?.detail ?? body?.error;
   const detailObject = detail && typeof detail === "object" && !Array.isArray(detail) ? detail as Record<string, unknown> : undefined;
-  const validation = Array.isArray(detail) ? detail as ApiErrorField[] : detailObject?.fields;
+  const validation = Array.isArray(detail) ? detail as ApiErrorField[] : detailObject?.fields ?? detailObject?.errors ?? detailObject?.field_errors;
   const fields = Array.isArray(validation) ? validation.map((field: ApiErrorField) => ({ field: field.field ?? field.loc?.filter((part: string | number) => part !== "body").join(".") ?? "field", message: field.message ?? field.msg ?? "Invalid value" })) : undefined;
   const validationMessage = fields?.length ? fields.map((field) => `${field.field}: ${field.message}`).join("; ") : undefined;
   const detailMessage = typeof detail === "string" ? detail : typeof detailObject?.message === "string" ? detailObject.message : typeof body?.message === "string" ? body.message : undefined;
-  const message = validationMessage ?? (response.status >= 500 ? fallbackMessage(response.status) : detailMessage ?? (typeof payload === "string" && payload.trim() ? payload.trim() : fallbackMessage(response.status)));
+  const message = detailMessage ?? validationMessage ?? (typeof payload === "string" && payload.trim() ? payload.trim() : fallbackMessage(response.status));
   const code = typeof detailObject?.code === "string" ? detailObject.code : typeof body?.code === "string" ? body.code : undefined;
-  return new ApiError(message, response.status, code, fields);
+  const requestId = typeof detailObject?.request_id === "string" ? detailObject.request_id : response.headers.get("X-Request-ID") ?? undefined;
+  return new ApiError(message, response.status, code, fields, requestId);
 }
 
 export function getToken(): string | null {
@@ -69,7 +72,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (!(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
 
-  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  } catch {
+    throw new ApiError("The server could not be reached.", 0, "NETWORK_ERROR");
+  }
   if (!response.ok) {
     handleUnauthorized(response.status);
     throw await toApiError(response);
@@ -82,7 +90,12 @@ async function requestBlob(path: string): Promise<Blob> {
   const headers = new Headers();
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetch(`${API_BASE_URL}${path}`, { headers });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, { headers });
+  } catch {
+    throw new ApiError("The server could not be reached.", 0, "NETWORK_ERROR");
+  }
   if (!response.ok) {
     handleUnauthorized(response.status);
     throw await toApiError(response);
@@ -95,7 +108,12 @@ async function requestBlobWithBody(path: string, body: unknown): Promise<Blob> {
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
   headers.set("Content-Type", "application/json");
-  const response = await fetch(`${API_BASE_URL}${path}`, { method: "POST", headers, body: JSON.stringify(body ?? {}) });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, { method: "POST", headers, body: JSON.stringify(body ?? {}) });
+  } catch {
+    throw new ApiError("The server could not be reached.", 0, "NETWORK_ERROR");
+  }
   if (!response.ok) {
     handleUnauthorized(response.status);
     throw await toApiError(response);

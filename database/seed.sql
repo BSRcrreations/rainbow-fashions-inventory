@@ -30,35 +30,35 @@ SET
     role = EXCLUDED.role,
     is_active = TRUE;
 
-INSERT INTO categories (id, name, description)
+INSERT INTO categories (id, store_id, name, description)
 VALUES
-    ('00000000-0000-0000-0000-000000001001', 'Kurty', 'Kurties and ethnic tops'),
-    ('00000000-0000-0000-0000-000000001002', 'Bra', 'Women innerwear bras'),
-    ('00000000-0000-0000-0000-000000001003', 'Leggins', 'Women leggings and stretch wear'),
-    ('00000000-0000-0000-0000-000000001004', 'Panties', 'Women innerwear panties')
-ON CONFLICT (name) DO UPDATE
+    ('00000000-0000-0000-0000-000000001001', '00000000-0000-0000-0000-000000000001', 'Kurty', 'Kurties and ethnic tops'),
+    ('00000000-0000-0000-0000-000000001002', '00000000-0000-0000-0000-000000000001', 'Bra', 'Women innerwear bras'),
+    ('00000000-0000-0000-0000-000000001003', '00000000-0000-0000-0000-000000000001', 'Leggins', 'Women leggings and stretch wear'),
+    ('00000000-0000-0000-0000-000000001004', '00000000-0000-0000-0000-000000000001', 'Panties', 'Women innerwear panties')
+ON CONFLICT (store_id, name) DO UPDATE
 SET
     description = EXCLUDED.description,
     is_active = TRUE;
 
-INSERT INTO brands (id, category_id, name, description)
+INSERT INTO brands (id, store_id, category_id, name, description)
 VALUES
-    ('00000000-0000-0000-0000-000000002001', '00000000-0000-0000-0000-000000001003', 'Prisma', 'Fashion apparel brand'),
-    ('00000000-0000-0000-0000-000000002002', '00000000-0000-0000-0000-000000001001', 'Flybirds', 'Everyday clothing brand'),
-    ('00000000-0000-0000-0000-000000002003', '00000000-0000-0000-0000-000000001002', 'Jockey', 'Branded innerwear'),
-    ('00000000-0000-0000-0000-000000002004', '00000000-0000-0000-0000-000000001004', 'Jockey', 'Branded innerwear')
-ON CONFLICT (category_id, name) DO UPDATE
+    ('00000000-0000-0000-0000-000000002001', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000001003', 'Prisma', 'Fashion apparel brand'),
+    ('00000000-0000-0000-0000-000000002002', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000001001', 'Flybirds', 'Everyday clothing brand'),
+    ('00000000-0000-0000-0000-000000002003', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000001002', 'Jockey', 'Branded innerwear'),
+    ('00000000-0000-0000-0000-000000002004', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000001004', 'Jockey', 'Branded innerwear')
+ON CONFLICT (store_id, category_id, name) DO UPDATE
 SET
     description = EXCLUDED.description,
     is_active = TRUE;
 
-INSERT INTO subcategories (id, category_id, name, description)
+INSERT INTO subcategories (id, store_id, category_id, name, description)
 VALUES
-    ('00000000-0000-0000-0000-000000005001', '00000000-0000-0000-0000-000000001001', 'General', 'Default product group'),
-    ('00000000-0000-0000-0000-000000005002', '00000000-0000-0000-0000-000000001002', 'General', 'Default product group'),
-    ('00000000-0000-0000-0000-000000005003', '00000000-0000-0000-0000-000000001003', 'General', 'Default product group'),
-    ('00000000-0000-0000-0000-000000005004', '00000000-0000-0000-0000-000000001004', 'General', 'Default product group')
-ON CONFLICT (category_id, name) DO UPDATE SET description = EXCLUDED.description, is_active = TRUE;
+    ('00000000-0000-0000-0000-000000005001', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000001001', 'General', 'Default product group'),
+    ('00000000-0000-0000-0000-000000005002', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000001002', 'General', 'Default product group'),
+    ('00000000-0000-0000-0000-000000005003', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000001003', 'General', 'Default product group'),
+    ('00000000-0000-0000-0000-000000005004', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000001004', 'General', 'Default product group')
+ON CONFLICT (store_id, category_id, name) DO UPDATE SET description = EXCLUDED.description, is_active = TRUE;
 
 INSERT INTO products (
     id,

@@ -42,7 +42,8 @@ class Settings(BaseSettings):
         "image/webp",
     }
 
-    ocr_provider: str = "mock"
+    ocr_provider: str = "local"
+    max_invoice_pages: int = 20
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(
@@ -63,8 +64,8 @@ class Settings(BaseSettings):
     @classmethod
     def validate_ocr_provider(cls, value: str) -> str:
         provider = value.strip().lower()
-        if provider not in {"mock", "tesseract", "external"}:
-            raise ValueError("OCR provider must be one of: mock, tesseract, external")
+        if provider not in {"mock", "local", "tesseract"}:
+            raise ValueError("OCR provider must be one of: mock, local, tesseract")
         return provider
 
     @property

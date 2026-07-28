@@ -11,3 +11,8 @@
 - Purchases had minimal feedback around upload/confirm failures and did not allow editing purchase price in review.
 - Stock history lacked filters and CSV export in Stage 1 UI/API.
 - Stock adjustment UI did not pre-validate negative-stock decreases.
+# Purchase intake follow-up (2026-07-28)
+
+- Fixed repeat invoice uploads creating another document/job by returning the existing document/job for the same authenticated store and SHA-256 hash.
+- Fixed retry calls starting overlapping active recognition jobs.
+- Fixed generic upload failures hiding the safe backend error code and request ID.
