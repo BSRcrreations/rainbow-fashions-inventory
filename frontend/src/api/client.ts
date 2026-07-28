@@ -7,6 +7,7 @@ const TOKEN_KEY = "rainbow_inventory_token";
 export class ApiError extends Error {
   status: number;
   code?: string;
+  requestId?: string;
   fields?: Array<{ field: string; message: string }>;
   requestId?: string;
 
@@ -31,6 +32,12 @@ function fallbackMessage(status: number): string {
   return "The request could not be completed.";
 }
 
+function safeRawMessage(raw: string, status: number): string {
+  const message = raw.trim();
+  if (!message || message.length > 500 || /traceback|sqlalchemy|psycopg|<html|<!doctype/i.test(message)) return fallbackMessage(status);
+  return message;
+}
+
 export async function toApiError(response: Response): Promise<ApiError> {
   const raw = await response.text();
   let payload: unknown = raw;
@@ -42,9 +49,15 @@ export async function toApiError(response: Response): Promise<ApiError> {
   const fields = Array.isArray(validation) ? validation.map((field: ApiErrorField) => ({ field: field.field ?? field.loc?.filter((part: string | number) => part !== "body").join(".") ?? "field", message: field.message ?? field.msg ?? "Invalid value" })) : undefined;
   const validationMessage = fields?.length ? fields.map((field) => `${field.field}: ${field.message}`).join("; ") : undefined;
   const detailMessage = typeof detail === "string" ? detail : typeof detailObject?.message === "string" ? detailObject.message : typeof body?.message === "string" ? body.message : undefined;
+<<<<<<< HEAD
   const message = detailMessage ?? validationMessage ?? (typeof payload === "string" && payload.trim() ? payload.trim() : fallbackMessage(response.status));
   const code = typeof detailObject?.code === "string" ? detailObject.code : typeof body?.code === "string" ? body.code : undefined;
   const requestId = typeof detailObject?.request_id === "string" ? detailObject.request_id : response.headers.get("X-Request-ID") ?? undefined;
+=======
+  const message = validationMessage ?? detailMessage ?? (typeof payload === "string" ? safeRawMessage(payload, response.status) : fallbackMessage(response.status));
+  const code = typeof detailObject?.code === "string" ? detailObject.code : typeof body?.code === "string" ? body.code : undefined;
+  const requestId = typeof detailObject?.request_id === "string" ? detailObject.request_id : typeof body?.request_id === "string" ? body.request_id : response.headers.get("X-Request-ID") ?? undefined;
+>>>>>>> shop-inventory
   return new ApiError(message, response.status, code, fields, requestId);
 }
 
@@ -132,8 +145,8 @@ export const api = {
   get: <T>(path: string) => request<T>(path),
   getBlob: (path: string) => requestBlob(path),
   postBlob: (path: string, body?: unknown) => requestBlobWithBody(path, body),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "POST", body: body instanceof FormData ? body : JSON.stringify(body ?? {}) }),
+  post: <T>(path: string, body?: unknown, headers?: HeadersInit) =>
+    request<T>(path, { method: "POST", headers, body: body instanceof FormData ? body : JSON.stringify(body ?? {}) }),
   put: <T>(path: string, body: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   delete: <T = void>(path: string) => request<T>(path, { method: "DELETE" })

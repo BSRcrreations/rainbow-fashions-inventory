@@ -37,6 +37,7 @@ class SaleRepository(BaseRepository[Sale]):
         invoice_number: Optional[str] = None,
         customer_name: Optional[str] = None,
         cashier_name: Optional[str] = None,
+        status_filter: Optional[str] = None,
         store_id: Optional[UUID] = None,
         sort: str = "newest",
     ) -> tuple[list[Sale], int]:
@@ -55,6 +56,8 @@ class SaleRepository(BaseRepository[Sale]):
             )
         if payment_mode:
             query = query.filter(Sale.payment_mode == payment_mode)
+        if status_filter:
+            query = query.filter(Sale.status == status_filter)
         if invoice_number:
             query = query.filter(Sale.invoice_number.ilike(f"%{invoice_number.strip()}%"))
         if customer_name:

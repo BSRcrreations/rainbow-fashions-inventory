@@ -14,6 +14,8 @@ from app.models.supplier import Supplier
 from app.models.uploaded_file import UploadedFile
 from app.models.user import User
 from app.models.purchase_document import DocumentProcessingJob, PurchaseDocument
+from app.models.product_deletion_audit import ProductDeletionAudit
+from app.models.destructive_action import DeletePasswordAttempt, DestructiveActionAudit, DestructiveIdempotencyRecord, StoreSecuritySetting
 
 __all__ = [
     "Brand",
@@ -36,4 +38,9 @@ __all__ = [
     "User",
     "PurchaseDocument",
     "DocumentProcessingJob",
+    "ProductDeletionAudit",
+    "DeletePasswordAttempt",
+    "DestructiveActionAudit",
+    "DestructiveIdempotencyRecord",
+    "StoreSecuritySetting",
 ]

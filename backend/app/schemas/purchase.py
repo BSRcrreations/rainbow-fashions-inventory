@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date as date_type
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -11,6 +11,20 @@ from pydantic import BaseModel, Field
 from app.models.enums import PurchaseStatus
 from app.models.enums import DocumentJobStatus
 from app.schemas.common import ORMBaseModel
+
+
+PurchaseItemDiscountType = Literal["NONE", "PERCENTAGE", "FIXED_PER_UNIT", "FIXED_PER_LINE", "FINAL_UNIT_PRICE", "QUANTITY_SLAB", "FREE_QUANTITY", "MANUAL"]
+InvoiceDiscountType = Literal["NONE", "PERCENTAGE", "FIXED_AMOUNT", "TRADE_DISCOUNT", "CASH_DISCOUNT", "COUPON", "PROMOTIONAL", "MANUAL_ADJUSTMENT"]
+InvoiceDiscountAllocationMethod = Literal["BY_ITEM_VALUE", "BY_TAXABLE_VALUE", "BY_QUANTITY", "EQUALLY", "MANUAL", "DO_NOT_ALLOCATE"]
+DiscountSource = Literal["INVOICE_EXTRACTED", "USER_ENTERED", "SUPPLIER_AGREEMENT", "QUANTITY_SLAB", "PROMOTION", "COUPON", "CASH_DISCOUNT", "SYSTEM_CALCULATED", "DERIVED_FROM_PRICES", "MANUAL_OVERRIDE"]
+
+
+class PurchaseDeleteCheckRequest(BaseModel):
+    purchase_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
+class PurchaseDeleteRequest(PurchaseDeleteCheckRequest):
+    delete_password: str = Field(min_length=1, max_length=256)
 
 
 class ExtractedInvoiceItem(BaseModel):
@@ -56,6 +70,26 @@ class PurchaseItemReview(BaseModel):
     quantity: int = Field(gt=0)
     purchase_price: Decimal = Field(ge=0)
     discount: Decimal = Field(default=Decimal("0"), ge=0)
+    list_unit_price: Optional[Decimal] = Field(default=None, ge=0)
+    invoiced_unit_price: Optional[Decimal] = Field(default=None, ge=0)
+    discount_type: PurchaseItemDiscountType = "NONE"
+    discount_percentage: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    discount_per_unit: Decimal = Field(default=Decimal("0"), ge=0)
+    discount_amount: Optional[Decimal] = Field(default=None, ge=0)
+    discount_reason: Optional[str] = Field(default=None, max_length=500)
+    discount_source: DiscountSource = "INVOICE_EXTRACTED"
+    free_quantity: Decimal = Field(default=Decimal("0"), ge=0)
+    chargeable_quantity: Optional[Decimal] = Field(default=None, ge=0)
+    accepted_quantity: Optional[Decimal] = Field(default=None, ge=0)
+    gross_amount: Optional[Decimal] = Field(default=None, ge=0)
+    taxable_amount: Optional[Decimal] = Field(default=None, ge=0)
+    net_line_amount: Optional[Decimal] = Field(default=None, ge=0)
+    effective_unit_cost: Optional[Decimal] = Field(default=None, ge=0)
+    landed_unit_cost: Optional[Decimal] = Field(default=None, ge=0)
+    allocated_invoice_discount: Decimal = Field(default=Decimal("0"), ge=0)
+    promotion_id: Optional[UUID] = None
+    discount_rule_id: Optional[UUID] = None
+    discount_verified: bool = False
     tax_amount: Decimal = Field(default=Decimal("0"), ge=0)
     tax_rate: Decimal = Field(default=Decimal("0"), ge=0, le=100)
     mrp: Optional[Decimal] = Field(default=None, ge=0)
@@ -100,6 +134,12 @@ class PurchasePatch(BaseModel):
     packaging_amount: Optional[Decimal] = Field(default=None, ge=0)
     freight_amount: Optional[Decimal] = Field(default=None, ge=0)
     round_off: Optional[Decimal] = None
+    invoice_discount_type: Optional[InvoiceDiscountType] = None
+    invoice_discount_percentage: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    invoice_discount_amount: Optional[Decimal] = Field(default=None, ge=0)
+    invoice_discount_reason: Optional[str] = Field(default=None, max_length=500)
+    invoice_discount_allocation_method: Optional[InvoiceDiscountAllocationMethod] = None
+    invoice_tax_rate: Optional[Decimal] = Field(default=None, ge=0, le=100)
     reason: Optional[str] = Field(default=None, max_length=500)
     version: Optional[int] = Field(default=None, ge=1)
 
@@ -122,6 +162,20 @@ class PurchaseItemPatch(BaseModel):
     quantity: Optional[int] = Field(default=None, gt=0)
     purchase_price: Optional[Decimal] = Field(default=None, ge=0)
     discount: Optional[Decimal] = Field(default=None, ge=0)
+    list_unit_price: Optional[Decimal] = Field(default=None, ge=0)
+    invoiced_unit_price: Optional[Decimal] = Field(default=None, ge=0)
+    discount_type: Optional[PurchaseItemDiscountType] = None
+    discount_percentage: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    discount_per_unit: Optional[Decimal] = Field(default=None, ge=0)
+    discount_amount: Optional[Decimal] = Field(default=None, ge=0)
+    discount_reason: Optional[str] = Field(default=None, max_length=500)
+    discount_source: Optional[DiscountSource] = None
+    free_quantity: Optional[Decimal] = Field(default=None, ge=0)
+    chargeable_quantity: Optional[Decimal] = Field(default=None, ge=0)
+    accepted_quantity: Optional[Decimal] = Field(default=None, ge=0)
+    promotion_id: Optional[UUID] = None
+    discount_rule_id: Optional[UUID] = None
+    discount_verified: Optional[bool] = None
     tax_rate: Optional[Decimal] = Field(default=None, ge=0, le=100)
     tax_amount: Optional[Decimal] = Field(default=None, ge=0)
     mrp: Optional[Decimal] = Field(default=None, ge=0)
@@ -166,6 +220,12 @@ class PurchaseRead(ORMBaseModel):
     reviewed_payload: dict
     subtotal: Decimal
     discount: Decimal
+    invoice_discount_type: str
+    invoice_discount_percentage: Decimal
+    invoice_discount_amount: Decimal
+    invoice_discount_reason: Optional[str]
+    invoice_discount_allocation_method: str
+    invoice_tax_rate: Decimal
     tax_amount: Decimal
     packaging_amount: Decimal
     freight_amount: Decimal
@@ -175,7 +235,7 @@ class PurchaseRead(ORMBaseModel):
     ai_processing_status: str
     version: int
     workflow_status: str
-    total_quantity: int
+    total_quantity: Decimal
     balance_due: Decimal
     confirmed_at: Optional[datetime]
     created_at: datetime

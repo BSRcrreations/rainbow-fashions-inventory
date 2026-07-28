@@ -13,16 +13,19 @@ from app.repositories.base import BaseRepository
 class PurchaseRepository(BaseRepository[Purchase]):
     model = Purchase
 
-    def list_recent(self, store_id: UUID, skip: int = 0, limit: int = 50) -> list[Purchase]:
-        return (
+    def list_recent(self, store_id: UUID, skip: int = 0, limit: int = 50, status_filter: Optional[str] = None) -> list[Purchase]:
+        query = (
             self.db.query(Purchase)
             .options(joinedload(Purchase.items), joinedload(Purchase.uploaded_file), joinedload(Purchase.supplier))
             .filter(Purchase.store_id == store_id)
-            .order_by(Purchase.created_at.desc())
-            .offset(skip)
-            .limit(limit)
-            .all()
         )
+        if status_filter == "REVIEW_REQUIRED":
+            query = query.filter(Purchase.ai_processing_status.ilike("%REVIEW_REQUIRED%"))
+        elif status_filter == "FAILED":
+            query = query.filter(Purchase.ai_processing_status == "FAILED")
+        elif status_filter:
+            query = query.filter(Purchase.status == status_filter)
+        return query.order_by(Purchase.created_at.desc()).offset(skip).limit(limit).all()
 
     def get_with_items(self, purchase_id: UUID, store_id: UUID) -> Optional[Purchase]:
         return (

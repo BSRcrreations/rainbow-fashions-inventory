@@ -2,7 +2,6 @@ import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Barcode, ChevronLeft, ChevronRight, Download, Edit3, FileDown, FileUp, Filter, ImagePlus, PackageOpen, Plus, RefreshCw, Search, Trash2, Wand2, X } from "lucide-react";
 import { api } from "../api/client";
-import ConfirmDialog from "../components/ConfirmDialog";
 import BarcodeLabelDialog from "../components/BarcodeLabelDialog";
 import Dialog from "../components/Dialog";
 import EmptyState from "../components/EmptyState";
@@ -13,6 +12,7 @@ import PageHeader from "../components/PageHeader";
 import { useToast } from "../components/ToastProvider";
 import { Button } from "../components/ui/button";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
+import { useAuth } from "../hooks/useAuth";
 import type { CategoryHierarchy, PaginatedProducts, PricingType, Product } from "../types";
 import { money } from "../utils/format";
 import { productVariantLabel } from "../utils/product";
@@ -20,6 +20,27 @@ import { productVariantLabel } from "../utils/product";
 type SortBy = "name" | "sku" | "selling_price" | "purchase_price" | "stock" | "created_at" | "updated_at";
 type SortDir = "asc" | "desc";
 type StockStatus = "" | "low" | "out" | "in";
+
+interface BulkDeleteBlocked {
+  product_id: string;
+  product_name: string;
+  reason: string;
+  code: string;
+  references: Record<string, number>;
+  request_id: string;
+}
+
+interface BulkDeleteCheck {
+  deletable: Array<{ product_id: string; product_name: string }>;
+  blocked: BulkDeleteBlocked[];
+  request_id: string;
+}
+
+interface BulkDeleteResult {
+  deleted: Array<{ product_id: string; product_name: string }>;
+  blocked: BulkDeleteBlocked[];
+  request_id: string;
+}
 
 interface ProductFormState {
   category_id: string;
@@ -40,6 +61,7 @@ interface ProductFormState {
   barcode: string;
   product_date: string;
   is_active: boolean;
+  is_test_data: boolean;
 }
 
 const emptyForm: ProductFormState = {
@@ -61,6 +83,7 @@ const emptyForm: ProductFormState = {
   barcode: "",
   product_date: new Date().toISOString().slice(0, 10),
   is_active: true,
+  is_test_data: false,
 };
 
 function formFromProduct(product: Product): ProductFormState {
@@ -88,6 +111,7 @@ function formFromProduct(product: Product): ProductFormState {
     barcode: product.barcode ?? "",
     product_date: product.product_date,
     is_active: product.is_active,
+    is_test_data: product.is_test_data,
   };
 }
 
@@ -95,6 +119,18 @@ function imageSrc(imageUrl?: string | null) {
   if (!imageUrl) return "";
   if (imageUrl.startsWith("http")) return imageUrl;
   return `${window.location.protocol}//${window.location.hostname}:8000${imageUrl}`;
+}
+
+function formatReferenceCounts(references: Record<string, number>) {
+  const labels: Record<string, string> = {
+    inventory_transactions: "inventory transactions",
+    purchase_items: "purchase items",
+    sale_items: "sale items",
+    inventory_records: "inventory records",
+    variants: "variants",
+  };
+  const values = Object.entries(references).filter(([, count]) => count > 0).map(([key, count]) => `${count} ${labels[key] ?? key.replace(/_/g, " ")}`);
+  return values.length ? values.join(", ") : "No business references";
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -108,6 +144,7 @@ function downloadBlob(blob: Blob, filename: string) {
 
 export default function ProductsPage() {
   const toast = useToast();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
@@ -130,11 +167,14 @@ export default function ProductsPage() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkQty, setBulkQty] = useState("1");
   const [bulkDirection, setBulkDirection] = useState<"INCREASE" | "DECREASE">("INCREASE");
-  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteCheck, setDeleteCheck] = useState<BulkDeleteCheck | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [purgeConfirmation, setPurgeConfirmation] = useState("");
+  const [deleteResult, setDeleteResult] = useState<BulkDeleteResult | null>(null);
   const [printTarget, setPrintTarget] = useState<Product | null>(null);
   const [error, setError] = useState("");
 
@@ -213,6 +253,7 @@ export default function ProductsPage() {
   const availableSubcategories = selectedCategory?.subcategories.filter((item) => item.is_active) ?? [];
   const availableBrands = selectedCategory?.brands.filter((item) => item.is_active) ?? [];
   const selectedCount = selectedIds.size;
+  const canPermanentlyDelete = user?.role === "OWNER";
   const isFiltered = Boolean(debouncedSearch.trim() || categoryFilter || brandFilter || statusFilter !== "all" || stockStatus || minPrice || maxPrice || createdFrom || createdTo);
 
   function invalidateProducts() {
@@ -315,6 +356,7 @@ export default function ProductsPage() {
       barcode: form.barcode.trim() || null,
       product_date: form.product_date,
       is_active: form.is_active,
+      is_test_data: form.is_test_data,
       pricing_type: form.pricing_type,
     };
   }
@@ -366,16 +408,6 @@ export default function ProductsPage() {
     },
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (productId: string) => api.delete(`/products/${productId}`),
-    onSuccess: () => {
-      toast.success("Product deleted");
-      setDeleteTarget(null);
-      invalidateProducts();
-    },
-    onError: (err) => toast.error(err instanceof Error ? err.message : "Unable to delete product"),
-  });
-
   const deleteImageMutation = useMutation({
     mutationFn: (productId: string) => api.delete(`/products/${productId}/image`),
     onSuccess: () => {
@@ -400,6 +432,88 @@ export default function ProductsPage() {
     setImageFile(null);
     setError("");
     setFormOpen(true);
+  }
+
+  async function openPermanentDelete(productIds: string[]) {
+    if (!canPermanentlyDelete) {
+      toast.error("You do not have permission to permanently delete products.");
+      return;
+    }
+    setError("");
+    setDeleteCheck(null);
+    setDeleteConfirmation("");
+    setPurgeConfirmation("");
+    setDeleteDialogOpen(true);
+    try {
+      setDeleteCheck(await api.post<BulkDeleteCheck>("/products/bulk-delete-check", { product_ids: productIds }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to check product dependencies";
+      setError(message);
+      toast.error(message);
+      setDeleteDialogOpen(false);
+    }
+  }
+
+  async function confirmPermanentDelete() {
+    const eligibleIds = deleteCheck?.deletable.map((item) => item.product_id) ?? [];
+    if (!eligibleIds.length || deleteConfirmation !== "DELETE") return;
+    try {
+      const result = await api.post<BulkDeleteResult>("/products/bulk-delete", { product_ids: eligibleIds, confirmation: deleteConfirmation }, { "X-Request-ID": deleteCheck?.request_id ?? "" });
+      setDeleteResult({ ...result, blocked: [...(deleteCheck?.blocked ?? []), ...result.blocked] });
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        result.deleted.forEach((item) => next.delete(item.product_id));
+        return next;
+      });
+      setDeleteDialogOpen(false);
+      invalidateProducts();
+      toast.success(`${result.deleted.length} product${result.deleted.length === 1 ? "" : "s"} permanently deleted`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to permanently delete products";
+      setError(message);
+      toast.error(message);
+    }
+  }
+
+  async function purgeSelectedTestProducts() {
+    const productIds = Array.from(selectedIds);
+    if (!productIds.length || purgeConfirmation !== "PURGE TEST DATA") return;
+    try {
+      const result = await api.post<BulkDeleteResult>("/products/bulk-purge-test-data", {
+        product_ids: productIds,
+        confirmation: purgeConfirmation,
+        reason: "Removing test products before importing original inventory",
+      }, { "X-Request-ID": deleteCheck?.request_id ?? "" });
+      setDeleteResult(result);
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        result.deleted.forEach((item) => next.delete(item.product_id));
+        return next;
+      });
+      setDeleteDialogOpen(false);
+      invalidateProducts();
+      toast.success(`${result.deleted.length} test product${result.deleted.length === 1 ? "" : "s"} purged`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to purge test products";
+      setError(message);
+      toast.error(message);
+    }
+  }
+
+  async function deactivateSelected() {
+    const productIds = Array.from(selectedIds);
+    if (!productIds.length) return;
+    try {
+      await Promise.all(productIds.map((productId) => api.put(`/products/${productId}`, { is_active: false })));
+      setSelectedIds(new Set());
+      setStatusFilter("active");
+      toast.success(`${productIds.length} product${productIds.length === 1 ? "" : "s"} deactivated`);
+      invalidateProducts();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to deactivate selected products";
+      setError(message);
+      toast.error(message);
+    }
   }
 
   function cancelEdit() {
@@ -457,15 +571,13 @@ export default function ProductsPage() {
     }
   }
 
-  async function runBulk(action: "stock" | "delete") {
+  async function runBulkStockUpdate() {
     const product_ids = Array.from(selectedIds);
     if (!product_ids.length) return;
     try {
-      if (action === "delete") await api.post("/products/bulk/delete", { product_ids });
-      if (action === "stock") await api.post("/products/bulk/stock", { product_ids, direction: bulkDirection, qty: Number(bulkQty), reference: "Bulk update from products page" });
+      await api.post("/products/bulk/stock", { product_ids, direction: bulkDirection, qty: Number(bulkQty), reference: "Bulk update from products page" });
       toast.success("Bulk operation completed");
       setSelectedIds(new Set());
-      setBulkDeleteOpen(false);
       invalidateProducts();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Bulk operation failed");
@@ -522,7 +634,7 @@ export default function ProductsPage() {
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="secondary" size="sm" onClick={downloadTemplate} title="Download import template"><FileDown size={16} /> Template</Button>
             <label className="focus-ring inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-              <FileUp size={16} /> Import
+              <FileUp size={16} /> Import original stock
               <input className="hidden" type="file" accept=".csv,.xlsx" onChange={(event) => void importFile(event)} />
             </label>
             <Button type="button" variant="secondary" size="sm" onClick={() => void exportProducts("xlsx")} title="Export products"><Download size={16} /> Export</Button>
@@ -658,6 +770,10 @@ export default function ProductsPage() {
           <input type="checkbox" checked={form.is_active} onChange={(event) => setForm({ ...form, is_active: event.target.checked })} disabled={saveMutation.isPending} />
           Product is active and available for inventory operations
         </label>
+        {canPermanentlyDelete ? <label className="flex h-10 items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 text-sm text-amber-900 sm:col-span-2">
+          <input type="checkbox" checked={form.is_test_data} onChange={(event) => setForm({ ...form, is_test_data: event.target.checked })} disabled={saveMutation.isPending} />
+          Explicitly mark this as test data eligible for owner-approved purge
+        </label> : null}
         <label
           onDragOver={(event) => event.preventDefault()}
           onDrop={handleDrop}
@@ -687,16 +803,18 @@ export default function ProductsPage() {
 
       {selectedCount ? (
         <div className="mb-4 grid gap-2 rounded-md border border-teal-200 bg-teal-50 p-3 md:grid-cols-[auto_1fr] md:items-center">
-          <div className="text-sm font-semibold text-teal-900">{selectedCount} selected</div>
+          <div className="text-sm font-semibold text-teal-900">{selectedCount} product{selectedCount === 1 ? "" : "s"} selected</div>
           <div className="flex flex-wrap gap-2">
             <select className="focus-ring h-9 rounded-md border border-line bg-white px-2 text-sm" value={bulkDirection} onChange={(event) => setBulkDirection(event.target.value as "INCREASE" | "DECREASE")}>
               <option value="INCREASE">Increase</option>
               <option value="DECREASE">Decrease</option>
             </select>
             <input className="focus-ring h-9 w-20 rounded-md border border-line px-2 text-sm" type="number" min="1" value={bulkQty} onChange={(event) => setBulkQty(event.target.value)} />
-            <Button type="button" size="sm" variant="secondary" onClick={() => void runBulk("stock")}>Update stock</Button>
+            <Button type="button" size="sm" variant="secondary" onClick={() => void runBulkStockUpdate()}>Update stock</Button>
             <Button type="button" size="sm" variant="secondary" onClick={() => void exportProducts("csv", true)}>Export selected</Button>
-            <Button type="button" size="sm" variant="destructive" onClick={() => setBulkDeleteOpen(true)}>Delete selected</Button>
+            <Button type="button" size="sm" variant="secondary" onClick={() => void deactivateSelected()}>Deactivate</Button>
+            <Button type="button" size="sm" variant="secondary" onClick={() => setSelectedIds(new Set())}>Clear selection</Button>
+            {canPermanentlyDelete ? <Button type="button" size="sm" variant="destructive" onClick={() => void openPermanentDelete(Array.from(selectedIds))}>Permanently delete</Button> : null}
           </div>
         </div>
       ) : null}
@@ -730,7 +848,7 @@ export default function ProductsPage() {
                   <div className="flex gap-1">
                     <Button type="button" variant="secondary" size="sm" onClick={() => beginEdit(product)}><Edit3 size={15} /> Edit</Button>
                     <Button type="button" variant="ghost" size="icon" onClick={() => setPrintTarget(product)} title="Print barcode"><Barcode size={16} /></Button>
-                    <Button type="button" variant="ghost" size="icon" className="text-rose-700" onClick={() => setDeleteTarget(product)} title="Delete product"><Trash2 size={16} /></Button>
+                    {canPermanentlyDelete ? <Button type="button" variant="ghost" size="icon" className="text-rose-700" onClick={() => void openPermanentDelete([product.id])} title="Permanently delete product"><Trash2 size={16} /></Button> : null}
                   </div>
                 </div>
               </article>
@@ -785,7 +903,7 @@ export default function ProductsPage() {
                     <div className="flex justify-end gap-2">
                       <Button type="button" variant="secondary" size="icon" onClick={() => beginEdit(product)} title="Edit product"><Edit3 size={16} /></Button>
                       <Button type="button" variant="ghost" size="icon" onClick={() => setPrintTarget(product)} title="Print barcode"><Barcode size={16} /></Button>
-                      <Button type="button" variant="ghost" size="icon" className="text-rose-700 hover:bg-rose-50" onClick={() => setDeleteTarget(product)} title="Delete product"><Trash2 size={17} /></Button>
+                      {canPermanentlyDelete ? <Button type="button" variant="ghost" size="icon" className="text-rose-700 hover:bg-rose-50" onClick={() => void openPermanentDelete([product.id])} title="Permanently delete product"><Trash2 size={17} /></Button> : null}
                     </div>
                   </td>
                 </tr>
@@ -815,23 +933,18 @@ export default function ProductsPage() {
         </div>
       )}
 
-      <ConfirmDialog
-        open={Boolean(deleteTarget)}
-        title="Delete product"
-        description={`Delete "${deleteTarget?.name ?? "this product"}"? This cannot be undone.`}
-        loading={deleteMutation.isPending}
-        onCancel={() => setDeleteTarget(null)}
-        onConfirm={() => deleteTarget ? deleteMutation.mutate(deleteTarget.id) : undefined}
-      />
       <BarcodeLabelDialog open={Boolean(printTarget)} product={printTarget} onClose={() => setPrintTarget(null)} />
-      <ConfirmDialog
-        open={bulkDeleteOpen}
-        title="Delete selected products"
-        description={`Delete ${selectedCount} selected products? This cannot be undone.`}
-        loading={false}
-        onCancel={() => setBulkDeleteOpen(false)}
-        onConfirm={() => void runBulk("delete")}
-      />
+      <Dialog open={deleteDialogOpen} title={`Permanently delete ${deleteCheck ? deleteCheck.deletable.length + deleteCheck.blocked.length : selectedCount} product${(deleteCheck ? deleteCheck.deletable.length + deleteCheck.blocked.length : selectedCount) === 1 ? "" : "s"}?`} description="This action cannot be undone." onClose={() => setDeleteDialogOpen(false)} maxWidth="lg">
+        {!deleteCheck ? <SkeletonRows rows={3} /> : <div className="space-y-5">
+          {deleteCheck.deletable.length ? <section><h3 className="text-sm font-semibold text-foreground">Eligible for permanent deletion</h3><p className="mt-1 text-sm text-muted">The following products and their unused variants will be permanently removed.</p><ul className="mt-3 space-y-1 text-sm text-foreground">{deleteCheck.deletable.map((item) => <li key={item.product_id}>- {item.product_name}</li>)}</ul></section> : null}
+          {deleteCheck.blocked.length ? <section className="rounded-lg border border-amber-200 bg-amber-50 p-4"><h3 className="text-sm font-semibold text-amber-950">Blocked products</h3><ul className="mt-2 space-y-2 text-sm text-amber-900">{deleteCheck.blocked.map((item) => <li key={item.product_id}><div className="font-medium">{item.product_name}</div><div>{item.reason}</div><div className="mt-1 text-xs">{formatReferenceCounts(item.references)}</div></li>)}</ul></section> : null}
+          {deleteCheck.deletable.length ? <section className="rounded-lg border border-rose-200 bg-rose-50 p-4"><label className="field-label text-rose-950">Type DELETE to continue<input className="field-input mt-2" autoFocus value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><div className="mt-4 flex flex-wrap justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button><Button type="button" variant="destructive" disabled={deleteConfirmation !== "DELETE"} onClick={() => void confirmPermanentDelete()}>Permanently delete eligible</Button></div></section> : <div className="flex justify-end"><Button type="button" variant="secondary" onClick={() => setDeleteDialogOpen(false)}>Close</Button></div>}
+          {canPermanentlyDelete && Array.from(selectedIds).some((id) => products.find((product) => product.id === id)?.is_test_data) ? <section className="border-t border-border pt-5"><h3 className="text-sm font-semibold text-foreground">Purge selected test products</h3><p className="mt-1 text-sm text-muted">Only explicitly marked test products can use this owner-only workflow.</p><label className="field-label mt-3">Type PURGE TEST DATA to continue<input className="field-input mt-2" value={purgeConfirmation} onChange={(event) => setPurgeConfirmation(event.target.value)} /></label><div className="mt-3 flex justify-end"><Button type="button" variant="destructive" disabled={purgeConfirmation !== "PURGE TEST DATA"} onClick={() => void purgeSelectedTestProducts()}>Purge selected test products</Button></div></section> : null}
+        </div>}
+      </Dialog>
+      <Dialog open={Boolean(deleteResult)} title="Deletion completed" onClose={() => setDeleteResult(null)} maxWidth="md">
+        <div className="space-y-4"><section><h3 className="text-sm font-semibold text-foreground">Deleted</h3>{deleteResult?.deleted.length ? <ul className="mt-2 space-y-1 text-sm">{deleteResult.deleted.map((item) => <li key={item.product_id}>- {item.product_name}</li>)}</ul> : <p className="mt-2 text-sm text-muted">No products were deleted.</p>}</section>{deleteResult?.blocked.length ? <section><h3 className="text-sm font-semibold text-foreground">Could not delete</h3><ul className="mt-2 space-y-2 text-sm">{deleteResult.blocked.map((item) => <li key={item.product_id}><div className="font-medium">{item.product_name}</div><div className="text-muted">{item.reason}</div></li>)}</ul></section> : null}<div className="flex justify-end"><Button type="button" onClick={() => setDeleteResult(null)}>Close</Button></div></div>
+      </Dialog>
     </>
   );
 }

@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Account actions are available from the top-right account menu only. */
+aside .bg-primary-700 > .border-t > a,
+aside .bg-primary-700 > .border-t > button {
+  display: none;
+}
+
 @layer base {
   :root {
     /* Brand and semantic color tokens. Values are RGB channels for Tailwind opacity support. */
@@ -101,7 +107,7 @@
   }
 
   .ds-dialog-backdrop {
-    @apply fixed inset-0 z-40 bg-slate-950/45 backdrop-blur-sm;
+    @apply fixed inset-0 z-40 overscroll-contain bg-slate-950/45 backdrop-blur-sm;
   }
 
   .ds-dialog {

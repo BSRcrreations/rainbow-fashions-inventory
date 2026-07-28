@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     ocr_provider: str = "local"
     max_invoice_pages: int = 20
     log_level: str = "INFO"
+    delete_auth_password_hash: Optional[str] = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -67,6 +68,18 @@ class Settings(BaseSettings):
         if provider not in {"mock", "local", "tesseract"}:
             raise ValueError("OCR provider must be one of: mock, local, tesseract")
         return provider
+
+    @field_validator("delete_auth_password_hash")
+    @classmethod
+    def validate_delete_auth_password_hash(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not value.strip():
+            return None
+        password_hash = value.strip()
+        if not password_hash.startswith("$argon2"):
+            raise ValueError(
+                "DELETE_AUTH_PASSWORD_HASH must contain a valid Argon2 hash, not a plain-text password."
+            )
+        return password_hash
 
     @property
     def max_upload_size_bytes(self) -> int:

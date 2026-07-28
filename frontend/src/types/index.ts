@@ -1,8 +1,8 @@
 export type UserRole = "OWNER" | "MANAGER" | "STAFF";
 export type PricingType = "MRP" | "OWN_PRICE";
-export type PurchaseStatus = "DRAFT" | "REVIEWED" | "CONFIRMED" | "CANCELLED";
-export type StockMovementType = "PURCHASE" | "SALE" | "CUSTOMER_RETURN" | "SUPPLIER_RETURN" | "DAMAGE" | "MANUAL_ADJUSTMENT" | "SALE_EDIT_RETURN" | "SALE_EDIT_DECREASE" | "SALE_VOID";
-export type SaleStatus = "COMPLETED" | "EDITED" | "PARTIALLY_RETURNED" | "RETURNED" | "VOIDED";
+export type PurchaseStatus = "DRAFT" | "REVIEWED" | "CONFIRMED" | "CANCELLED" | "VOIDED";
+export type StockMovementType = "PURCHASE" | "SALE" | "CUSTOMER_RETURN" | "SUPPLIER_RETURN" | "DAMAGE" | "MANUAL_ADJUSTMENT" | "SALE_EDIT_RETURN" | "SALE_EDIT_DECREASE" | "SALE_VOID" | "PURCHASE_VOID";
+export type SaleStatus = "DRAFT" | "CANCELLED" | "COMPLETED" | "EDITED" | "PARTIALLY_RETURNED" | "RETURNED" | "VOIDED";
 
 export interface User {
   id: string;
@@ -73,6 +73,7 @@ export interface Product {
   product_date: string;
   image_url?: string | null;
   is_active: boolean;
+  is_test_data: boolean;
   category?: Category | null;
   subcategory?: SubCategory | null;
   brand?: Brand | null;
@@ -203,6 +204,26 @@ export interface PurchaseItem {
   quantity: number;
   purchase_price: string;
   discount: string;
+  list_unit_price?: string;
+  invoiced_unit_price?: string | null;
+  discount_type?: "NONE" | "PERCENTAGE" | "FIXED_PER_UNIT" | "FIXED_PER_LINE" | "FINAL_UNIT_PRICE" | "QUANTITY_SLAB" | "FREE_QUANTITY" | "MANUAL";
+  discount_percentage?: string;
+  discount_per_unit?: string;
+  discount_amount?: string;
+  discount_reason?: string | null;
+  discount_source?: string;
+  free_quantity?: string;
+  chargeable_quantity?: string;
+  accepted_quantity?: string;
+  gross_amount?: string;
+  taxable_amount?: string;
+  net_line_amount?: string;
+  effective_unit_cost?: string;
+  landed_unit_cost?: string;
+  allocated_invoice_discount?: string;
+  promotion_id?: string | null;
+  discount_rule_id?: string | null;
+  discount_verified?: boolean;
   tax_amount: string;
   tax_rate: string;
   mrp?: string | null;
@@ -243,6 +264,12 @@ export interface Purchase {
   total_amount: string;
   subtotal: string;
   discount: string;
+  invoice_discount_type?: "NONE" | "PERCENTAGE" | "FIXED_AMOUNT" | "TRADE_DISCOUNT" | "CASH_DISCOUNT" | "COUPON" | "PROMOTIONAL" | "MANUAL_ADJUSTMENT";
+  invoice_discount_percentage?: string;
+  invoice_discount_amount?: string;
+  invoice_discount_reason?: string | null;
+  invoice_discount_allocation_method?: "BY_ITEM_VALUE" | "BY_TAXABLE_VALUE" | "BY_QUANTITY" | "EQUALLY" | "MANUAL" | "DO_NOT_ALLOCATE";
+  invoice_tax_rate: string;
   tax_amount: string;
   packaging_amount: string;
   freight_amount: string;
@@ -251,7 +278,7 @@ export interface Purchase {
   ai_processing_status: string;
   workflow_status: string;
   version: number;
-  total_quantity: number;
+  total_quantity: number | string;
   balance_due: string;
   created_at: string;
   updated_at: string;

@@ -41,6 +41,12 @@ class Purchase(Base):
     reviewed_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     discount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    invoice_discount_type: Mapped[str] = mapped_column(String(40), nullable=False, default="NONE")
+    invoice_discount_percentage: Mapped[Decimal] = mapped_column(Numeric(7, 4), nullable=False, default=0)
+    invoice_discount_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
+    invoice_discount_reason: Mapped[Optional[str]] = mapped_column(String(500))
+    invoice_discount_allocation_method: Mapped[str] = mapped_column(String(40), nullable=False, default="BY_ITEM_VALUE")
+    invoice_tax_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=0)
     tax_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     packaging_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     freight_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
@@ -65,8 +71,8 @@ class Purchase(Base):
     audits = relationship("PurchaseAudit", back_populates="purchase", cascade="all, delete-orphan")
 
     @property
-    def total_quantity(self) -> int:
-        return sum(item.quantity for item in self.items)
+    def total_quantity(self) -> Decimal:
+        return sum(item.total_received_quantity for item in self.items)
 
     @property
     def balance_due(self) -> Decimal:

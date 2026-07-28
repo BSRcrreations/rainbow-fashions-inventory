@@ -36,6 +36,7 @@ class ProductBase(BaseModel):
     warehouse: Optional[str] = Field(default=None, max_length=120)
     image_url: Optional[str] = Field(default=None, max_length=500)
     is_active: bool = True
+    is_test_data: bool = False
 
     @field_validator("sku", "barcode", mode="before")
     @classmethod
@@ -111,6 +112,7 @@ class ProductUpdate(BaseModel):
     warehouse: Optional[str] = Field(default=None, max_length=120)
     image_url: Optional[str] = Field(default=None, max_length=500)
     is_active: Optional[bool] = None
+    is_test_data: Optional[bool] = None
     colors: Optional[list[str]] = Field(default=None, max_length=50)
     sizes: Optional[list[str]] = Field(default=None, max_length=50)
 
@@ -158,6 +160,7 @@ class ProductVariantRead(ORMBaseModel):
 
 class ProductRead(ProductBase, ORMBaseModel):
     id: UUID
+    store_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
     category: Optional[CategoryRead] = None
@@ -180,6 +183,15 @@ class ProductListResponse(BaseModel):
 
 class ProductBulkIds(BaseModel):
     product_ids: list[UUID] = Field(min_length=1)
+
+
+class ProductBulkDeleteRequest(ProductBulkIds):
+    confirmation: str = Field(min_length=1, max_length=40)
+
+
+class ProductBulkPurgeTestDataRequest(ProductBulkIds):
+    confirmation: str = Field(min_length=1, max_length=40)
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class ProductBulkCategoryUpdate(ProductBulkIds):

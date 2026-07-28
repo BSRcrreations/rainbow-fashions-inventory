@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
@@ -11,6 +12,8 @@ from fastapi import HTTPException, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from PIL import Image, ImageOps
+from pillow_heif import register_heif_opener
 
 from app.ai.factory import get_ocr_service
 from app.ai.invoice_parser import InvoiceParser
@@ -47,6 +50,15 @@ from app.schemas.purchase import (
     PurchaseValidationError,
 )
 from app.services.file_service import FileService
+from app.services.discount_calculator import (
+    DiscountCalculationError,
+    PurchaseInvoiceDiscountInput,
+    PurchaseLineDiscountInput,
+    allocate_invoice_discount,
+    calculate_invoice_discount,
+    calculate_purchase_line,
+    money,
+)
 
 
 class PurchaseService:
@@ -60,7 +72,7 @@ class PurchaseService:
         uploaded_file = await FileService(self.db).save_invoice_file(file, current_user.id)
         raw_text = get_ocr_service().extract_text(Path(uploaded_file.storage_path))
         extracted_invoice = InvoiceParser().parse(raw_text)
-        review_items = self._build_review_items(extracted_invoice)
+        review_items = self._build_review_items(extracted_invoice, store_id)
         supplier = self._find_supplier(extracted_invoice.supplier)
 
         purchase_date = extracted_invoice.date or date.today()
@@ -146,8 +158,8 @@ class PurchaseService:
         warning = self._duplicate_warning(purchase, store_id)
         return PurchaseUploadResponse(purchase=purchase, extracted_invoice=extracted_invoice, review_items=review_items, duplicate_warning=warning)
 
-    def list(self, current_user: User, skip: int = 0, limit: int = 50) -> list[Purchase]:
-        return self.repo.list_recent(self._store_id(current_user), skip, limit)
+    def list(self, current_user: User, skip: int = 0, limit: int = 50, status_filter: Optional[str] = None) -> list[Purchase]:
+        return self.repo.list_recent(self._store_id(current_user), skip, limit, status_filter)
 
     def get(self, purchase_id: UUID, current_user: User) -> Purchase:
         purchase = self.repo.get_with_items(purchase_id, self._store_id(current_user))
@@ -213,6 +225,21 @@ class PurchaseService:
             raise not_found("Invoice document")
         return purchase.uploaded_file
 
+    def invoice_preview(self, purchase_id: UUID, current_user: User) -> bytes:
+        uploaded = self.invoice_file(purchase_id, current_user)
+        if uploaded.content_type not in {"image/heic", "image/heif"}:
+            raise bad_request("A converted preview is available only for HEIC or HEIF invoice images")
+        try:
+            register_heif_opener()
+            with Image.open(uploaded.storage_path) as source:
+                image = ImageOps.exif_transpose(source).convert("RGB")
+                image.thumbnail((2400, 2400))
+                output = BytesIO()
+                image.save(output, format="JPEG", quality=90, optimize=True)
+                return output.getvalue()
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error_payload("The HEIC invoice image could not be prepared for preview.", "INVOICE_PREVIEW_UNAVAILABLE")) from exc
+
     def patch(self, purchase_id: UUID, payload: PurchasePatch, current_user: User) -> Purchase:
         purchase = self.get(purchase_id, current_user)
         self._ensure_editable(purchase)
@@ -230,6 +257,7 @@ class PurchaseService:
             if field == "currency" and value:
                 value = value.upper()
             setattr(purchase, field, value)
+        self._recalculate_totals(purchase)
         self._assert_unique_invoice(purchase, self._store_id(current_user))
         purchase.version += 1
         self._audit(purchase, "UPDATED", payload.reason, before, self._snapshot(purchase), current_user)
@@ -240,7 +268,9 @@ class PurchaseService:
         purchase = self.get(purchase_id, current_user)
         self._ensure_editable(purchase)
         before = self._snapshot(purchase)
-        purchase.items.append(self._create_purchase_item(purchase.id, item))
+        purchase_item = self._create_purchase_item(purchase.id, item)
+        self._synchronize_item_catalog(purchase_item, current_user)
+        purchase.items.append(purchase_item)
         self._recalculate_totals(purchase)
         purchase.version += 1
         self._audit(purchase, "ITEM_ADDED", None, before, self._snapshot(purchase), current_user)
@@ -258,10 +288,23 @@ class PurchaseService:
         changes = payload.model_dump(exclude_unset=True, exclude={"version", "reason"})
         for field, value in changes.items():
             setattr(item, field, value)
+<<<<<<< HEAD
         if any(field in changes for field in {"matched_product_id", "category_id", "brand_id", "proposed_product_name", "create_new_product"}):
             item.classification_verified = True
             item.classification_verified_by = current_user.id
             item.classification_verified_at = datetime.now(timezone.utc)
+=======
+        self._synchronize_item_catalog(item, current_user)
+        if payload.discount is not None and payload.discount_type is None and payload.discount_amount is None:
+            # The original API exposed one flat line discount. Preserve that
+            # contract by treating it as a fixed per-line discount.
+            item.discount_type = "FIXED_PER_LINE"
+            item.discount_amount = payload.discount
+        if payload.discount_type is not None or payload.discount_amount is not None or payload.discount_percentage is not None or payload.discount_per_unit is not None or payload.free_quantity is not None:
+            item.discount_verified = True
+            item.discount_verified_by = current_user.id
+            item.discount_verified_at = datetime.now(timezone.utc)
+>>>>>>> shop-inventory
         self._recalculate_totals(purchase)
         purchase.version += 1
         self._audit(purchase, "ITEM_UPDATED", payload.reason, before, self._snapshot(purchase), current_user)
@@ -380,10 +423,6 @@ class PurchaseService:
         purchase.invoice_date = payload.invoice_date
         purchase.received_date = payload.received_date
         purchase.reviewed_payload = jsonable_encoder(payload)
-        purchase.subtotal = sum((item.quantity * item.purchase_price for item in payload.items), Decimal("0"))
-        purchase.discount = sum((item.discount for item in payload.items), Decimal("0"))
-        purchase.tax_amount = sum((item.tax_amount for item in payload.items), Decimal("0"))
-        purchase.total_amount = sum((item.line_total for item in payload.items), Decimal("0"))
         self._assert_unique_invoice(purchase, store_id)
         purchase.status = PurchaseStatus.REVIEWED
 
@@ -407,6 +446,7 @@ class PurchaseService:
 
         validation = self.validate(purchase_id, current_user)
         if not validation.valid:
+<<<<<<< HEAD
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={
@@ -415,6 +455,9 @@ class PurchaseService:
                     "errors": [error.model_dump(mode="json") for error in validation.errors],
                 },
             )
+=======
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error_payload("Purchase discounts require review before confirmation.", "PURCHASE_VALIDATION_FAILED", [{"field": "purchase", "message": message} for message in validation.messages]))
+>>>>>>> shop-inventory
 
         review_items = self._review_items_from_purchase(purchase)
         if not review_items:
@@ -427,19 +470,27 @@ class PurchaseService:
 
         for purchase_item in purchase.items:
             product = self._resolve_product_for_item(purchase_item, current_user)
+<<<<<<< HEAD
+=======
+            received_quantity = purchase_item.accepted_quantity
+            if received_quantity != received_quantity.to_integral_value():
+                raise bad_request("Inventory quantities must be whole units for this store.")
+            stock_quantity = int(received_quantity)
+>>>>>>> shop-inventory
             before_stock = product.current_stock
-            product.current_stock += purchase_item.quantity
+            product.current_stock += stock_quantity
             after_stock = product.current_stock
+            product.purchase_price = purchase_item.landed_unit_cost
 
             inventory = self._get_or_create_inventory(product.id, current_user.store_id)
-            inventory.current_stock += purchase_item.quantity
+            inventory.current_stock += stock_quantity
 
             purchase_item.product_id = product.id
             stock_history = StockHistory(
                 product_id=product.id,
                 store_id=current_user.store_id,
                 movement_type=StockMovementType.PURCHASE,
-                qty=purchase_item.quantity,
+                qty=stock_quantity,
                 before_stock=before_stock,
                 after_stock=after_stock,
                 reference=purchase.invoice_number or f"Purchase {purchase.id}",
@@ -459,12 +510,12 @@ class PurchaseService:
         self.db.commit()
         return self.get(purchase.id, current_user)
 
-    def _build_review_items(self, extracted_invoice: ExtractedInvoice) -> list[PurchaseItemReview]:
+    def _build_review_items(self, extracted_invoice: ExtractedInvoice, store_id: UUID) -> list[PurchaseItemReview]:
         review_items: list[PurchaseItemReview] = []
         for item in extracted_invoice.items:
             matched, match_status = self._match_product(item.barcode, item.product_name, item.size, item.color)
-            category = self._find_category(item.category)
-            brand = self._find_brand(category.id, item.brand) if category else None
+            category = self._find_category(item.category, store_id)
+            brand = self._find_brand(category.id, item.brand, store_id) if category else None
             review_items.append(
                 PurchaseItemReview(
                     product_id=matched.id if matched else None,
@@ -481,6 +532,8 @@ class PurchaseService:
                     color=item.color,
                     quantity=item.quantity,
                     purchase_price=item.purchase_price,
+                    list_unit_price=item.purchase_price,
+                    invoiced_unit_price=item.purchase_price,
                     mrp=item.mrp,
                     selling_price=item.selling_price,
                     line_total=item.total_amount,
@@ -502,16 +555,36 @@ class PurchaseService:
                     category_name=item.category_name,
                     product_name=item.product_name,
                     barcode=item.barcode,
-                supplier_product_code=item.supplier_product_code,
-                hsn_sac=item.hsn_sac,
-                unit=item.unit,
+                    supplier_product_code=item.supplier_product_code,
+                    hsn_sac=item.hsn_sac,
+                    unit=item.unit,
                     size=item.size,
                     color=item.color,
                     quantity=item.quantity,
                     purchase_price=item.purchase_price,
                     discount=item.discount,
-                tax_amount=item.tax_amount,
-                tax_rate=item.tax_rate,
+                    list_unit_price=item.list_unit_price,
+                    invoiced_unit_price=item.invoiced_unit_price,
+                    discount_type=item.discount_type,
+                    discount_percentage=item.discount_percentage,
+                    discount_per_unit=item.discount_per_unit,
+                    discount_amount=item.discount_amount,
+                    discount_reason=item.discount_reason,
+                    discount_source=item.discount_source,
+                    free_quantity=item.free_quantity,
+                    chargeable_quantity=item.chargeable_quantity,
+                    accepted_quantity=item.accepted_quantity,
+                    gross_amount=item.gross_amount,
+                    taxable_amount=item.taxable_amount,
+                    net_line_amount=item.net_line_amount,
+                    effective_unit_cost=item.effective_unit_cost,
+                    landed_unit_cost=item.landed_unit_cost,
+                    allocated_invoice_discount=item.allocated_invoice_discount,
+                    promotion_id=item.promotion_id,
+                    discount_rule_id=item.discount_rule_id,
+                    discount_verified=item.discount_verified,
+                    tax_amount=item.tax_amount,
+                    tax_rate=item.tax_rate,
                     mrp=item.mrp,
                     line_total=item.line_total,
                     confidence=item.confidence,
@@ -529,6 +602,9 @@ class PurchaseService:
         return [PurchaseItemReview.model_validate(item) for item in purchase.reviewed_payload.get("items", [])]
 
     def _create_purchase_item(self, purchase_id: UUID, item: PurchaseItemReview) -> PurchaseItem:
+        discount_type = item.discount_type
+        if discount_type == "NONE" and item.discount > 0 and item.discount_amount is None:
+            discount_type = "FIXED_PER_LINE"
         return PurchaseItem(
             purchase_id=purchase_id,
             product_id=item.product_id,
@@ -548,6 +624,26 @@ class PurchaseService:
             quantity=item.quantity,
             purchase_price=item.purchase_price,
             discount=item.discount,
+            list_unit_price=item.list_unit_price if item.list_unit_price is not None else item.purchase_price,
+            invoiced_unit_price=item.invoiced_unit_price,
+            discount_type=discount_type,
+            discount_percentage=item.discount_percentage,
+            discount_per_unit=item.discount_per_unit,
+            discount_amount=item.discount_amount if item.discount_amount is not None else item.discount,
+            discount_reason=item.discount_reason,
+            discount_source=item.discount_source,
+            free_quantity=item.free_quantity,
+            chargeable_quantity=item.chargeable_quantity if item.chargeable_quantity is not None else Decimal(item.quantity),
+            accepted_quantity=item.accepted_quantity if item.accepted_quantity is not None else Decimal(item.quantity) + item.free_quantity,
+            gross_amount=item.gross_amount if item.gross_amount is not None else Decimal(item.quantity) * item.purchase_price,
+            taxable_amount=item.taxable_amount if item.taxable_amount is not None else item.line_total - item.tax_amount,
+            net_line_amount=item.net_line_amount if item.net_line_amount is not None else item.line_total,
+            effective_unit_cost=item.effective_unit_cost if item.effective_unit_cost is not None else item.purchase_price,
+            landed_unit_cost=item.landed_unit_cost if item.landed_unit_cost is not None else item.purchase_price,
+            allocated_invoice_discount=item.allocated_invoice_discount,
+            promotion_id=item.promotion_id,
+            discount_rule_id=item.discount_rule_id,
+            discount_verified=item.discount_verified,
             tax_amount=item.tax_amount,
             tax_rate=item.tax_rate,
             mrp=item.mrp,
@@ -565,17 +661,31 @@ class PurchaseService:
         )
 
     def _resolve_product_for_item(self, item: PurchaseItem, current_user: User) -> Product:
+<<<<<<< HEAD
+=======
+        store_id = self._store_id(current_user)
+>>>>>>> shop-inventory
         product_id = item.product_id or item.matched_product_id
         if product_id:
             product = self.db.get(Product, product_id)
             if product:
                 return product
 
+<<<<<<< HEAD
         if not item.create_new_product:
             raise bad_request(f"Select an existing product or create a new product for {self._display_product_name(item)}.")
         category, brand = self._validate_classification_ids(item.category_id, item.brand_id, current_user)
         subcategory = self._get_or_create_default_subcategory(category.id, current_user)
         product_name = (item.proposed_product_name or item.product_name).strip()
+=======
+        category = self.db.query(Category).filter(Category.id == item.category_id, Category.store_id == store_id).first() if item.category_id else self._get_or_create_category(item.category_name, store_id)
+        brand = self.db.query(Brand).filter(Brand.id == item.brand_id, Brand.store_id == store_id).first() if item.brand_id else self._get_or_create_brand(category.id if category else None, item.brand_name, store_id)
+        if not category or not brand:
+            raise bad_request(f"Category and brand are required for new product: {item.product_name}")
+        if brand.category_id != category.id:
+            raise bad_request(f"Brand does not belong to category for new product: {item.product_name}")
+        subcategory = self._get_or_create_default_subcategory(category.id, store_id)
+>>>>>>> shop-inventory
 
         duplicate = self.product_repo.get_duplicate(category.id, subcategory.id, brand.id, product_name)
         if duplicate:
@@ -589,6 +699,7 @@ class PurchaseService:
             return duplicate
 
         product = Product(
+            store_id=current_user.store_id,
             category_id=category.id,
             subcategory_id=subcategory.id,
             brand_id=brand.id,
@@ -612,6 +723,7 @@ class PurchaseService:
         self.db.refresh(product)
         return product
 
+<<<<<<< HEAD
     def _validate_classification_ids(self, category_id: Optional[UUID], brand_id: Optional[UUID], current_user: User) -> tuple[Category, Brand]:
         if not category_id:
             raise bad_request("Select a category before creating a new product.")
@@ -631,6 +743,27 @@ class PurchaseService:
     @staticmethod
     def _display_product_name(item: PurchaseItem) -> str:
         return (item.proposed_product_name or item.product_name or "this product").strip().title()
+=======
+    def _synchronize_item_catalog(self, item: PurchaseItem, current_user: User) -> None:
+        store_id = self._store_id(current_user)
+        category = self.db.query(Category).filter(Category.id == item.category_id, Category.store_id == store_id).first() if item.category_id else None
+        brand = self.db.query(Brand).filter(Brand.id == item.brand_id, Brand.store_id == store_id).first() if item.brand_id else None
+        if item.category_id and not category:
+            raise bad_request("Selected category was not found")
+        if item.brand_id and not brand:
+            raise bad_request("Selected brand was not found")
+        if brand and category and brand.category_id != category.id:
+            raise bad_request("Selected brand does not belong to the selected category")
+        if brand and not category:
+            category = self.db.query(Category).filter(Category.id == brand.category_id, Category.store_id == store_id).first()
+            if not category:
+                raise bad_request("Category for the selected brand was not found")
+            item.category_id = category.id
+        if category:
+            item.category_name = category.name
+        if brand:
+            item.brand_name = brand.name
+>>>>>>> shop-inventory
 
     def _get_or_create_inventory(self, product_id: UUID, store_id: Optional[UUID]) -> ProductInventory:
         if store_id is None:
@@ -663,47 +796,58 @@ class PurchaseService:
             raise bad_request("Current user is not assigned to a store")
         return current_user.store_id
 
-    def _find_category(self, name: Optional[str]) -> Optional[Category]:
+    def _find_category(self, name: Optional[str], store_id: UUID) -> Optional[Category]:
         if not name:
             return None
-        return self.db.query(Category).filter(func.lower(Category.name) == name.strip().lower()).first()
+        return self.db.query(Category).filter(Category.store_id == store_id, func.lower(Category.name) == name.strip().lower()).first()
 
-    def _find_brand(self, category_id: UUID, name: Optional[str]) -> Optional[Brand]:
+    def _find_brand(self, category_id: UUID, name: Optional[str], store_id: UUID) -> Optional[Brand]:
         if not category_id or not name:
             return None
-        return self.db.query(Brand).filter(Brand.category_id == category_id, func.lower(Brand.name) == name.strip().lower()).first()
+        return self.db.query(Brand).filter(Brand.store_id == store_id, Brand.category_id == category_id, func.lower(Brand.name) == name.strip().lower()).first()
 
-    def _get_or_create_category(self, name: Optional[str]) -> Optional[Category]:
+    def _get_or_create_category(self, name: Optional[str], store_id: UUID) -> Optional[Category]:
         if not name:
             return None
-        category = self._find_category(name)
+        category = self._find_category(name, store_id)
         if category:
             return category
-        category = Category(name=name.strip(), description="Created from invoice extraction")
+        category = Category(store_id=store_id, name=name.strip(), description="Created from invoice extraction")
         self.db.add(category)
         self.db.flush()
         return category
 
-    def _get_or_create_brand(self, category_id: Optional[UUID], name: Optional[str]) -> Optional[Brand]:
+    def _get_or_create_brand(self, category_id: Optional[UUID], name: Optional[str], store_id: UUID) -> Optional[Brand]:
         if not category_id or not name:
             return None
-        brand = self._find_brand(category_id, name)
+        brand = self._find_brand(category_id, name, store_id)
         if brand:
             return brand
-        brand = Brand(category_id=category_id, name=name.strip(), description="Created from invoice extraction")
+        brand = Brand(store_id=store_id, category_id=category_id, name=name.strip(), description="Created from invoice extraction")
         self.db.add(brand)
         self.db.flush()
         return brand
 
+<<<<<<< HEAD
     def _get_or_create_default_subcategory(self, category_id: UUID, current_user: User) -> SubCategory:
         subcategory = (
             self.db.query(SubCategory)
             .filter(SubCategory.store_id == self._store_id(current_user), SubCategory.category_id == category_id, func.lower(SubCategory.name) == "general")
+=======
+    def _get_or_create_default_subcategory(self, category_id: UUID, store_id: UUID) -> SubCategory:
+        subcategory = (
+            self.db.query(SubCategory)
+            .filter(SubCategory.store_id == store_id, SubCategory.category_id == category_id, func.lower(SubCategory.name) == "general")
+>>>>>>> shop-inventory
             .first()
         )
         if subcategory:
             return subcategory
+<<<<<<< HEAD
         subcategory = SubCategory(store_id=self._store_id(current_user), category_id=category_id, name="General", description="Default product group")
+=======
+        subcategory = SubCategory(store_id=store_id, category_id=category_id, name="General", description="Default product group")
+>>>>>>> shop-inventory
         self.db.add(subcategory)
         self.db.flush()
         return subcategory
@@ -736,17 +880,79 @@ class PurchaseService:
         duplicate = self.repo.find_duplicate_invoice(store_id, purchase.supplier_id, purchase.supplier_name, purchase.invoice_number, purchase.id)
         return "This invoice number already exists for this supplier." if duplicate else None
 
-    @staticmethod
-    def _line_total(item: PurchaseItem) -> Decimal:
-        return (Decimal(item.quantity) * item.purchase_price) - item.discount + item.tax_amount
-
     def _recalculate_totals(self, purchase: Purchase) -> None:
-        for item in purchase.items:
-            item.line_total = self._line_total(item)
-        purchase.subtotal = sum((Decimal(item.quantity) * item.purchase_price for item in purchase.items), Decimal("0"))
-        purchase.discount = sum((item.discount for item in purchase.items), Decimal("0"))
+        try:
+            rows = [
+                calculate_purchase_line(
+                    PurchaseLineDiscountInput(
+                        chargeable_quantity=item.chargeable_quantity if item.chargeable_quantity is not None else Decimal(item.quantity),
+                        free_quantity=item.free_quantity or Decimal("0"),
+                        list_unit_price=item.list_unit_price if item.list_unit_price is not None else item.purchase_price,
+                        discount_type=item.discount_type,
+                        discount_percentage=item.discount_percentage or Decimal("0"),
+                        discount_per_unit=item.discount_per_unit or Decimal("0"),
+                        discount_amount=item.discount_amount if item.discount_amount is not None else item.discount,
+                        invoiced_unit_price=item.invoiced_unit_price,
+                        tax_rate=purchase.invoice_tax_rate or Decimal("0"),
+                        manual_reason=item.discount_reason,
+                    )
+                )
+                for item in purchase.items
+            ]
+            if any(row.chargeable_quantity != row.chargeable_quantity.to_integral_value() for row in rows):
+                raise DiscountCalculationError("Chargeable quantity must be a whole unit for this store.")
+            if any(row.received_quantity != row.received_quantity.to_integral_value() for row in rows):
+                raise DiscountCalculationError("Received quantity must be a whole unit for this store.")
+            invoice_discount = calculate_invoice_discount(
+                PurchaseInvoiceDiscountInput(
+                    discount_type=purchase.invoice_discount_type,
+                    discount_percentage=purchase.invoice_discount_percentage or Decimal("0"),
+                    discount_amount=purchase.invoice_discount_amount or Decimal("0"),
+                    allocation_method=purchase.invoice_discount_allocation_method,
+                    manual_reason=purchase.invoice_discount_reason,
+                ),
+                sum((row.taxable_amount for row in rows), Decimal("0")),
+            )
+            allocations = allocate_invoice_discount(invoice_discount, rows, purchase.invoice_discount_allocation_method)
+        except DiscountCalculationError as exc:
+            raise bad_request(str(exc), "DISCOUNT_VALIDATION_FAILED") from exc
+
+        landed_charge_total = money((purchase.packaging_amount or Decimal("0")) + (purchase.freight_amount or Decimal("0")))
+        received_total = sum((row.received_quantity for row in rows), Decimal("0"))
+        for item, row, allocation in zip(purchase.items, rows, allocations):
+            taxable_amount = money(row.taxable_amount - allocation)
+            item.tax_rate = purchase.invoice_tax_rate or Decimal("0")
+            tax_amount = money(taxable_amount * item.tax_rate / Decimal("100"))
+            landed_charge = money(landed_charge_total * row.received_quantity / received_total) if received_total else Decimal("0.00")
+            item.quantity = int(row.chargeable_quantity)
+            item.chargeable_quantity = row.chargeable_quantity
+            item.free_quantity = row.free_quantity
+            item.accepted_quantity = row.received_quantity
+            item.list_unit_price = item.list_unit_price if item.list_unit_price is not None else item.purchase_price
+            item.purchase_price = item.list_unit_price
+            item.gross_amount = row.gross_amount
+            item.discount_amount = row.item_discount_amount
+            item.discount = row.item_discount_amount
+            item.allocated_invoice_discount = allocation
+            item.taxable_amount = taxable_amount
+            item.tax_amount = tax_amount
+            item.net_line_amount = money(taxable_amount + tax_amount)
+            item.line_total = item.net_line_amount
+            item.effective_unit_cost = money(taxable_amount / row.received_quantity) if row.received_quantity else Decimal("0.00")
+            item.landed_unit_cost = money((taxable_amount + landed_charge) / row.received_quantity) if row.received_quantity else Decimal("0.00")
+        purchase.subtotal = sum((row.gross_amount for row in rows), Decimal("0"))
+        purchase.invoice_discount_amount = invoice_discount
+        purchase.discount = money(sum((row.item_discount_amount for row in rows), Decimal("0")) + invoice_discount)
         purchase.tax_amount = sum((item.tax_amount for item in purchase.items), Decimal("0"))
-        purchase.total_amount = purchase.subtotal - purchase.discount + purchase.tax_amount + purchase.packaging_amount + purchase.freight_amount + purchase.round_off
+        unallocated_invoice_discount = (
+            invoice_discount if purchase.invoice_discount_allocation_method == "DO_NOT_ALLOCATE" else Decimal("0.00")
+        )
+        purchase.total_amount = money(
+            sum((item.net_line_amount for item in purchase.items), Decimal("0"))
+            - unallocated_invoice_discount
+            + landed_charge_total
+            + (purchase.round_off or Decimal("0"))
+        )
         purchase.reviewed_payload = jsonable_encoder({"items": self._review_items_from_purchase(purchase)})
 
     @staticmethod
@@ -763,6 +969,8 @@ class PurchaseService:
             "amount_paid": purchase.amount_paid,
             "subtotal": purchase.subtotal,
             "discount": purchase.discount,
+            "invoice_discount_type": purchase.invoice_discount_type,
+            "invoice_discount_amount": purchase.invoice_discount_amount,
             "tax_amount": purchase.tax_amount,
             "total_amount": purchase.total_amount,
             "status": purchase.status.value,
@@ -773,6 +981,12 @@ class PurchaseService:
                     "product_name": item.product_name,
                     "quantity": item.quantity,
                     "purchase_price": item.purchase_price,
+                    "list_unit_price": item.list_unit_price,
+                    "discount_type": item.discount_type,
+                    "discount_amount": item.discount_amount,
+                    "free_quantity": item.free_quantity,
+                    "taxable_amount": item.taxable_amount,
+                    "effective_unit_cost": item.effective_unit_cost,
                     "tax_amount": item.tax_amount,
                     "line_total": item.line_total,
                 }

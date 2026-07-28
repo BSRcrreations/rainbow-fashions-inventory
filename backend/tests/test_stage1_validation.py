@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import uuid4
@@ -23,6 +24,8 @@ from app.services.catalog_service import BrandService, CategoryService
 from app.services.purchase_service import PurchaseService
 from app.services.product_service import ProductService
 from app.services.sale_service import SaleService
+from app.models.brand import Brand
+from app.models.category import Category
 
 
 TEST_STORE_ID = uuid4()
@@ -48,7 +51,14 @@ class FakeCatalogRepo:
     def get(self, record_id):
         return SimpleNamespace(id=record_id, name="Existing", store_id=TEST_STORE_ID)
 
+<<<<<<< HEAD
     def get_by_name(self, *_: object):
+=======
+    def get_for_store(self, record_id, _store_id):
+        return self.get(record_id)
+
+    def get_by_name(self, *_):
+>>>>>>> shop-inventory
         return self.duplicate
 
     def add(self, instance):
@@ -63,6 +73,13 @@ class FakeCatalogRepo:
 
 
 class Stage1ValidationTests(unittest.TestCase):
+    def test_purchase_tax_rate_is_limited_to_a_valid_percentage(self) -> None:
+        patch = PurchasePatch(invoice_tax_rate=Decimal("18"), version=4)
+
+        self.assertEqual(patch.invoice_tax_rate, Decimal("18"))
+        with self.assertRaises(ValidationError):
+            PurchasePatch(invoice_tax_rate=Decimal("100.01"))
+
     def test_dashboard_distribution_accepts_text_label(self) -> None:
         item = DistributionItem(label="In stock", value=5)
 
@@ -89,9 +106,14 @@ class Stage1ValidationTests(unittest.TestCase):
         service = CategoryService.__new__(CategoryService)
         service.db = FakeDb()
         service.repo = FakeCatalogRepo(duplicate=SimpleNamespace(id=uuid4()))
+        current_user = SimpleNamespace(store_id=uuid4())
 
         with self.assertRaises(HTTPException) as context:
+<<<<<<< HEAD
             service.create(CategoryCreate(name="Sarees", is_active=True), SimpleNamespace(store_id=TEST_STORE_ID))
+=======
+            service.create(CategoryCreate(name="Sarees", is_active=True), current_user)
+>>>>>>> shop-inventory
 
         self.assertEqual(context.exception.status_code, 409)
 
@@ -99,9 +121,14 @@ class Stage1ValidationTests(unittest.TestCase):
         service = CategoryService.__new__(CategoryService)
         service.db = FakeDb()
         service.repo = FakeCatalogRepo(product_count=2)
+        current_user = SimpleNamespace(store_id=uuid4())
 
         with self.assertRaises(HTTPException) as context:
+<<<<<<< HEAD
             service.delete(uuid4(), SimpleNamespace(store_id=TEST_STORE_ID))
+=======
+            service.delete(uuid4(), current_user)
+>>>>>>> shop-inventory
 
         self.assertEqual(context.exception.status_code, 400)
 
@@ -109,9 +136,14 @@ class Stage1ValidationTests(unittest.TestCase):
         service = BrandService.__new__(BrandService)
         service.db = FakeDb()
         service.repo = FakeCatalogRepo(product_count=1)
+        current_user = SimpleNamespace(store_id=uuid4())
 
         with self.assertRaises(HTTPException) as context:
+<<<<<<< HEAD
             service.delete(uuid4(), SimpleNamespace(store_id=TEST_STORE_ID))
+=======
+            service.delete(uuid4(), current_user)
+>>>>>>> shop-inventory
 
         self.assertEqual(context.exception.status_code, 400)
 
@@ -283,6 +315,27 @@ class Stage1ValidationTests(unittest.TestCase):
 
         self.assertEqual(item.size, "")
         self.assertEqual(item.color, "")
+
+    def test_purchase_item_catalog_selection_is_synchronized_and_validated(self) -> None:
+        category_id, other_category_id, brand_id = uuid4(), uuid4(), uuid4()
+        store_id = uuid4()
+        category = SimpleNamespace(id=category_id, name="Bras")
+        other_category = SimpleNamespace(id=other_category_id, name="Leggings")
+        brand = SimpleNamespace(id=brand_id, category_id=category_id, name="Jockey")
+        service = PurchaseService.__new__(PurchaseService)
+        service.db = MagicMock()
+        service.db.query.return_value.filter.return_value.first.side_effect = [category, brand, other_category, brand]
+        current_user = SimpleNamespace(store_id=store_id)
+
+        item = SimpleNamespace(category_id=category_id, category_name=None, brand_id=brand_id, brand_name=None)
+        service._synchronize_item_catalog(item, current_user)
+
+        self.assertEqual(item.category_name, "Bras")
+        self.assertEqual(item.brand_name, "Jockey")
+        item.category_id = other_category_id
+        with self.assertRaises(HTTPException) as context:
+            service._synchronize_item_catalog(item, current_user)
+        self.assertEqual(context.exception.status_code, 400)
 
     def test_stale_purchase_version_returns_purchase_modified_code(self) -> None:
         service = PurchaseService.__new__(PurchaseService)

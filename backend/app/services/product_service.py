@@ -131,7 +131,7 @@ class ProductService:
             raise not_found("Product for this barcode")
         return product
 
-    def create(self, payload: ProductCreate) -> Product:
+    def create(self, payload: ProductCreate, store_id: UUID | None = None) -> Product:
         self._ensure_hierarchy(payload.category_id, payload.subcategory_id, payload.brand_id)
         self._validate_unique_product(payload.category_id, payload.subcategory_id, payload.brand_id, payload.name)
         if payload.sku and self.repo.get_by_sku(payload.sku):
@@ -142,6 +142,7 @@ class ProductService:
         colors = payload.colors or ([payload.color] if payload.color else [])
         sizes = payload.sizes or ([payload.size] if payload.size else [])
         product_data = payload.model_dump(exclude={"colors", "sizes"})
+        product_data["store_id"] = store_id
         product_data["barcode"] = barcode
         product_data["color"] = colors[0] if colors else None
         product_data["size"] = sizes[0] if sizes else None
@@ -187,13 +188,7 @@ class ProductService:
         return self.get(product.id)
 
     def delete(self, product_id: UUID) -> None:
-        product = self.get(product_id)
-        if self.repo.has_stock_history(product_id):
-            raise conflict("Product has stock history and cannot be deleted; mark it inactive instead")
-        image_url = product.image_url
-        self.repo.delete(product)
-        self.db.commit()
-        FileService(self.db).delete_product_image_path(image_url)
+        raise bad_request("Use the owner-only typed permanent-delete workflow")
 
     async def upload_image(self, product_id: UUID, file: UploadFile, uploaded_by: UUID | None) -> Product:
         product = self.get(product_id)
@@ -224,12 +219,7 @@ class ProductService:
         raise bad_request("Unable to generate a unique code")
 
     def bulk_delete(self, payload: ProductBulkIds) -> dict[str, int]:
-        products = self._products_for_bulk(payload.product_ids)
-        for product in products:
-            FileService(self.db).delete_product_image_path(product.image_url)
-            self.repo.delete(product)
-        self.db.commit()
-        return {"updated": len(products)}
+        raise bad_request("Use the owner-only typed permanent-delete workflow")
 
     def bulk_update_category(self, payload: ProductBulkCategoryUpdate) -> dict[str, int]:
         if not self.db.get(Category, payload.category_id):
@@ -318,7 +308,7 @@ class ProductService:
         workbook.save(output)
         return output.getvalue()
 
-    def import_products(self, rows: list[dict[str, str]], update_existing: bool = False) -> ProductImportSummary:
+    def import_products(self, rows: list[dict[str, str]], update_existing: bool = False, store_id: UUID | None = None) -> ProductImportSummary:
         created = 0
         updated = 0
         errors: list[dict[str, str]] = []
@@ -355,7 +345,7 @@ class ProductService:
                 elif existing:
                     raise ValueError("SKU already exists")
                 else:
-                    self.create(payload)
+                    self.create(payload, store_id)
                     created += 1
             except Exception as exc:
                 errors.append({"row": str(index), "message": str(exc)})

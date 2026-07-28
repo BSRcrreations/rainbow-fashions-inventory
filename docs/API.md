@@ -142,6 +142,20 @@ Import/export:
 - Invalid import rows are skipped and returned in an error report.
 - Import expects existing brand and category names and a valid `product_date` in `YYYY-MM-DD` form.
 
+Owner-only product deletion:
+
+- `POST /products/bulk-delete-check` performs a store-scoped dependency preflight for selected products.
+- `POST /products/bulk-delete` permanently deletes only products reported as eligible and requires `confirmation: "DELETE"`.
+- `POST /products/bulk-purge-test-data` requires `confirmation: "PURGE TEST DATA"`, a reason, explicit `is_test_data`, and either a development/test environment or the store-level `allow_test_data_purge` flag.
+- Every response includes a request ID. Ordinary permanent deletion rejects products with stock, inventory movements, purchase items, sale items, or another-store reference; it never cascades into business history.
+
+Owner-confirmed transaction deletion:
+
+- `POST /purchases/delete-check` and `POST /sales/delete-check` classify selected store-scoped records as permanent-delete eligible, void-and-reverse, or blocked.
+- `POST /purchases/delete` and `POST /sales/delete` require an owner, a JSON `delete_password`, and an `Idempotency-Key` header. Passwords are verified only by the backend and are never returned, logged, or placed in audit snapshots.
+- Draft/cancelled records without postings are permanently deleted. Posted purchases and completed sales are retained as `VOIDED` records with compensating stock movements in the same transaction.
+- Configure deletion protection only with an Argon2id `DELETE_AUTH_PASSWORD_HASH` in the backend environment. Do not configure a plain-text `DELETE_AUTH_PASSWORD`; the configured hash is never returned by the API and cannot be changed through the browser.
+
 Purchases:
 
 - `GET /purchases`
@@ -159,6 +173,15 @@ Purchases:
 - `GET /purchases/{purchase_id}`
 - `PUT /purchases/{purchase_id}/review`
 - `POST /purchases/{purchase_id}/confirm`
+
+Purchase discount fields are additive and available on the existing purchase and
+purchase-item create/update endpoints. Item lines accept a discount type,
+percentage, per-unit or per-line amount, final unit price, free quantity, source,
+and manual reason. Purchase headers accept an invoice discount type, value,
+reason, and allocation method. The server calculates all persisted monetary
+totals with decimal arithmetic; client totals are previews only. Free quantity is
+included in received stock on confirmation but excluded from the invoice subtotal.
+Discounts that exceed their eligible item or invoice amount return `422`.
 
 Purchase upload validation:
 
