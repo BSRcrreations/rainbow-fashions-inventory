@@ -153,6 +153,9 @@ deploy_phase_3_activate:
       fi
       docker compose build
       docker compose up -d postgres
+      if docker compose exec -T postgres psql -U inventory_user -d inventory_db -tAc "select 1 from information_schema.columns where table_name = 'products' and column_name = 'sku'" | grep -q 1 && ! docker compose exec -T postgres psql -U inventory_user -d inventory_db -tAc "select to_regclass('public.alembic_version')" | grep -q alembic_version; then
+        docker compose run --rm backend alembic stamp head
+      fi
       docker compose run --rm backend alembic upgrade head
       docker compose up -d --remove-orphans
       docker compose ps
