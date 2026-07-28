@@ -104,7 +104,6 @@ package_release:
     - ssh-keyscan -p "${DEPLOY_PORT:-22}" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
   rules:
     - if: $CI_COMMIT_BRANCH == $DEPLOY_BRANCH
-      when: manual
 
 deploy_phase_1_upload:
   extends: .deploy_ssh

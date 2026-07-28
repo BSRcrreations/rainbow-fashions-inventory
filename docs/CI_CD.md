@@ -52,7 +52,7 @@ LOG_LEVEL=INFO
 
 ## Deployment phases
 
-The `shop-inventory` deployment is intentionally split into manual phases:
+The `shop-inventory` deployment runs automatically after validation passes:
 
 1. `deploy_phase_1_upload`: uploads and extracts the release bundle.
 2. `deploy_phase_2_backup`: backs up the current PostgreSQL database when an existing release is running.
