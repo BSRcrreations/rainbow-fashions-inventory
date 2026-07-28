@@ -9,7 +9,6 @@ export class ApiError extends Error {
   code?: string;
   requestId?: string;
   fields?: Array<{ field: string; message: string }>;
-  requestId?: string;
 
   constructor(message: string, status: number, code?: string, fields?: Array<{ field: string; message: string }>, requestId?: string) {
     super(message);
@@ -49,15 +48,9 @@ export async function toApiError(response: Response): Promise<ApiError> {
   const fields = Array.isArray(validation) ? validation.map((field: ApiErrorField) => ({ field: field.field ?? field.loc?.filter((part: string | number) => part !== "body").join(".") ?? "field", message: field.message ?? field.msg ?? "Invalid value" })) : undefined;
   const validationMessage = fields?.length ? fields.map((field) => `${field.field}: ${field.message}`).join("; ") : undefined;
   const detailMessage = typeof detail === "string" ? detail : typeof detailObject?.message === "string" ? detailObject.message : typeof body?.message === "string" ? body.message : undefined;
-<<<<<<< HEAD
-  const message = detailMessage ?? validationMessage ?? (typeof payload === "string" && payload.trim() ? payload.trim() : fallbackMessage(response.status));
-  const code = typeof detailObject?.code === "string" ? detailObject.code : typeof body?.code === "string" ? body.code : undefined;
-  const requestId = typeof detailObject?.request_id === "string" ? detailObject.request_id : response.headers.get("X-Request-ID") ?? undefined;
-=======
   const message = validationMessage ?? detailMessage ?? (typeof payload === "string" ? safeRawMessage(payload, response.status) : fallbackMessage(response.status));
   const code = typeof detailObject?.code === "string" ? detailObject.code : typeof body?.code === "string" ? body.code : undefined;
   const requestId = typeof detailObject?.request_id === "string" ? detailObject.request_id : typeof body?.request_id === "string" ? body.request_id : response.headers.get("X-Request-ID") ?? undefined;
->>>>>>> shop-inventory
   return new ApiError(message, response.status, code, fields, requestId);
 }
 

@@ -15,10 +15,7 @@ from app.database.base import Base
 class Category(Base):
     __tablename__ = "categories"
     __table_args__ = (UniqueConstraint("store_id", "name", name="uq_categories_store_name"),)
-<<<<<<< HEAD
-=======
 
->>>>>>> shop-inventory
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     store_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
@@ -31,4 +28,3 @@ class Category(Base):
     brands = relationship("Brand", back_populates="category")
     subcategories = relationship("SubCategory", back_populates="category", cascade="all, delete-orphan")
     purchase_items = relationship("PurchaseItem", back_populates="category")
-    store = relationship("Store")

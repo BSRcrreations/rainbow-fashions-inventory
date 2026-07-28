@@ -40,14 +40,12 @@ from app.schemas.purchase import (
     ExtractedInvoice,
     PurchaseDetailRead,
     PurchaseItemPatch,
-    PurchaseItemClassificationPatch,
     PurchaseItemReview,
     PurchasePatch,
     PurchaseRead,
     PurchaseReviewUpdate,
     PurchaseUploadResponse,
     PurchaseValidationRead,
-    PurchaseValidationError,
 )
 from app.services.file_service import FileService
 from app.services.discount_calculator import (
@@ -285,15 +283,8 @@ class PurchaseService:
         if not item:
             raise not_found("Purchase item")
         before = self._snapshot(purchase)
-        changes = payload.model_dump(exclude_unset=True, exclude={"version", "reason"})
-        for field, value in changes.items():
+        for field, value in payload.model_dump(exclude_unset=True, exclude={"version", "reason"}).items():
             setattr(item, field, value)
-<<<<<<< HEAD
-        if any(field in changes for field in {"matched_product_id", "category_id", "brand_id", "proposed_product_name", "create_new_product"}):
-            item.classification_verified = True
-            item.classification_verified_by = current_user.id
-            item.classification_verified_at = datetime.now(timezone.utc)
-=======
         self._synchronize_item_catalog(item, current_user)
         if payload.discount is not None and payload.discount_type is None and payload.discount_amount is None:
             # The original API exposed one flat line discount. Preserve that
@@ -304,44 +295,9 @@ class PurchaseService:
             item.discount_verified = True
             item.discount_verified_by = current_user.id
             item.discount_verified_at = datetime.now(timezone.utc)
->>>>>>> shop-inventory
         self._recalculate_totals(purchase)
         purchase.version += 1
         self._audit(purchase, "ITEM_UPDATED", payload.reason, before, self._snapshot(purchase), current_user)
-        self.db.commit()
-        return self.get(purchase.id, current_user)
-
-    def patch_item_classification(self, purchase_id: UUID, payload: PurchaseItemClassificationPatch, current_user: User) -> Purchase:
-        purchase = self.get(purchase_id, current_user)
-        self._ensure_editable(purchase)
-        self._validate_version(purchase, payload.version)
-        item_map = {item.id: item for item in purchase.items}
-        missing_ids = [item_id for item_id in payload.item_ids if item_id not in item_map]
-        if missing_ids:
-            raise not_found("Purchase item")
-        if payload.matched_product_id:
-            product = self.product_repo.get_with_relations(payload.matched_product_id)
-            if not product:
-                raise not_found("Product")
-        if payload.create_new_product:
-            self._validate_classification_ids(payload.category_id, payload.brand_id, current_user)
-        before = self._snapshot(purchase)
-        verified_at = datetime.now(timezone.utc)
-        for item_id in payload.item_ids:
-            item = item_map[item_id]
-            item.matched_product_id = payload.matched_product_id
-            item.product_id = payload.matched_product_id
-            item.proposed_product_name = payload.proposed_product_name.strip() if payload.proposed_product_name else None
-            item.category_id = payload.category_id if payload.create_new_product else None
-            item.brand_id = payload.brand_id if payload.create_new_product else None
-            item.create_new_product = payload.create_new_product
-            item.match_status = "EXISTING_PRODUCT" if payload.matched_product_id else "NEW_PRODUCT_REQUIRED"
-            item.classification_verified = True
-            item.classification_verified_by = current_user.id
-            item.classification_verified_at = verified_at
-        self._recalculate_totals(purchase)
-        purchase.version += 1
-        self._audit(purchase, "CLASSIFICATION_UPDATED", payload.reason, before, self._snapshot(purchase), current_user)
         self.db.commit()
         return self.get(purchase.id, current_user)
 
@@ -363,7 +319,6 @@ class PurchaseService:
     def validate(self, purchase_id: UUID, current_user: User) -> PurchaseValidationRead:
         purchase = self.get(purchase_id, current_user)
         messages: list[str] = []
-        errors: list[PurchaseValidationError] = []
         if not purchase.invoice_number or not purchase.invoice_number.strip():
             messages.append("Enter the supplier invoice number.")
         if not purchase.items and not purchase.reviewed_payload.get("items"):
@@ -371,28 +326,11 @@ class PurchaseService:
         for index, item in enumerate(purchase.items, start=1):
             if item.quantity <= 0:
                 messages.append(f"Quantity must be greater than zero on line {index}.")
-                errors.append(PurchaseValidationError(code="PURCHASE_ITEM_QUANTITY_INVALID", purchase_item_id=item.id, field="quantity", message=f"Quantity must be greater than zero for {self._display_product_name(item)}."))
-            if item.create_new_product:
-                display_name = self._display_product_name(item)
-                if not item.proposed_product_name or not item.proposed_product_name.strip():
-                    errors.append(PurchaseValidationError(code="PRODUCT_NAME_REQUIRED", purchase_item_id=item.id, field="proposed_product_name", message=f"Enter a product name for {display_name}."))
-                if not item.category_id:
-                    errors.append(PurchaseValidationError(code="PRODUCT_CATEGORY_REQUIRED", purchase_item_id=item.id, field="category_id", message=f"Select a category for {display_name}."))
-                if not item.brand_id:
-                    errors.append(PurchaseValidationError(code="PRODUCT_BRAND_REQUIRED", purchase_item_id=item.id, field="brand_id", message=f"Select a brand for {display_name}."))
-                if item.category_id and item.brand_id:
-                    try:
-                        self._validate_classification_ids(item.category_id, item.brand_id, current_user)
-                    except HTTPException as exc:
-                        detail = exc.detail.get("message") if isinstance(exc.detail, dict) else str(exc.detail)
-                        errors.append(PurchaseValidationError(code="PRODUCT_CLASSIFICATION_INVALID", purchase_item_id=item.id, field="brand_id", message=detail))
-            elif not item.product_id and not item.matched_product_id:
-                errors.append(PurchaseValidationError(code="PRODUCT_MATCH_REQUIRED", purchase_item_id=item.id, field="matched_product_id", message=f"Select an existing product or create a new product for {self._display_product_name(item)}."))
-        messages.extend(error.message for error in errors)
+            if not item.product_name.strip():
+                messages.append(f"Select a product for line {index}.")
         return PurchaseValidationRead(
-            valid=not messages and not errors,
+            valid=not messages,
             messages=messages,
-            errors=errors,
             subtotal=purchase.subtotal,
             discount=purchase.discount,
             tax_amount=purchase.tax_amount,
@@ -446,18 +384,7 @@ class PurchaseService:
 
         validation = self.validate(purchase_id, current_user)
         if not validation.valid:
-<<<<<<< HEAD
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "message": "Purchase requires product setup before confirmation.",
-                    "code": "PURCHASE_VALIDATION_FAILED",
-                    "errors": [error.model_dump(mode="json") for error in validation.errors],
-                },
-            )
-=======
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error_payload("Purchase discounts require review before confirmation.", "PURCHASE_VALIDATION_FAILED", [{"field": "purchase", "message": message} for message in validation.messages]))
->>>>>>> shop-inventory
 
         review_items = self._review_items_from_purchase(purchase)
         if not review_items:
@@ -470,13 +397,10 @@ class PurchaseService:
 
         for purchase_item in purchase.items:
             product = self._resolve_product_for_item(purchase_item, current_user)
-<<<<<<< HEAD
-=======
             received_quantity = purchase_item.accepted_quantity
             if received_quantity != received_quantity.to_integral_value():
                 raise bad_request("Inventory quantities must be whole units for this store.")
             stock_quantity = int(received_quantity)
->>>>>>> shop-inventory
             before_stock = product.current_stock
             product.current_stock += stock_quantity
             after_stock = product.current_stock
@@ -525,7 +449,6 @@ class PurchaseService:
                     brand_name=item.brand,
                     category_name=item.category,
                     product_name=item.product_name,
-                    proposed_product_name=item.proposed_product_name,
                     barcode=item.barcode,
                     unit=item.unit,
                     size=item.size,
@@ -535,7 +458,6 @@ class PurchaseService:
                     list_unit_price=item.purchase_price,
                     invoiced_unit_price=item.purchase_price,
                     mrp=item.mrp,
-                    selling_price=item.selling_price,
                     line_total=item.total_amount,
                     confidence=item.confidence,
                     match_status=match_status,
@@ -590,11 +512,7 @@ class PurchaseService:
                     confidence=item.confidence,
                     match_status=item.match_status,
                     batch_number=item.batch_number,
-                    manufacturing_date=item.manufacturing_date,
                     expiry_date=item.expiry_date,
-                    create_new_product=item.create_new_product,
-                    variant_attributes=item.variant_attributes,
-                    classification_verified=item.classification_verified,
                     user_verified=item.user_verified,
                 )
                 for item in purchase.items
@@ -614,7 +532,6 @@ class PurchaseService:
             brand_name=item.brand_name,
             category_name=item.category_name,
             product_name=item.product_name.strip(),
-            proposed_product_name=item.proposed_product_name.strip() if item.proposed_product_name else None,
             barcode=item.barcode.strip() if item.barcode else None,
             supplier_product_code=item.supplier_product_code.strip() if item.supplier_product_code else None,
             hsn_sac=item.hsn_sac.strip() if item.hsn_sac else None,
@@ -647,37 +564,22 @@ class PurchaseService:
             tax_amount=item.tax_amount,
             tax_rate=item.tax_rate,
             mrp=item.mrp,
-            selling_price=item.selling_price,
             line_total=item.line_total,
             confidence=item.confidence,
             match_status=item.match_status,
             batch_number=item.batch_number.strip() if item.batch_number else None,
-            manufacturing_date=item.manufacturing_date,
             expiry_date=item.expiry_date,
-            create_new_product=item.create_new_product,
-            variant_attributes=item.variant_attributes,
-            classification_verified=item.classification_verified,
             user_verified=item.user_verified,
         )
 
     def _resolve_product_for_item(self, item: PurchaseItem, current_user: User) -> Product:
-<<<<<<< HEAD
-=======
         store_id = self._store_id(current_user)
->>>>>>> shop-inventory
         product_id = item.product_id or item.matched_product_id
         if product_id:
             product = self.db.get(Product, product_id)
             if product:
                 return product
 
-<<<<<<< HEAD
-        if not item.create_new_product:
-            raise bad_request(f"Select an existing product or create a new product for {self._display_product_name(item)}.")
-        category, brand = self._validate_classification_ids(item.category_id, item.brand_id, current_user)
-        subcategory = self._get_or_create_default_subcategory(category.id, current_user)
-        product_name = (item.proposed_product_name or item.product_name).strip()
-=======
         category = self.db.query(Category).filter(Category.id == item.category_id, Category.store_id == store_id).first() if item.category_id else self._get_or_create_category(item.category_name, store_id)
         brand = self.db.query(Brand).filter(Brand.id == item.brand_id, Brand.store_id == store_id).first() if item.brand_id else self._get_or_create_brand(category.id if category else None, item.brand_name, store_id)
         if not category or not brand:
@@ -685,9 +587,8 @@ class PurchaseService:
         if brand.category_id != category.id:
             raise bad_request(f"Brand does not belong to category for new product: {item.product_name}")
         subcategory = self._get_or_create_default_subcategory(category.id, store_id)
->>>>>>> shop-inventory
 
-        duplicate = self.product_repo.get_duplicate(category.id, subcategory.id, brand.id, product_name)
+        duplicate = self.product_repo.get_duplicate(category.id, subcategory.id, brand.id, item.product_name)
         if duplicate:
             has_variant = any(
                 (variant.size or "").casefold() == (item.size or "").casefold()
@@ -703,15 +604,13 @@ class PurchaseService:
             category_id=category.id,
             subcategory_id=subcategory.id,
             brand_id=brand.id,
-            name=product_name,
+            name=item.product_name,
             size=item.size,
             color=item.color,
             purchase_price=item.purchase_price,
-            selling_price=item.selling_price or item.mrp or item.purchase_price,
-            pricing_type=PricingType.MRP if item.selling_price or item.mrp else PricingType.OWN_PRICE,
-            mrp=item.selling_price or item.mrp,
-            hsn_sac=item.hsn_sac,
-            unit=item.unit,
+            selling_price=item.mrp or item.purchase_price,
+            pricing_type=PricingType.MRP if item.mrp else PricingType.OWN_PRICE,
+            mrp=item.mrp,
             current_stock=0,
             minimum_stock=0,
             barcode=None,
@@ -723,27 +622,6 @@ class PurchaseService:
         self.db.refresh(product)
         return product
 
-<<<<<<< HEAD
-    def _validate_classification_ids(self, category_id: Optional[UUID], brand_id: Optional[UUID], current_user: User) -> tuple[Category, Brand]:
-        if not category_id:
-            raise bad_request("Select a category before creating a new product.")
-        if not brand_id:
-            raise bad_request("Select a brand before creating a new product.")
-        store_id = self._store_id(current_user)
-        category = self.db.get(Category, category_id)
-        brand = self.db.get(Brand, brand_id)
-        if not category or category.store_id != store_id:
-            raise not_found("Category")
-        if not brand or brand.store_id != store_id:
-            raise not_found("Brand")
-        if brand.category_id != category.id:
-            raise bad_request("The selected brand does not belong to the selected category.")
-        return category, brand
-
-    @staticmethod
-    def _display_product_name(item: PurchaseItem) -> str:
-        return (item.proposed_product_name or item.product_name or "this product").strip().title()
-=======
     def _synchronize_item_catalog(self, item: PurchaseItem, current_user: User) -> None:
         store_id = self._store_id(current_user)
         category = self.db.query(Category).filter(Category.id == item.category_id, Category.store_id == store_id).first() if item.category_id else None
@@ -763,7 +641,6 @@ class PurchaseService:
             item.category_name = category.name
         if brand:
             item.brand_name = brand.name
->>>>>>> shop-inventory
 
     def _get_or_create_inventory(self, product_id: UUID, store_id: Optional[UUID]) -> ProductInventory:
         if store_id is None:
@@ -828,26 +705,15 @@ class PurchaseService:
         self.db.flush()
         return brand
 
-<<<<<<< HEAD
-    def _get_or_create_default_subcategory(self, category_id: UUID, current_user: User) -> SubCategory:
-        subcategory = (
-            self.db.query(SubCategory)
-            .filter(SubCategory.store_id == self._store_id(current_user), SubCategory.category_id == category_id, func.lower(SubCategory.name) == "general")
-=======
     def _get_or_create_default_subcategory(self, category_id: UUID, store_id: UUID) -> SubCategory:
         subcategory = (
             self.db.query(SubCategory)
             .filter(SubCategory.store_id == store_id, SubCategory.category_id == category_id, func.lower(SubCategory.name) == "general")
->>>>>>> shop-inventory
             .first()
         )
         if subcategory:
             return subcategory
-<<<<<<< HEAD
-        subcategory = SubCategory(store_id=self._store_id(current_user), category_id=category_id, name="General", description="Default product group")
-=======
         subcategory = SubCategory(store_id=store_id, category_id=category_id, name="General", description="Default product group")
->>>>>>> shop-inventory
         self.db.add(subcategory)
         self.db.flush()
         return subcategory

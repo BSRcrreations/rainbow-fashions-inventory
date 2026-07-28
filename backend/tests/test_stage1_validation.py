@@ -28,9 +28,6 @@ from app.models.brand import Brand
 from app.models.category import Category
 
 
-TEST_STORE_ID = uuid4()
-
-
 class FakeDb:
     def __init__(self) -> None:
         self.committed = False
@@ -49,16 +46,12 @@ class FakeCatalogRepo:
         self.deleted = False
 
     def get(self, record_id):
-        return SimpleNamespace(id=record_id, name="Existing", store_id=TEST_STORE_ID)
+        return SimpleNamespace(id=record_id, name="Existing")
 
-<<<<<<< HEAD
-    def get_by_name(self, *_: object):
-=======
     def get_for_store(self, record_id, _store_id):
         return self.get(record_id)
 
     def get_by_name(self, *_):
->>>>>>> shop-inventory
         return self.duplicate
 
     def add(self, instance):
@@ -109,11 +102,7 @@ class Stage1ValidationTests(unittest.TestCase):
         current_user = SimpleNamespace(store_id=uuid4())
 
         with self.assertRaises(HTTPException) as context:
-<<<<<<< HEAD
-            service.create(CategoryCreate(name="Sarees", is_active=True), SimpleNamespace(store_id=TEST_STORE_ID))
-=======
             service.create(CategoryCreate(name="Sarees", is_active=True), current_user)
->>>>>>> shop-inventory
 
         self.assertEqual(context.exception.status_code, 409)
 
@@ -124,11 +113,7 @@ class Stage1ValidationTests(unittest.TestCase):
         current_user = SimpleNamespace(store_id=uuid4())
 
         with self.assertRaises(HTTPException) as context:
-<<<<<<< HEAD
-            service.delete(uuid4(), SimpleNamespace(store_id=TEST_STORE_ID))
-=======
             service.delete(uuid4(), current_user)
->>>>>>> shop-inventory
 
         self.assertEqual(context.exception.status_code, 400)
 
@@ -139,11 +124,7 @@ class Stage1ValidationTests(unittest.TestCase):
         current_user = SimpleNamespace(store_id=uuid4())
 
         with self.assertRaises(HTTPException) as context:
-<<<<<<< HEAD
-            service.delete(uuid4(), SimpleNamespace(store_id=TEST_STORE_ID))
-=======
             service.delete(uuid4(), current_user)
->>>>>>> shop-inventory
 
         self.assertEqual(context.exception.status_code, 400)
 
@@ -291,17 +272,8 @@ class Stage1ValidationTests(unittest.TestCase):
 
         paths = {route.path for route in app.routes}
         self.assertIn("/api/v1/purchase-documents/upload", paths)
-        self.assertIn("/api/v1/purchase-documents/{document_id}", paths)
-        self.assertIn("/api/v1/purchase-documents/{document_id}/preview", paths)
         self.assertIn("/api/v1/purchase-documents/jobs/{job_id}", paths)
         self.assertIn("/api/v1/purchase-documents/{document_id}/retry", paths)
-
-    def test_document_job_includes_provider_name(self) -> None:
-        from app.models.purchase_document import DocumentProcessingJob
-
-        job = DocumentProcessingJob(provider="local")
-
-        self.assertEqual(job.provider_name, "local")
 
     def test_purchase_patch_allows_partial_invoice_update(self) -> None:
         patch = PurchasePatch(invoice_number="DS/26-27/05-A", version=4)

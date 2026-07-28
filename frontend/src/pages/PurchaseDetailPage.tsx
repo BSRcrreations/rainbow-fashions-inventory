@@ -3,7 +3,6 @@ import { ArrowLeft, CheckCircle2, ClipboardCheck, Download, FileText, Pencil, Pl
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApiError, api } from "../api/client";
 import ConfirmDialog from "../components/ConfirmDialog";
-import Dialog from "../components/Dialog";
 import ErrorState from "../components/ErrorState";
 import { SkeletonRows } from "../components/LoadingState";
 import PageHeader from "../components/PageHeader";
@@ -14,20 +13,14 @@ import type { CategoryHierarchy, Purchase, PurchaseDetail, PurchaseItem } from "
 import { money, shortDate } from "../utils/format";
 import { addMoney, addQuantity, previewInvoiceDiscount, previewPurchaseLine, subtractMoney } from "../utils/purchaseDiscount";
 
-<<<<<<< HEAD
-type HeaderField = "supplier_name" | "invoice_number" | "purchase_date" | "invoice_date" | "received_date" | "due_date" | "payment_mode" | "amount_paid" | "place_of_supply" | "purchase_reference" | "notes" | "warehouse" | "currency" | "packaging_amount" | "freight_amount" | "round_off";
-type ItemField = "product_name" | "barcode" | "supplier_product_code" | "hsn_sac" | "size" | "color" | "quantity" | "unit" | "purchase_price" | "discount" | "tax_rate" | "tax_amount" | "mrp";
-type ClassificationDraft = { product_name: string; category_id: string; brand_id: string; create_new_product: boolean };
+type HeaderField = "supplier_name" | "invoice_number" | "purchase_date" | "invoice_date" | "received_date" | "due_date" | "payment_mode" | "amount_paid" | "place_of_supply" | "purchase_reference" | "notes" | "warehouse" | "currency" | "packaging_amount" | "freight_amount" | "round_off" | "invoice_discount_type" | "invoice_discount_percentage" | "invoice_discount_amount" | "invoice_discount_reason" | "invoice_discount_allocation_method" | "invoice_tax_rate";
+type ItemField = "product_name" | "barcode" | "supplier_product_code" | "hsn_sac" | "category_id" | "category_name" | "brand_id" | "brand_name" | "size" | "color" | "quantity" | "unit" | "purchase_price" | "list_unit_price" | "discount" | "discount_type" | "discount_percentage" | "discount_per_unit" | "discount_amount" | "discount_reason" | "free_quantity" | "invoiced_unit_price" | "tax_rate" | "tax_amount" | "mrp";
 type PurchasePageError = { message: string; code?: string; requestId?: string; fields?: Array<{ field: string; message: string }> };
 
 function toPurchaseError(error: unknown, fallback: string): PurchasePageError {
   if (error instanceof ApiError) return { message: error.message, code: error.code, requestId: error.requestId, fields: error.fields };
   return { message: error instanceof Error ? error.message : fallback };
 }
-=======
-type HeaderField = "supplier_name" | "invoice_number" | "purchase_date" | "invoice_date" | "received_date" | "due_date" | "payment_mode" | "amount_paid" | "place_of_supply" | "purchase_reference" | "notes" | "warehouse" | "currency" | "packaging_amount" | "freight_amount" | "round_off" | "invoice_discount_type" | "invoice_discount_percentage" | "invoice_discount_amount" | "invoice_discount_reason" | "invoice_discount_allocation_method" | "invoice_tax_rate";
-type ItemField = "product_name" | "barcode" | "supplier_product_code" | "hsn_sac" | "category_id" | "category_name" | "brand_id" | "brand_name" | "size" | "color" | "quantity" | "unit" | "purchase_price" | "list_unit_price" | "discount" | "discount_type" | "discount_percentage" | "discount_per_unit" | "discount_amount" | "discount_reason" | "free_quantity" | "invoiced_unit_price" | "tax_rate" | "tax_amount" | "mrp";
->>>>>>> shop-inventory
 
 function blankItem(): PurchaseItem {
   return { product_name: "", unit: "Each", size: "", color: "", quantity: 1, purchase_price: "0", list_unit_price: "0", discount: "0", discount_type: "NONE", discount_percentage: "0", discount_per_unit: "0", discount_amount: "0", free_quantity: "0", tax_amount: "0", tax_rate: "0", line_total: "0", match_status: "MANUAL", user_verified: true };
@@ -59,18 +52,9 @@ export default function PurchaseDetailPage() {
   const [cancelReason, setCancelReason] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [documentUrl, setDocumentUrl] = useState("");
-<<<<<<< HEAD
-  const [categories, setCategories] = useState<CategoryHierarchy[]>([]);
-  const [classificationDrafts, setClassificationDrafts] = useState<Record<string, ClassificationDraft>>({});
-  const [classificationSaving, setClassificationSaving] = useState("");
-  const [catalogEditor, setCatalogEditor] = useState<{ type: "category" | "brand"; groupKey: string } | null>(null);
-  const [catalogName, setCatalogName] = useState("");
-  const [catalogSaving, setCatalogSaving] = useState(false);
-=======
   const [documentContentType, setDocumentContentType] = useState("");
   const [catalog, setCatalog] = useState<CategoryHierarchy[]>([]);
   const [catalogError, setCatalogError] = useState("");
->>>>>>> shop-inventory
 
   const editable = Boolean(purchase && purchase.status !== "CONFIRMED" && purchase.status !== "CANCELLED");
 
@@ -89,7 +73,6 @@ export default function PurchaseDetailPage() {
   }, [purchaseId]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { void api.get<CategoryHierarchy[]>("/categories/hierarchy").then(setCategories).catch(() => setCategories([])); }, []);
   useEffect(() => {
     void api.get<CategoryHierarchy[]>("/categories/hierarchy")
       .then(setCatalog)
@@ -118,16 +101,6 @@ export default function PurchaseDetailPage() {
     const tax = addMoney(...previews.map((item) => item.taxAmount));
     const total = addMoney(subtractMoney(addMoney(...previews.map((item) => item.lineTotal)), invoiceDiscount), draft.packaging_amount, draft.freight_amount, draft.round_off);
     return { quantity, subtotal, tax, total };
-  }, [draft]);
-
-  const setupGroups = useMemo(() => {
-    if (!draft) return [] as Array<{ key: string; items: PurchaseItem[] }>;
-    const grouped = new Map<string, PurchaseItem[]>();
-    draft.items.filter((item) => !item.product_id && !item.matched_product_id).forEach((item) => {
-      const key = (item.proposed_product_name || item.product_name).trim().toLocaleLowerCase();
-      grouped.set(key, [...(grouped.get(key) ?? []), item]);
-    });
-    return Array.from(grouped, ([key, items]) => ({ key, items }));
   }, [draft]);
 
   function updateHeader(field: HeaderField, value: string) {
@@ -233,49 +206,6 @@ export default function PurchaseDetailPage() {
     }
   }
 
-  function setupValue(group: { key: string; items: PurchaseItem[] }): ClassificationDraft {
-    return classificationDrafts[group.key] ?? {
-      product_name: group.items[0].proposed_product_name || group.items[0].product_name,
-      category_id: group.items[0].category_id || "",
-      brand_id: group.items[0].brand_id || "",
-      create_new_product: group.items[0].create_new_product !== false,
-    };
-  }
-
-  async function saveClassification(group: { key: string; items: PurchaseItem[] }) {
-    if (!purchase) return;
-    const value = setupValue(group);
-    if (value.create_new_product && (!value.category_id || !value.brand_id || !value.product_name.trim())) {
-      setValidation([`Complete product name, category, and brand for ${value.product_name || "this product"}.`]);
-      return;
-    }
-    setClassificationSaving(group.key);
-    try {
-      await api.patch<Purchase>(`/purchases/${purchase.id}/items/classification`, {
-        item_ids: group.items.map((item) => item.id), proposed_product_name: value.product_name.trim(), category_id: value.category_id || null, brand_id: value.brand_id || null, create_new_product: value.create_new_product, version: purchase.version, reason: "Product setup reviewed",
-      });
-      toast.success(`Product setup saved for ${value.product_name}`);
-      await load();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to save product setup";
-      setError(toPurchaseError(err, "Unable to save product setup")); toast.error(message);
-    } finally { setClassificationSaving(""); }
-  }
-
-  async function createCatalogRecord() {
-    if (!catalogEditor || !catalogName.trim()) return;
-    const value = classificationDrafts[catalogEditor.groupKey];
-    if (catalogEditor.type === "brand" && !value?.category_id) { setError({ message: "Select a category before creating a brand." }); return; }
-    setCatalogSaving(true);
-    try {
-      const created = await api.post<{ id: string; name: string }>(catalogEditor.type === "category" ? "/categories" : "/brands", catalogEditor.type === "category" ? { name: catalogName.trim(), is_active: true } : { name: catalogName.trim(), category_id: value.category_id, is_active: true });
-      const refreshed = await api.get<CategoryHierarchy[]>("/categories/hierarchy");
-      setCategories(refreshed);
-      setClassificationDrafts((current) => ({ ...current, [catalogEditor.groupKey]: { ...current[catalogEditor.groupKey], category_id: catalogEditor.type === "category" ? created.id : current[catalogEditor.groupKey].category_id, brand_id: catalogEditor.type === "brand" ? created.id : "" } }));
-      setCatalogEditor(null); setCatalogName(""); toast.success(`${catalogEditor.type === "category" ? "Category" : "Brand"} created`);
-    } catch (err) { setError(toPurchaseError(err, "Unable to create catalog item")); } finally { setCatalogSaving(false); }
-  }
-
   async function save() {
     if (!purchase || !draft) return;
     if (!draft.invoice_number?.trim()) { setValidation(["Enter the supplier invoice number."]); return; }
@@ -351,14 +281,9 @@ export default function PurchaseDetailPage() {
 
   return <>
     <PageHeader title="Purchase Details" subtitle={purchase.invoice_number || "Invoice number pending"} actions={<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => { if (!dirty || window.confirm("Discard unsaved purchase changes?")) navigate("/purchases"); }}><ArrowLeft size={16} /> Back</Button>{editable && !editing ? <Button onClick={startEditing}><Pencil size={16} /> Edit</Button> : null}</div>} />
-<<<<<<< HEAD
     {error ? <div className="mb-4"><ErrorState message={error.message} code={error.code} requestId={error.requestId} fields={error.fields} /></div> : null}
-    {validation.length ? <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><strong>{setupGroups.length ? `${setupGroups.length} product${setupGroups.length === 1 ? " requires" : "s require"} setup before this purchase can be confirmed.` : "Review required"}</strong>{setupGroups.length ? <button className="ml-2 font-semibold underline" type="button" onClick={() => document.getElementById("product-setup-required")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Review product setup</button> : null}<ul className="mt-1 list-disc pl-5">{validation.map((message) => <li key={message}>{message}</li>)}</ul></div> : null}
-=======
-    {error ? <div className="mb-4"><ErrorState message={error} /></div> : null}
     {validation.length ? <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><strong>Review required</strong><ul className="mt-1 list-disc pl-5">{validation.map((message) => <li key={message}>{message}</li>)}</ul></div> : null}
     {catalogError ? <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Categories and brands could not be loaded. Refresh before saving a new purchase item.</div> : null}
->>>>>>> shop-inventory
     <section className="ds-surface mb-5 flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><StatusBadge value={purchase.workflow_status} /><StatusBadge value={purchase.status} /></div><p className="mt-2 text-sm text-muted">Created {shortDate(purchase.created_at)} · Updated {shortDate(purchase.updated_at)}{purchase.confirmed_at ? ` · Confirmed ${shortDate(purchase.confirmed_at)}` : ""}</p></div><div className="text-sm text-muted">Version {purchase.version}</div></section>
     <div className="grid gap-5 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.4fr)]">
       <section id="invoice-preview" className="ds-surface min-h-[320px] overflow-hidden"><div className="flex items-center justify-between border-b border-border px-4 py-3"><div className="flex items-center gap-2 font-semibold"><FileText size={18} /> Invoice document</div>{purchase.document ? <Button size="sm" variant="secondary" onClick={() => void downloadInvoice()}><Download size={16} /> Download</Button> : null}</div>{documentUrl ? documentContentType.startsWith("image/") ? <div className="grid h-[min(65vh,560px)] min-h-[320px] place-items-center bg-surface-subtle p-3"><img className="max-h-full max-w-full object-contain" src={documentUrl} alt={purchase.document?.original_filename ?? "Purchase invoice"} /></div> : <iframe className="h-[min(65vh,560px)] min-h-[320px] w-full bg-surface" title="Purchase invoice preview" src={documentUrl} /> : <div className="ds-empty min-h-[260px] text-muted">No invoice document is attached to this purchase.</div>}</section>
@@ -368,11 +293,11 @@ export default function PurchaseDetailPage() {
         <div className="ds-surface p-5"><h2 className="text-lg font-semibold">Additional charges</h2><p className="mt-1 text-sm text-muted">Add charges that belong to the purchase invoice.</p><div className="mt-4 grid gap-4 sm:grid-cols-3"><Field label="Packing charges" editing={editing}><input className="field-input" type="number" min="0" step="0.01" value={draft.packaging_amount} onChange={(event) => updateHeader("packaging_amount", event.target.value)} /></Field><Field label="Other charges" editing={editing}><input className="field-input" type="number" min="0" step="0.01" value={draft.freight_amount} onChange={(event) => updateHeader("freight_amount", event.target.value)} /></Field><Field label="Round-off" editing={editing}><input className="field-input" type="number" step="0.01" value={draft.round_off} onChange={(event) => updateHeader("round_off", event.target.value)} /></Field></div></div>
       </section>
     </div>
-<<<<<<< HEAD
+    {/* Legacy product setup UI retained in merge history; item-level category and brand selectors below are the active workflow.
     {setupGroups.length ? <section id="product-setup-required" className="ds-surface mt-5 scroll-mt-5 p-5"><div><h2 className="text-lg font-semibold">Product setup required</h2><p className="mt-1 text-sm text-muted">Select category and brand once for each new base product. Sizes stay as variants.</p></div><div className="mt-5 space-y-4">{setupGroups.map((group) => { const value = setupValue(group); const category = categories.find((item) => item.id === value.category_id); const brands = category?.brands.filter((brand) => brand.is_active) ?? []; return <div key={group.key} className="rounded-lg border border-border bg-surface-subtle p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="font-semibold">{value.product_name || group.items[0].product_name}</div><div className="mt-1 text-sm text-muted">New product required · Variants: {group.items.map((item) => item.size || "Standard").join(", ")}</div></div><StatusBadge value="NEW_PRODUCT_REQUIRED" /></div>{editing ? <div className="mt-4 grid gap-3 md:grid-cols-3"><label className="field-label">Product name<span>*</span><input className="field-input" value={value.product_name} onChange={(event) => setClassificationDrafts((current) => ({ ...current, [group.key]: { ...value, product_name: event.target.value } }))} /></label><label className="field-label">Category<span>*</span><select className="field-input" value={value.category_id} onChange={(event) => setClassificationDrafts((current) => ({ ...current, [group.key]: { ...value, category_id: event.target.value, brand_id: "" } }))}><option value="">Select category</option>{categories.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" className="mt-1 text-xs font-semibold text-primary-700" onClick={() => { setCatalogEditor({ type: "category", groupKey: group.key }); setCatalogName(""); }}>Create category</button></label><label className="field-label">Brand<span>*</span><select className="field-input" value={value.brand_id} disabled={!value.category_id} onChange={(event) => setClassificationDrafts((current) => ({ ...current, [group.key]: { ...value, brand_id: event.target.value } }))}><option value="">Select brand</option>{brands.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" className="mt-1 text-xs font-semibold text-primary-700" disabled={!value.category_id} onClick={() => { setCatalogEditor({ type: "brand", groupKey: group.key }); setCatalogName(""); }}>Create brand</button></label></div> : <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3"><Display label="Product" value={value.product_name} /><Display label="Category" value={category?.name} /><Display label="Brand" value={brands.find((item) => item.id === value.brand_id)?.name} /></div>}{editing ? <div className="mt-4 flex justify-end"><Button size="sm" onClick={() => void saveClassification(group)} disabled={classificationSaving === group.key}>{classificationSaving === group.key ? "Saving" : "Save product setup"}</Button></div> : null}</div>; })}</div></section> : null}
     <section className="ds-surface mt-5 overflow-hidden"><div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4"><div><h2 className="text-lg font-semibold">Product items</h2><p className="text-sm text-muted">Quantities and costs remain editable until stock is confirmed.</p></div>{editing ? <Button size="sm" variant="secondary" onClick={() => { setDraft((current) => current ? { ...current, items: [...current.items, blankItem()] } : current); setDirty(true); }}><Plus size={16} /> Add item</Button> : null}</div><div className="overflow-x-auto"><table className="ds-table min-w-[1280px]"><thead><tr><th>#</th><th>Product</th><th>Barcode / SKU</th><th>HSN</th><th>Size</th><th>Colour</th><th className="text-right">Qty</th><th>Unit</th><th className="text-right">Unit cost</th><th className="text-right">Discount</th><th className="text-right">Tax %</th><th className="text-right">Tax</th><th className="text-right">Line total</th><th>Match</th>{editing ? <th /> : null}</tr></thead><tbody>{draft.items.map((item, index) => <tr key={item.id ?? `new-${index}`}><td>{index + 1}</td><ItemInput editing={editing} value={item.product_name} onChange={(value) => updateItem(index, "product_name", value)} /><ItemInput editing={editing} value={item.barcode ?? item.supplier_product_code ?? ""} onChange={(value) => updateItem(index, "barcode", value)} /><ItemInput editing={editing} value={item.hsn_sac ?? ""} onChange={(value) => updateItem(index, "hsn_sac", value)} /><ItemInput editing={editing} value={item.size} onChange={(value) => updateItem(index, "size", value)} /><ItemInput editing={editing} value={item.color} onChange={(value) => updateItem(index, "color", value)} /><ItemInput editing={editing} value={String(item.quantity)} type="number" className="text-right" onChange={(value) => updateItem(index, "quantity", value)} /><ItemInput editing={editing} value={item.unit} onChange={(value) => updateItem(index, "unit", value)} /><ItemInput editing={editing} value={item.purchase_price} type="number" className="text-right" onChange={(value) => updateItem(index, "purchase_price", value)} /><ItemInput editing={editing} value={item.discount} type="number" className="text-right" onChange={(value) => updateItem(index, "discount", value)} /><ItemInput editing={editing} value={item.tax_rate} type="number" className="text-right" onChange={(value) => updateItem(index, "tax_rate", value)} /><ItemInput editing={editing} value={item.tax_amount} type="number" className="text-right" onChange={(value) => updateItem(index, "tax_amount", value)} /><td className="text-right font-semibold">{money(item.line_total)}</td><td><StatusBadge value={item.match_status} /></td>{editing ? <td><Button size="icon" variant="ghost" title="Delete item" aria-label="Delete item" onClick={() => removeItem(index)}><Trash2 size={16} /></Button></td> : null}</tr>)}</tbody></table></div></section>
     <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]"><section className="ds-surface p-5"><h2 className="text-lg font-semibold">AI extraction and inventory impact</h2><div className="mt-4 grid gap-3 sm:grid-cols-2"><Display label="Processing" value={purchase.processing_job?.message ?? purchase.ai_processing_status} /><Display label="Request ID" value={purchase.processing_job?.request_id} /><Display label="Provider" value={purchase.processing_job?.provider_name ?? "Not available"} /><Display label="Inventory impact" value={purchase.status === "CONFIRMED" ? `${purchase.total_quantity} units added to stock` : "No stock changes until confirmation"} /></div>{purchase.processing_job?.error_message ? <div className="mt-4"><ErrorState message={purchase.processing_job.error_message} code={purchase.processing_job.error_code ?? undefined} requestId={purchase.processing_job.request_id} /></div> : null}</section><section className="ds-surface p-5"><h2 className="text-lg font-semibold">Taxes and totals</h2><dl className="mt-4 space-y-3 text-sm"><Total label="Total quantity" value={String(totals.quantity)} /><Total label="Items subtotal" value={money(totals.subtotal)} /><Total label="Discount" value={`-${money(totals.discount)}`} /><Total label="GST / tax" value={money(totals.tax)} /><Total label="Packaging" value={money(draft.packaging_amount)} /><Total label="Freight" value={money(draft.freight_amount)} /><Total label="Round-off" value={money(draft.round_off)} /><div className="border-t border-border pt-3"><Total label="Invoice total" value={money(totals.total)} strong /><Total label="Amount paid" value={money(draft.amount_paid)} /><Total label="Balance due" value={money(totals.total - (Number(draft.amount_paid) || 0))} strong /></div></dl></section></div>
-=======
+    */}
     <section className="ds-surface mt-5 overflow-hidden">
       <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
         <div><h2 className="text-lg font-semibold">Product items</h2><p className="text-sm text-muted">Select the category first, then its brand. Tax is calculated once at invoice level.</p></div>
@@ -406,12 +331,10 @@ export default function PurchaseDetailPage() {
       </div>
     </section>
     <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]"><section className="ds-surface p-5"><h2 className="text-lg font-semibold">AI extraction and inventory impact</h2><div className="mt-4 grid gap-3 sm:grid-cols-2"><Display label="Processing" value={purchase.processing_job?.message ?? purchase.ai_processing_status} /><Display label="Request ID" value={purchase.processing_job?.request_id} /><Display label="Provider" value={purchase.processing_job ? "Configured OCR provider" : "Not available"} /><Display label="Inventory impact" value={purchase.status === "CONFIRMED" ? `${purchase.total_quantity} units added to stock` : "No stock changes until confirmation"} /></div>{purchase.processing_job?.error_message ? <div className="mt-4"><ErrorState message={`${purchase.processing_job.error_message} (${purchase.processing_job.error_code ?? "processing_error"})`} /></div> : null}</section><section className="ds-surface p-5"><h2 className="text-lg font-semibold">Invoice totals</h2><dl className="mt-4 space-y-3 text-sm"><Total label="Total quantity" value={String(totals.quantity)} /><Total label="Items subtotal" value={money(totals.subtotal)} /><div className="flex items-center justify-between gap-4 text-muted"><dt>Tax percentage</dt><dd>{editing ? <input aria-label="Tax percentage" className="field-input h-9 w-24 py-1 text-right" type="number" min="0" max="100" step="0.01" value={draft.invoice_tax_rate ?? "0"} onChange={(event) => updateHeader("invoice_tax_rate", event.target.value)} /> : `${draft.invoice_tax_rate ?? "0"}%`}</dd></div><Total label="Tax (final)" value={money(totals.tax)} /><Total label="Packing charges" value={money(draft.packaging_amount)} /><Total label="Other charges" value={money(draft.freight_amount)} /><Total label="Round-off" value={money(draft.round_off)} /><div className="border-t border-border pt-3"><Total label="Invoice total" value={money(totals.total)} strong /><Total label="Amount paid" value={money(draft.amount_paid)} /><Total label="Balance due" value={money(subtractMoney(totals.total, draft.amount_paid))} strong /></div></dl></section></div>
->>>>>>> shop-inventory
     <section className="ds-surface mt-5 p-5"><h2 className="text-lg font-semibold">Audit history</h2>{purchase.audit_history.length ? <div className="mt-4 divide-y divide-border">{purchase.audit_history.map((audit) => <div key={audit.id} className="py-3"><div className="font-medium">{audit.action.replace(/_/g, " ")}</div><div className="mt-1 text-sm text-muted">{audit.performed_by ?? "System"} · {shortDate(audit.created_at)}{audit.reason ? ` · ${audit.reason}` : ""}</div></div>)}</div> : <p className="mt-3 text-sm text-muted">No changes have been recorded yet.</p>}</section>
     <div className="sticky bottom-3 z-20 mt-6 flex flex-wrap justify-end gap-2 rounded-lg border border-border bg-surface/95 p-3 shadow-lg backdrop-blur">{editing ? <><Button variant="secondary" onClick={discardEdits} disabled={saving}><X size={16} /> Cancel editing</Button><Button variant="secondary" onClick={() => void validatePurchase()} disabled={saving}><ClipboardCheck size={16} /> Validate</Button><Button onClick={() => void save()} disabled={saving}><Save size={16} /> {saving ? "Saving" : "Save draft"}</Button></> : editable ? <><Button variant="secondary" onClick={() => void validatePurchase()}><ClipboardCheck size={16} /> Validate</Button><Button id="cancel-purchase" variant="destructive" onClick={() => setCancelOpen(true)}>Cancel purchase</Button><Button id="confirm-purchase" onClick={() => setConfirmOpen(true)}><CheckCircle2 size={16} /> Confirm and add stock</Button></> : <Button variant="secondary" onClick={() => navigate("/purchases")}><RotateCcw size={16} /> Back to purchases</Button>}</div>
     <ConfirmDialog open={cancelOpen} title="Cancel purchase" description="This cancels the draft without changing stock. Confirmed purchases require the correction workflow." confirmLabel="Cancel purchase" loading={saving} onCancel={() => setCancelOpen(false)} onConfirm={() => void cancelPurchase()}><label className="field-label">Reason<textarea className="field-input h-20 py-2" value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} /></label></ConfirmDialog>
     <ConfirmDialog open={confirmOpen} title="Confirm and add stock" description="This action creates purchase inventory movements once and cannot be undone from this page." confirmLabel="Confirm purchase" loading={saving} onCancel={() => setConfirmOpen(false)} onConfirm={() => void confirmPurchase()} />
-    <Dialog open={Boolean(catalogEditor)} title={`Create ${catalogEditor?.type ?? "catalog item"}`} onClose={() => setCatalogEditor(null)} maxWidth="md"><div className="grid gap-4"><label className="field-label">Name<span>*</span><input autoFocus className="field-input" value={catalogName} onChange={(event) => setCatalogName(event.target.value)} /></label><div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => setCatalogEditor(null)}>Cancel</Button><Button disabled={catalogSaving || !catalogName.trim()} onClick={() => void createCatalogRecord()}>{catalogSaving ? "Creating" : "Create"}</Button></div></div></Dialog>
   </>;
 }
 
