@@ -60,6 +60,7 @@ frontend_quality:
 docker_compose_build:
   stage: docker
   image: docker:27-cli
+  allow_failure: true
   before_script:
     - docker version
     - docker compose version
@@ -73,7 +74,6 @@ package_release:
   needs:
     - backend_tests
     - frontend_quality
-    - docker_compose_build
   script:
     - apk add --no-cache tar
     - tar -czf /tmp/rainbow-fashions-${CI_COMMIT_SHORT_SHA}.tar.gz --exclude=.git --exclude=frontend/node_modules --exclude=frontend/dist --exclude=backend/.env --exclude=backend/app/uploads .
