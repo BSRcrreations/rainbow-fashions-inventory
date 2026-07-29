@@ -26,6 +26,8 @@ class ProductBase(BaseModel):
     selling_price: Decimal = Field(ge=0)
     pricing_type: PricingType
     mrp: Optional[Decimal] = Field(default=None, ge=0)
+    gst_rate: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    hsn_code: Optional[str] = Field(default=None, max_length=20)
     current_stock: int = Field(default=0, ge=0)
     minimum_stock: int = Field(default=0, ge=0)
     barcode: Optional[str] = Field(default=None, max_length=80)
@@ -102,6 +104,8 @@ class ProductUpdate(BaseModel):
     selling_price: Optional[Decimal] = Field(default=None, ge=0)
     pricing_type: Optional[PricingType] = None
     mrp: Optional[Decimal] = Field(default=None, ge=0)
+    gst_rate: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    hsn_code: Optional[str] = Field(default=None, max_length=20)
     current_stock: Optional[int] = Field(default=None, ge=0)
     minimum_stock: Optional[int] = Field(default=None, ge=0)
     barcode: Optional[str] = Field(default=None, max_length=80)

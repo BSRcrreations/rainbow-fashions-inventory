@@ -31,6 +31,12 @@ class StockUserRead(ORMBaseModel):
     full_name: str
 
 
+class StockSaleCreate(BaseModel):
+    product_id: UUID
+    qty: int = Field(gt=0)
+    reference: Optional[str] = Field(default=None, max_length=180)
+
+
 class StockHistoryRead(ORMBaseModel):
     id: UUID
     product_id: UUID

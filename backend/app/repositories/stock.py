@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
@@ -20,6 +21,8 @@ class StockHistoryRepository(BaseRepository[StockHistory]):
         product_id: Optional[UUID] = None,
         movement_type: Optional[StockMovementType] = None,
         store_id: Optional[UUID] = None,
+        from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None,
     ) -> list[StockHistory]:
         query = self.db.query(StockHistory).options(joinedload(StockHistory.product), joinedload(StockHistory.created_by_user))
         if product_id:
@@ -28,4 +31,8 @@ class StockHistoryRepository(BaseRepository[StockHistory]):
             query = query.filter(StockHistory.movement_type == movement_type)
         if store_id:
             query = query.filter(StockHistory.store_id == store_id)
+        if from_date:
+            query = query.filter(StockHistory.movement_date >= from_date)
+        if to_date:
+            query = query.filter(StockHistory.movement_date <= to_date)
         return query.order_by(StockHistory.movement_date.desc()).offset(skip).limit(limit).all()
