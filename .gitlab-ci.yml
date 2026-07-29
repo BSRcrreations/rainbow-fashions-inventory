@@ -159,6 +159,10 @@ deploy_phase_3_activate:
       fi
       docker compose run --rm backend alembic upgrade head
       docker compose up -d --remove-orphans
+      if ! docker compose exec -T backend python -c "from app.database.session import SessionLocal; from app.services.dashboard_service import DashboardService; from app.services.product_service import ProductService; db = SessionLocal(); ProductService(db).list_paginated(); DashboardService(db).summary(); db.close()"; then
+        docker compose logs --tail=200 backend
+        exit 1
+      fi
       docker compose ps
 
 deploy_phase_4_verify:
