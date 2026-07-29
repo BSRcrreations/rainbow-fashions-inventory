@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -23,6 +23,13 @@ class StockScanSession(Base):
     status: Mapped[StockScanStatus] = mapped_column(Enum(StockScanStatus, name="stock_scan_status"), nullable=False, default=StockScanStatus.DRAFT, index=True)
     quantity_mode: Mapped[StockScanQuantityMode] = mapped_column(Enum(StockScanQuantityMode, name="stock_scan_quantity_mode"), nullable=False, default=StockScanQuantityMode.INCREMENT)
     purchase_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("purchases.id", ondelete="SET NULL"), index=True)
+    supplier_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("suppliers.id", ondelete="SET NULL"), index=True)
+    default_category_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("categories.id", ondelete="SET NULL"), index=True)
+    default_brand_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("brands.id", ondelete="SET NULL"), index=True)
+    entry_date: Mapped[Optional[date]] = mapped_column(Date)
+    default_purchase_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))
+    default_selling_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))
+    quick_post: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     location_name: Mapped[str] = mapped_column(String(120), nullable=False, default="Main store")
     source_location_name: Mapped[Optional[str]] = mapped_column(String(120))
     destination_location_name: Mapped[Optional[str]] = mapped_column(String(120))

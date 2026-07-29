@@ -209,6 +209,9 @@ Stock:
 - Numeric EAN-8, UPC-A, and EAN-13 values are check-digit validated. Other string values remain valid Code 128-compatible internal barcodes; leading zeroes are preserved.
 - Barcode onboarding rejects an active duplicate with `409` and code `BARCODE_ALREADY_ASSIGNED`. Unknown scan values return `400` with code `BARCODE_NOT_FOUND` and do not create inventory.
 - Scan sessions retain both `scanned_quantity` (packages/scans) and `base_quantity` (physical inventory pieces). Confirmation writes the base quantity only after review.
+- `POST /barcodes/onboard-product` atomically creates a new product or new variant, or assigns an existing variant, then adds the verified barcode mapping to one editable scan session. It never posts inventory directly.
+- `POST /barcodes/resolve-image` accepts a JPG, PNG, or WEBP label image and returns its protected upload URL plus conservative OCR suggestions. Suggestions are never persisted automatically and unreadable labels return `BARCODE_IMAGE_UNREADABLE` so the user can enter the values manually.
+- Stock-scan sessions can retain optional supplier, category/brand, cost, selling-price, entry-date, and owner-only quick-post defaults. These fields make setup faster but do not replace exact per-variant validation.
 
 Validation:
 

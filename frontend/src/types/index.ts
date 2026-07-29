@@ -110,7 +110,9 @@ export interface ProductVariantBarcode {
   variant_id: string;
   product_name: string;
   category?: string | null;
+  category_id?: string | null;
   brand?: string | null;
+  brand_id?: string | null;
   size?: string | null;
   color?: string | null;
   style_code?: string | null;
@@ -125,6 +127,20 @@ export interface ProductVariantBarcode {
   scan_unit: string;
   inventory_unit: string;
   base_unit_conversion: number;
+  sale_mode: string;
+}
+
+export interface LabelExtractionSuggestion {
+  value: string;
+  confidence: number;
+  source_text: string;
+  bounding_box?: Record<string, number> | null;
+  requires_review: boolean;
+}
+
+export interface BarcodeImageResolution {
+  image_url: string;
+  suggestions: Record<string, LabelExtractionSuggestion>;
 }
 
 export interface StockScanSessionItem {
@@ -161,6 +177,13 @@ export interface StockScanSession {
   status: StockScanStatus;
   quantity_mode: StockScanQuantityMode;
   purchase_id?: string | null;
+  supplier_id?: string | null;
+  default_category_id?: string | null;
+  default_brand_id?: string | null;
+  entry_date?: string | null;
+  default_purchase_cost?: string | null;
+  default_selling_price?: string | null;
+  quick_post: boolean;
   location_name: string;
   source_location_name?: string | null;
   destination_location_name?: string | null;

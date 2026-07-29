@@ -20,7 +20,7 @@
 - New Sale POS with a dedicated scanner-friendly barcode field. An Enter-terminated scan performs exact lookup, shows the matched product, and adds one unit without exceeding available stock.
 - Purchases with invoice upload, OCR review, editable review lines, confirmation flow, and stock changes only after confirmation.
 - Stock with manual adjustments, stock history, filters, CSV export, validation, and negative-stock prevention.
-- Scan Stock with persistent barcode sessions, exact-variant resolution, repeated-scan incrementing, quantity-entry mode, review, unknown barcode assignment, and one-time confirmation.
+- Scan & Add Stock with persistent barcode sessions, exact-variant resolution, repeated-scan incrementing, quantity-entry mode, review, and one-time confirmation. Unknown barcodes open a verified onboarding dialog that supports assigning an existing variant, adding a variant under an existing product, or creating a new product; it includes category/brand selection, inline category/brand creation, package conversion, separate cost/MRP/selling prices, and optional editable OCR label suggestions.
 - Barcode mappings are store scoped and audited separately from product variants. A barcode can represent an individual piece or a multipack; scan count and converted physical-piece count remain visible through review and confirmation.
 - Physical counts append `STOCK_COUNT_IN` / `STOCK_COUNT_OUT` movements; opening stock appends `OPENING_STOCK` movements and creates cost lots.
 - Dashboard improvements with latest products, distribution charts, and top-selling placeholder.

@@ -173,3 +173,28 @@ deploy_phase_4_verify:
     - curl --fail --retry 12 --retry-delay 5 "$DEPLOY_URL/health"
   rules:
     - if: $CI_COMMIT_BRANCH == $DEPLOY_BRANCH
+
+# This job is deliberately manual. Protect the production-database-import
+# environment and configure DATABASE_MIGRATION_ENV_FILE as a protected File
+# variable in GitLab before enabling it. No database dump is stored as a CI
+# artifact; it must first be staged by scripts/database/upload_database_dump.sh.
+database_import_production:
+  stage: deploy
+  image: alpine:3.20
+  resource_group: rainbow-fashions-production
+  environment:
+    name: production-database-import
+  when: manual
+  manual_confirmation: "Import the staged database after the verified backup and rollback plan have been reviewed."
+  allow_failure: false
+  before_script:
+    - apk add --no-cache bash openssh-client
+    - chmod +x scripts/database/*.sh
+  script:
+    - test -n "${DATABASE_MIGRATION_ENV_FILE:-}"
+    - test -n "${MIGRATION_IMPORT_CONFIRMATION:-}"
+    - scripts/database/import_remote_database.sh --confirm-replace
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+    - when: never

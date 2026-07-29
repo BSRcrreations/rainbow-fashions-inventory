@@ -20,7 +20,7 @@ from app.schemas.purchase import ExtractedInvoice
 from app.schemas.purchase import PurchaseItemReview, PurchasePatch
 from app.schemas.subcategory import SubCategoryCreate
 from app.schemas.stock import StockAdjustmentCreate
-from app.schemas.stock_scan import BarcodeAssignment, BarcodeOnboarding, StockScanRequest, StockScanSessionCreate
+from app.schemas.stock_scan import BarcodeAssignment, BarcodeOnboarding, BarcodeProductOnboarding, StockScanRequest, StockScanSessionCreate
 from app.models.enums import StockScanMode, StockScanQuantityMode
 from app.services.catalog_service import BrandService, CategoryService
 from app.services.purchase_service import PurchaseService
@@ -103,6 +103,34 @@ class Stage1ValidationTests(unittest.TestCase):
 
     def test_three_piece_pack_converts_to_physical_pieces(self) -> None:
         self.assertEqual(StockScanService._base_quantity(scanned_quantity=2, package_quantity=3), 6)
+
+    def test_new_product_onboarding_requires_the_product_hierarchy(self) -> None:
+        with self.assertRaises(ValidationError):
+            BarcodeProductOnboarding(
+                session_id=uuid4(), action="NEW_PRODUCT", barcode="RF-NEW-01",
+                purchase_cost=100, selling_price=150,
+            )
+
+    def test_new_product_onboarding_accepts_a_verified_multipack(self) -> None:
+        payload = BarcodeProductOnboarding(
+            session_id=uuid4(), action="NEW_PRODUCT", barcode="RF-PACK-03", product_name="Comfy Panty Pack",
+            category_id=uuid4(), brand_id=uuid4(), purchase_cost=250, mrp=435, selling_price=435,
+            quantity=2, package_quantity=3, scan_unit="PACK", sale_mode="PACK_ONLY",
+        )
+        self.assertEqual(payload.package_quantity * payload.quantity, 6)
+
+    def test_label_suggestions_only_include_a_valid_visible_barcode(self) -> None:
+        service = StockScanService.__new__(StockScanService)
+        suggestions = service._label_suggestions("MRP Rs 549 Size XL 8906058070533")
+        self.assertEqual(suggestions["barcode"].value, "8906058070533")
+        self.assertEqual(suggestions["mrp"].value, "549")
+
+    def test_barcode_onboarding_routes_are_registered(self) -> None:
+        from app.main import app
+
+        paths = {route.path for route in app.routes}
+        self.assertIn("/api/v1/barcodes/resolve-image", paths)
+        self.assertIn("/api/v1/barcodes/onboard-product", paths)
 
     def test_physical_count_difference_is_calculated_from_expected_quantity(self) -> None:
         self.assertEqual(StockScanService._difference(StockScanMode.PHYSICAL_COUNT, 10, 12), -2)

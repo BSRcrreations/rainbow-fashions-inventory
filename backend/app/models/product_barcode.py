@@ -28,6 +28,7 @@ class ProductBarcode(Base):
     scan_unit: Mapped[str] = mapped_column(String(24), nullable=False, default="PIECE")
     inventory_unit: Mapped[str] = mapped_column(String(24), nullable=False, default="PIECE")
     base_unit_conversion: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    sale_mode: Mapped[str] = mapped_column(String(24), nullable=False, default="PIECE_ONLY")
     mrp: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))
     default_selling_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)

@@ -1,15 +1,21 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
+from pathlib import Path
+import re
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, selectinload
 
+from app.ai.base import OCRProcessingError
+from app.ai.factory import get_ocr_service
 from app.core.exceptions import bad_request, conflict, not_found
-from app.models.enums import PurchaseStatus, StockMovementType, StockScanMode, StockScanStatus
+from app.models.brand import Brand
+from app.models.category import Category
+from app.models.enums import PricingType, PurchaseStatus, StockMovementType, StockScanMode, StockScanStatus, UserRole
 from app.models.product import Product
 from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit
 from app.models.product_inventory import ProductInventory
@@ -18,10 +24,15 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.stock_history import StockHistory
 from app.models.stock_scan import StockScanSession, StockScanSessionItem
+from app.models.subcategory import SubCategory
+from app.models.supplier import Supplier
 from app.models.user import User
 from app.schemas.stock_scan import (
     BarcodeAssignment,
+    BarcodeImageResolutionRead,
     BarcodeOnboarding,
+    BarcodeProductOnboarding,
+    LabelExtractionSuggestion,
     ProductVariantBarcodeRead,
     StockScanConfirmRequest,
     StockScanItemUpdate,
@@ -29,6 +40,7 @@ from app.schemas.stock_scan import (
     StockScanSessionCreate,
     StockScanSessionUpdate,
 )
+from app.services.file_service import FileService
 
 
 class StockScanService:
@@ -85,7 +97,7 @@ class StockScanService:
             store_id=store_id, product_id=variant.product_id, product_variant_id=variant.id, barcode=barcode,
             barcode_type=self._barcode_type(barcode, payload.barcode_type), manufacturer_barcode=payload.manufacturer_barcode,
             package_quantity=payload.package_quantity, scan_unit=payload.scan_unit.strip().upper(), inventory_unit=payload.inventory_unit.strip().upper(),
-            base_unit_conversion=payload.package_quantity, mrp=variant.mrp, default_selling_price=payload.default_selling_price or variant.selling_price,
+            base_unit_conversion=payload.package_quantity, sale_mode=payload.sale_mode.strip().upper(), mrp=variant.mrp, default_selling_price=payload.default_selling_price or variant.selling_price,
             verified=payload.verified, verified_by=current_user.id if payload.verified else None, verified_at=datetime.now(timezone.utc) if payload.verified else None,
         )
         self.db.add(mapping)
@@ -99,12 +111,20 @@ class StockScanService:
     def create_session(self, payload: StockScanSessionCreate, current_user: User) -> StockScanSession:
         store_id = self._store_id(current_user)
         self._validate_mode_configuration(payload.mode, payload.purchase_id, payload.location_name, payload.source_location_name, payload.destination_location_name, store_id)
+        self._validate_session_defaults(payload.supplier_id, payload.default_category_id, payload.default_brand_id, payload.quick_post, current_user)
         session = StockScanSession(
             store_id=store_id,
             mode=payload.mode,
             status=StockScanStatus.IN_PROGRESS,
             quantity_mode=payload.quantity_mode,
             purchase_id=payload.purchase_id,
+            supplier_id=payload.supplier_id,
+            default_category_id=payload.default_category_id,
+            default_brand_id=payload.default_brand_id,
+            entry_date=payload.entry_date or date.today(),
+            default_purchase_cost=payload.default_purchase_cost,
+            default_selling_price=payload.default_selling_price,
+            quick_post=payload.quick_post,
             location_name=payload.location_name,
             source_location_name=payload.source_location_name,
             destination_location_name=payload.destination_location_name,
@@ -128,8 +148,110 @@ class StockScanService:
         for field, value in values.items():
             setattr(session, field, value)
         self._validate_mode_configuration(session.mode, session.purchase_id, session.location_name, session.source_location_name, session.destination_location_name, session.store_id)
+        self._validate_session_defaults(session.supplier_id, session.default_category_id, session.default_brand_id, session.quick_post, current_user)
         self.db.commit()
         return self.get_session(session.id, current_user)
+
+    async def resolve_label_image(self, file, current_user: User) -> BarcodeImageResolutionRead:
+        """Persist a verified image and return conservative OCR suggestions for review."""
+        uploaded = await FileService(self.db).save_product_image(file, current_user.id)
+        image_url = f"/uploads/products/{uploaded.stored_filename}"
+        try:
+            text = get_ocr_service().extract_text(Path(uploaded.storage_path))
+        except OCRProcessingError as exc:
+            raise bad_request(exc.message, exc.code) from exc
+        suggestions = self._label_suggestions(text)
+        if not suggestions:
+            raise bad_request(
+                "The barcode could not be read from the image. Scan it again or enter the printed number.",
+                "BARCODE_IMAGE_UNREADABLE",
+            )
+        return BarcodeImageResolutionRead(image_url=image_url, suggestions=suggestions)
+
+    def onboard_product(self, payload: BarcodeProductOnboarding, current_user: User, request_id: Optional[str] = None) -> StockScanSession:
+        """Atomically create/select a precise variant, map its barcode, and add it to a draft."""
+        store_id = self._store_id(current_user)
+        try:
+            session = (
+                self.db.query(StockScanSession)
+                .filter(StockScanSession.id == payload.session_id, StockScanSession.store_id == store_id)
+                .with_for_update()
+                .first()
+            )
+            if not session:
+                raise not_found("Stock scan session")
+            if session.status == StockScanStatus.CONFIRMED:
+                raise conflict("This stock-entry session has already been confirmed.", "SESSION_ALREADY_CONFIRMED")
+            if session.status == StockScanStatus.CANCELLED:
+                raise bad_request("This stock-entry session has been cancelled")
+            if session.mode == StockScanMode.PURCHASE_RECEIVING and payload.action != "EXISTING_VARIANT":
+                raise bad_request("New products must be added to the purchase before they can be received.", "PURCHASE_BARCODE_MISMATCH")
+
+            barcode = payload.barcode.strip()
+            self._validate_barcode(barcode)
+            duplicate = self._barcode_mapping(barcode, store_id, lock=True)
+            if duplicate:
+                raise conflict("This barcode is already assigned to another product variant.", "BARCODE_ALREADY_ASSIGNED")
+
+            if payload.action == "EXISTING_VARIANT":
+                variant = self._variant_for_store(payload.product_variant_id, store_id, lock=True)
+            elif payload.action == "NEW_VARIANT":
+                product = self._product_for_store(payload.existing_product_id, store_id, lock=True)
+                variant = self._create_variant(product, payload, barcode, store_id)
+                self.db.add(variant)
+                self.db.flush()
+            else:
+                product = self._create_product(payload, store_id, session)
+                self.db.add(product)
+                self.db.flush()
+                variant = self._create_variant(product, payload, barcode, store_id)
+                self.db.add(variant)
+                self.db.flush()
+
+            mapping = ProductBarcode(
+                store_id=store_id,
+                product_id=variant.product_id,
+                product_variant_id=variant.id,
+                barcode=barcode,
+                barcode_type=self._barcode_type(barcode, "AUTO"),
+                manufacturer_barcode=True,
+                package_quantity=payload.package_quantity,
+                scan_unit=payload.scan_unit,
+                inventory_unit=payload.inventory_unit.upper(),
+                base_unit_conversion=payload.package_quantity,
+                sale_mode=payload.sale_mode,
+                mrp=payload.mrp if payload.mrp is not None else variant.mrp,
+                default_selling_price=payload.selling_price,
+                active=True,
+                verified=True,
+                verified_by=current_user.id,
+                verified_at=datetime.now(timezone.utc),
+            )
+            self.db.add(mapping)
+            self.db.flush()
+            if payload.package_quantity == 1:
+                variant.barcode = barcode
+            variant.mrp = payload.mrp if payload.mrp is not None else variant.mrp
+            variant.selling_price = payload.selling_price
+            variant.last_purchase_cost = payload.purchase_cost
+            if variant.average_cost == 0:
+                variant.average_cost = payload.purchase_cost
+            self.db.add(ProductBarcodeAudit(
+                store_id=store_id,
+                barcode=barcode,
+                old_product_variant_id=None,
+                new_product_variant_id=variant.id,
+                action="ONBOARDED",
+                reason=payload.action,
+                changed_by=current_user.id,
+                request_id=request_id,
+            ))
+            self._add_mapping_to_session(session, mapping, variant, payload.quantity, payload.purchase_cost, payload.condition)
+            self.db.commit()
+            return self.get_session(session.id, current_user)
+        except Exception:
+            self.db.rollback()
+            raise
 
     def scan(self, session_id: UUID, payload: StockScanRequest, current_user: User) -> StockScanSession:
         session = self._editable_session(session_id, current_user)
@@ -361,6 +483,206 @@ class StockScanService:
         variant = self.db.query(ProductVariant.current_stock).filter(ProductVariant.id == variant_id).scalar()
         return int(variant or 0)
 
+    def _add_mapping_to_session(
+        self,
+        session: StockScanSession,
+        mapping: ProductBarcode,
+        variant: ProductVariant,
+        quantity: int,
+        unit_cost: Decimal,
+        condition: str,
+    ) -> StockScanSessionItem:
+        expected = self._expected_quantity(session, variant.id)
+        item = (
+            self.db.query(StockScanSessionItem)
+            .filter(StockScanSessionItem.session_id == session.id, StockScanSessionItem.barcode == mapping.barcode)
+            .with_for_update()
+            .first()
+        )
+        if item:
+            item.scanned_quantity += quantity
+            item.unit_cost = unit_cost
+            item.condition = condition
+            item.last_scanned_at = datetime.now(timezone.utc)
+        else:
+            item = StockScanSessionItem(
+                session_id=session.id,
+                product_id=variant.product_id,
+                product_variant_id=variant.id,
+                product_barcode_id=mapping.id,
+                barcode=mapping.barcode,
+                scanned_quantity=quantity,
+                package_quantity=mapping.base_unit_conversion,
+                expected_quantity=expected,
+                unit_cost=unit_cost,
+                condition=condition,
+            )
+            self.db.add(item)
+        item.base_quantity = self._base_quantity(item.scanned_quantity, item.package_quantity)
+        item.difference_quantity = self._difference(session.mode, item.base_quantity, item.expected_quantity)
+        session.status = StockScanStatus.IN_PROGRESS
+        return item
+
+    def _product_for_store(self, product_id: Optional[UUID], store_id: UUID, lock: bool = False) -> Product:
+        if not product_id:
+            raise bad_request("Select an existing product")
+        query = self.db.query(Product).filter(Product.id == product_id, Product.store_id == store_id)
+        product = query.with_for_update().first() if lock else query.first()
+        if not product:
+            raise not_found("Product")
+        return product
+
+    def _variant_for_store(self, variant_id: Optional[UUID], store_id: UUID, lock: bool = False) -> ProductVariant:
+        if not variant_id:
+            raise bad_request("Select an existing variant")
+        query = self.db.query(ProductVariant).options(joinedload(ProductVariant.product)).filter(ProductVariant.id == variant_id, ProductVariant.store_id == store_id)
+        variant = query.with_for_update().first() if lock else query.first()
+        if not variant:
+            raise not_found("Product variant")
+        return variant
+
+    def _create_product(self, payload: BarcodeProductOnboarding, store_id: UUID, session: StockScanSession) -> Product:
+        if not payload.category_id:
+            raise bad_request("Select a category", "CATEGORY_REQUIRED")
+        if not payload.brand_id:
+            raise bad_request("Select a brand or choose Unbranded.", "BRAND_REQUIRED")
+        category = self.db.query(Category).filter(Category.id == payload.category_id, Category.store_id == store_id, Category.is_active.is_(True)).first()
+        if not category:
+            raise not_found("Category")
+        brand = self.db.query(Brand).filter(Brand.id == payload.brand_id, Brand.category_id == category.id, Brand.store_id == store_id, Brand.is_active.is_(True)).first()
+        if not brand:
+            raise bad_request("Brand does not belong to the selected category", "BRAND_CATEGORY_MISMATCH")
+        subcategory = None
+        if payload.subcategory_id:
+            subcategory = self.db.query(SubCategory).filter(SubCategory.id == payload.subcategory_id, SubCategory.category_id == category.id, SubCategory.store_id == store_id, SubCategory.is_active.is_(True)).first()
+            if not subcategory:
+                raise bad_request("Subcategory does not belong to the selected category", "SUBCATEGORY_CATEGORY_MISMATCH")
+        if not subcategory:
+            subcategory = self.db.query(SubCategory).filter(SubCategory.category_id == category.id, SubCategory.store_id == store_id, SubCategory.is_active.is_(True)).order_by(SubCategory.name).first()
+        if not subcategory:
+            raise bad_request("Create a subcategory for the selected category before creating this product.", "SUBCATEGORY_REQUIRED")
+        duplicate = self.db.query(Product).filter(
+            Product.store_id == store_id,
+            Product.category_id == category.id,
+            Product.subcategory_id == subcategory.id,
+            Product.brand_id == brand.id,
+            func.lower(Product.name) == payload.product_name.strip().lower(),
+        ).first()
+        if duplicate:
+            raise conflict("A product with this category, subcategory, brand, and name already exists.", "PRODUCT_DUPLICATE")
+        return Product(
+            store_id=store_id,
+            category_id=category.id,
+            subcategory_id=subcategory.id,
+            brand_id=brand.id,
+            sku=payload.product_code or None,
+            name=payload.product_name.strip(),
+            size=payload.size or None,
+            color=payload.color or None,
+            purchase_price=payload.purchase_cost,
+            selling_price=payload.selling_price,
+            pricing_type=PricingType.MRP if payload.mrp is not None else PricingType.OWN_PRICE,
+            mrp=payload.mrp,
+            current_stock=0,
+            minimum_stock=0,
+            barcode=None,
+            product_date=session.entry_date or date.today(),
+            description=payload.description or None,
+            hsn_sac=payload.hsn_sac or None,
+            unit=payload.inventory_unit.title(),
+            warehouse=session.location_name,
+            image_url=payload.image_url or None,
+            is_active=True,
+            is_test_data=False,
+        )
+
+    @staticmethod
+    def _create_variant(product: Product, payload: BarcodeProductOnboarding, barcode: str, store_id: UUID) -> ProductVariant:
+        internal_sku = payload.internal_sku or f"RFV-{uuid4().hex[:12].upper()}"
+        identity = "|".join((
+            str(product.id),
+            (payload.size or "").casefold(),
+            (payload.color or "").casefold(),
+            (payload.style_code or "").casefold(),
+            (payload.model_number or "").casefold(),
+            (payload.manufacturer_sku or "").casefold(),
+            str(payload.mrp if payload.mrp is not None else payload.selling_price),
+            str(payload.selling_price),
+            barcode.casefold(),
+        ))
+        return ProductVariant(
+            store_id=store_id,
+            product_id=product.id,
+            color=payload.color or None,
+            size=payload.size or None,
+            style_code=payload.style_code or None,
+            model_number=payload.model_number or None,
+            manufacturer_sku=payload.manufacturer_sku or None,
+            internal_sku=internal_sku,
+            barcode=barcode,
+            identity_key=identity,
+            mrp=payload.mrp,
+            selling_price=payload.selling_price,
+            last_purchase_cost=payload.purchase_cost,
+            average_cost=payload.purchase_cost,
+            current_stock=0,
+            is_active=True,
+        )
+
+    def _validate_session_defaults(
+        self,
+        supplier_id: Optional[UUID],
+        category_id: Optional[UUID],
+        brand_id: Optional[UUID],
+        quick_post: bool,
+        current_user: User,
+    ) -> None:
+        store_id = self._store_id(current_user)
+        if quick_post and current_user.role != UserRole.OWNER:
+            from app.core.exceptions import forbidden
+
+            raise forbidden("Only an owner can enable Quick Post")
+        if supplier_id and not self.db.query(Supplier.id).filter(Supplier.id == supplier_id, Supplier.store_id == store_id).scalar():
+            raise not_found("Supplier")
+        if category_id and not self.db.query(Category.id).filter(Category.id == category_id, Category.store_id == store_id).scalar():
+            raise not_found("Category")
+        if brand_id:
+            brand = self.db.query(Brand).filter(Brand.id == brand_id, Brand.store_id == store_id).first()
+            if not brand:
+                raise not_found("Brand")
+            if category_id and brand.category_id != category_id:
+                raise bad_request("Brand does not belong to the selected category", "BRAND_CATEGORY_MISMATCH")
+
+    def _label_suggestions(self, text: str) -> dict[str, LabelExtractionSuggestion]:
+        """Only suggest values visibly present in OCR text; never fabricate a label field."""
+        source = " ".join(text.split())
+        suggestions: dict[str, LabelExtractionSuggestion] = {}
+
+        def add(name: str, value: str, confidence: float) -> None:
+            if value:
+                suggestions[name] = LabelExtractionSuggestion(value=value.strip(), confidence=confidence, source_text=source, requires_review=True)
+
+        for candidate in re.findall(r"(?<!\d)(\d{8}|\d{12}|\d{13})(?!\d)", source):
+            try:
+                self._validate_barcode(candidate)
+            except Exception:
+                continue
+            add("barcode", candidate, 0.9)
+            break
+        patterns = {
+            "mrp": r"(?:M\.?R\.?P\.?|MRP)[^0-9]{0,12}([0-9]+(?:\.[0-9]{1,2})?)",
+            "size": r"(?:SIZE|SZ)\s*[:.-]?\s*([A-Z0-9/ -]{1,20})",
+            "color": r"(?:COLOU?R|CLR)\s*[:.-]?\s*([A-Z][A-Z /-]{1,24})",
+            "style_code": r"(?:STYLE|MODEL|CODE)\s*(?:NO\.?|#)?\s*[:.-]?\s*([A-Z0-9/-]{2,40})",
+            "hsn_sac": r"(?:HSN|SAC)\s*[:.-]?\s*([0-9A-Z/-]{4,20})",
+            "package_quantity": r"(?:PACK\s*(?:OF)?|QTY\s*[:.-]?)\s*([0-9]{1,5})",
+        }
+        for name, pattern in patterns.items():
+            match = re.search(pattern, source, re.IGNORECASE)
+            if match:
+                add(name, match.group(1), 0.76 if name != "mrp" else 0.84)
+        return suggestions
+
     @staticmethod
     def _difference(mode: StockScanMode, scanned: int, expected: Optional[int]) -> Optional[int]:
         if mode in {StockScanMode.PHYSICAL_COUNT, StockScanMode.PURCHASE_RECEIVING, StockScanMode.STOCK_ADJUSTMENT}:
@@ -491,7 +813,9 @@ class StockScanService:
             variant_id=variant.id,
             product_name=product.name,
             category=product.category.name if product.category else None,
+            category_id=product.category_id,
             brand=product.brand.name if product.brand else None,
+            brand_id=product.brand_id,
             size=variant.size,
             color=variant.color,
             style_code=variant.style_code,
@@ -506,4 +830,5 @@ class StockScanService:
             scan_unit=mapping.scan_unit if mapping else "PIECE",
             inventory_unit=mapping.inventory_unit if mapping else "PIECE",
             base_unit_conversion=mapping.base_unit_conversion if mapping else 1,
+            sale_mode=mapping.sale_mode if mapping else "PIECE_ONLY",
         )

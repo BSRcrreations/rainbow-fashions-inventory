@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, File, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_manager_or_owner
@@ -10,7 +10,9 @@ from app.database.session import get_db
 from app.models.user import User
 from app.schemas.stock_scan import (
     BarcodeAssignment,
+    BarcodeImageResolutionRead,
     BarcodeOnboarding,
+    BarcodeProductOnboarding,
     ProductVariantBarcodeRead,
     StockScanConfirmRequest,
     StockScanItemUpdate,
@@ -48,6 +50,25 @@ def add_variant_barcode(variant_id: UUID, payload: BarcodeOnboarding, db: Sessio
 @barcodes_router.post("/onboard", response_model=ProductVariantBarcodeRead)
 def onboard_barcode(payload: BarcodeOnboarding, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> ProductVariantBarcodeRead:
     return StockScanService(db).onboard_barcode(payload, current_user)
+
+
+@barcodes_router.post("/resolve-image", response_model=BarcodeImageResolutionRead)
+async def resolve_barcode_image(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_manager_or_owner),
+) -> BarcodeImageResolutionRead:
+    return await StockScanService(db).resolve_label_image(file, current_user)
+
+
+@barcodes_router.post("/onboard-product", response_model=StockScanSessionRead)
+def onboard_product(
+    payload: BarcodeProductOnboarding,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_manager_or_owner),
+) -> StockScanSessionRead:
+    return StockScanService(db).onboard_product(payload, current_user, request.state.request_id)
 
 
 @router.post("/sessions", response_model=StockScanSessionRead, status_code=status.HTTP_201_CREATED)
