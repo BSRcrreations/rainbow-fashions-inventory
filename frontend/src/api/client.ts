@@ -135,7 +135,8 @@ export const api = {
     }),
   me: <T>() => request<T>("/auth/me"),
   logout: () => request<{ message: string }>("/auth/logout", { method: "POST" }),
-  get: <T>(path: string) => request<T>(path),
+  // Scanner screens pass an AbortSignal so a new scan can cancel an older lookup.
+  get: <T>(path: string, options?: RequestInit) => request<T>(path, options),
   getBlob: (path: string) => requestBlob(path),
   postBlob: (path: string, body?: unknown) => requestBlobWithBody(path, body),
   post: <T>(path: string, body?: unknown, headers?: HeadersInit) =>
