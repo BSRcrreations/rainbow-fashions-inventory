@@ -9,9 +9,13 @@ Sales and hierarchy additions:
 - `GET /brands?category_id={id}` filters brands by category; brand create requires `category_id`.
 - Product create/update requires `category_id`, `subcategory_id`, and `brand_id`; mismatched parent categories return a validation error.
 - Product `size` and `color` are optional compatibility fields. Create/update accepts optional `sizes: string[]` and `colors: string[]`; responses include linked `variants`. Supplying neither list creates a product without variants.
+- Product variants are store-scoped sellable records. Their identity includes meaningful size, color, style/SKU/barcode, MRP, and selling price fields, so different prices are never silently combined.
 - `GET /sales/dashboard?preset=today|yesterday|week|month|custom` returns KPIs, trends, rankings, recent sales, and stock alerts. Custom ranges require `start_date` and `end_date`.
 - `GET /sales` returns paginated, searchable sales history with payment and date filters.
 - `POST /sales` creates an atomic sale and related stock movements.
+- `GET /sales/catalog?search=...` returns store-scoped products grouped with their sellable variants, including exact SKU, barcode, size, style, MRP, selling price, and available stock.
+- `GET /sales/catalog/barcode/{barcode}` resolves one exact store-scoped sellable variant for POS scanning.
+- New POS checkout submits `product_variant_id` for every line. The server locks that variant, decrements only its stock, consumes its cost lots FIFO, and snapshots its price and attributes on the invoice.
 - `GET /sales/{id}` returns invoice detail.
 - `GET /sales/export?format=xlsx|pdf` exports the filtered history.
 - `GET /stock/history` supports `product_id` and explicit `movement_type` filters and returns product/user attribution.
@@ -80,6 +84,8 @@ Products:
 - `POST /products/bulk/brand`
 - `POST /products/bulk/stock`
 - `POST /products/bulk/export?format=csv`
+
+Purchase confirmation creates an `InventoryCostLot` for each received variant. Purchase lines can supply a style, internal SKU, barcode, MRP, and selling price; all remain editable until confirmation. A sale line consumes its exact variant and cost-lot history, while legacy product stock remains a compatibility aggregate for existing reports.
 
 Pagination response when `paginated=true`:
 
@@ -165,7 +171,8 @@ Purchases:
 - `POST /purchases/{purchase_id}/cancel` cancels an unconfirmed purchase and records a reason.
 - `GET /purchases/{purchase_id}/document` streams the protected original invoice without exposing a storage path.
 - `POST /purchases/{purchase_id}/items`, `PATCH /purchases/{purchase_id}/items/{item_id}`, and `DELETE /purchases/{purchase_id}/items/{item_id}` manage editable draft lines.
-- `POST /purchase-documents/upload` accepts multipart field `file` and returns `202 Accepted` with `document_id`, `job_id`, and `request_id`.
+- `POST /purchase-documents/upload` accepts multipart field `file` and returns `202 Accepted` with `document_id`, `job_id`, `request_id`, and `duplicate`. Re-uploading an identical document for the same store returns the existing document/job and does not schedule another job.
+- `GET /purchase-documents/{document_id}` returns protected document metadata; `GET /purchase-documents/{document_id}/preview` streams the protected original for an authenticated member of that store.
 - `GET /purchase-documents/jobs/{job_id}` reports queued, processing, review-ready, or failed recognition states.
 - `POST /purchase-documents/{document_id}/retry` queues a failed document again and returns `202 Accepted`.
 - `POST /purchases/from-document` creates the editable purchase draft after the job is `REVIEW_REQUIRED`.
@@ -194,6 +201,14 @@ Stock:
 - `GET /stock/history?product_id=...&movement_type=MANUAL_ADJUSTMENT`
 - `GET /stock/history/export?product_id=...&movement_type=MANUAL_ADJUSTMENT`
 - `POST /stock/adjustments`
+- `GET /product-variants/by-barcode/{barcode}` resolves one active, store-scoped product variant. Barcode values stay strings, preserving scanner leading zeroes.
+- `POST /stock-scan/sessions` starts a persistent scan draft. Use the session `scan`, item update/delete, `validate`, `confirm`, and `cancel` endpoints to complete the review workflow.
+- `POST /product-variants/{variant_id}/barcode` assigns a unique store-scoped barcode for an owner or manager.
+- `POST /product-variants/{variant_id}/barcodes` and `POST /barcodes/onboard` create an audited, store-scoped barcode mapping for one exact variant. They accept package conversion fields such as `package_quantity`, `scan_unit`, and `inventory_unit`.
+- `GET /product-variants/by-barcode/{barcode}` resolves an active exact variant from `product_barcodes` before the legacy variant barcode. The response includes package quantity, scan unit, inventory unit, and base conversion.
+- Numeric EAN-8, UPC-A, and EAN-13 values are check-digit validated. Other string values remain valid Code 128-compatible internal barcodes; leading zeroes are preserved.
+- Barcode onboarding rejects an active duplicate with `409` and code `BARCODE_ALREADY_ASSIGNED`. Unknown scan values return `400` with code `BARCODE_NOT_FOUND` and do not create inventory.
+- Scan sessions retain both `scanned_quantity` (packages/scans) and `base_quantity` (physical inventory pieces). Confirmation writes the base quantity only after review.
 
 Validation:
 
@@ -233,6 +248,6 @@ Sales are scoped to the authenticated user's store. Staff can create, view, list
 All monetary values are recalculated server-side. A stale sale version returns `409 Conflict`.
 # Purchase Intake
 
-`POST /api/v1/purchase-documents/upload` stores a store-scoped invoice and returns `202 Accepted` before recognition begins. The client polls `GET /api/v1/purchase-documents/jobs/{job_id}`, can retry a failed job with `POST /api/v1/purchase-documents/{document_id}/retry`, and calls `POST /api/v1/purchases/from-document` only after the job is review-ready. It accepts JPG, JPEG, PNG, WEBP, HEIC/HEIF, and PDF invoices up to 15 MB, validates their signatures, and never updates stock.
+`POST /api/v1/purchase-documents/upload` stores a store-scoped invoice and returns `202 Accepted` before recognition begins. The client polls `GET /api/v1/purchase-documents/jobs/{job_id}`, can retry a failed job with `POST /api/v1/purchase-documents/{document_id}/retry`, and calls `POST /api/v1/purchases/from-document` only after the job is review-ready. It accepts JPG, JPEG, PNG, WEBP, HEIC/HEIF, and PDF invoices up to 15 MB, validates their signatures, and never updates stock. Duplicate documents return the existing job rather than creating another document or worker run. Every API error includes a request ID; document errors use safe codes such as `FILE_TOO_LARGE`, `CORRUPTED_FILE`, `ENCRYPTED_PDF`, and `HEIC_CONVERSION_NOT_AVAILABLE`.
 
 `PUT /api/v1/purchases/{purchase_id}/review` requires `purchase_date`; it can include optional invoice and received dates plus `duplicate_acknowledged` when the duplicate warning has been reviewed. `POST /api/v1/purchases/{purchase_id}/confirm` is the only purchase action that writes inventory movements and stock.

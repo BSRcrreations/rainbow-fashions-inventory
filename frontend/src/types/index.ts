@@ -1,7 +1,10 @@
 export type UserRole = "OWNER" | "MANAGER" | "STAFF";
 export type PricingType = "MRP" | "OWN_PRICE";
 export type PurchaseStatus = "DRAFT" | "REVIEWED" | "CONFIRMED" | "CANCELLED" | "VOIDED";
-export type StockMovementType = "PURCHASE" | "SALE" | "CUSTOMER_RETURN" | "SUPPLIER_RETURN" | "DAMAGE" | "MANUAL_ADJUSTMENT" | "SALE_EDIT_RETURN" | "SALE_EDIT_DECREASE" | "SALE_VOID" | "PURCHASE_VOID";
+export type StockMovementType = "PURCHASE" | "SALE" | "CUSTOMER_RETURN" | "SUPPLIER_RETURN" | "DAMAGE" | "MANUAL_ADJUSTMENT" | "SALE_EDIT_RETURN" | "SALE_EDIT_DECREASE" | "SALE_VOID" | "PURCHASE_VOID" | "OPENING_STOCK" | "STOCK_COUNT_IN" | "STOCK_COUNT_OUT";
+export type StockScanMode = "PURCHASE_RECEIVING" | "OPENING_STOCK" | "PHYSICAL_COUNT" | "STOCK_ADJUSTMENT" | "STOCK_TRANSFER";
+export type StockScanStatus = "DRAFT" | "IN_PROGRESS" | "REVIEW_REQUIRED" | "CONFIRMED" | "CANCELLED";
+export type StockScanQuantityMode = "INCREMENT" | "QUANTITY_ENTRY";
 export type SaleStatus = "DRAFT" | "CANCELLED" | "COMPLETED" | "EDITED" | "PARTIALLY_RETURNED" | "RETURNED" | "VOIDED";
 
 export interface User {
@@ -81,15 +84,123 @@ export interface Product {
 
 export interface ProductVariant {
   id: string;
+  store_id: string;
   product_id: string;
   color?: string | null;
   size?: string | null;
+  style_code?: string | null;
+  model_number?: string | null;
+  manufacturer_sku?: string | null;
+  internal_sku: string;
+  barcode: string;
+  identity_key: string;
+  mrp?: string | null;
+  selling_price: string;
+  last_purchase_cost: string;
+  average_cost: string;
+  current_stock: number;
+  classification_review_required: boolean;
+  is_active: boolean;
   created_at: string;
+  updated_at: string;
+}
+
+export interface ProductVariantBarcode {
+  product_id: string;
+  variant_id: string;
+  product_name: string;
+  category?: string | null;
+  brand?: string | null;
+  size?: string | null;
+  color?: string | null;
+  style_code?: string | null;
+  sku: string;
+  barcode: string;
+  mrp?: string | null;
+  selling_price: string;
+  current_physical_stock: number;
+  current_available_stock: number;
+  active: boolean;
+  package_quantity: number;
+  scan_unit: string;
+  inventory_unit: string;
+  base_unit_conversion: number;
+}
+
+export interface StockScanSessionItem {
+  id: string;
+  product_id: string;
+  product_variant_id: string;
+  product_barcode_id?: string | null;
+  barcode: string;
+  product_name: string;
+  category_name?: string | null;
+  brand_name?: string | null;
+  size?: string | null;
+  color?: string | null;
+  style_code?: string | null;
+  sku?: string | null;
+  mrp?: string | null;
+  selling_price?: string | null;
+  current_physical_stock: number;
+  scanned_quantity: number;
+  package_quantity: number;
+  base_quantity: number;
+  expected_quantity?: number | null;
+  difference_quantity?: number | null;
+  unit_cost?: string | null;
+  condition: string;
+  last_scanned_at: string;
+  created_at: string;
+}
+
+export interface StockScanSession {
+  id: string;
+  store_id: string;
+  mode: StockScanMode;
+  status: StockScanStatus;
+  quantity_mode: StockScanQuantityMode;
+  purchase_id?: string | null;
+  location_name: string;
+  source_location_name?: string | null;
+  destination_location_name?: string | null;
+  reference?: string | null;
+  notes?: string | null;
+  created_by: string;
+  confirmed_by?: string | null;
+  confirmed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  items: StockScanSessionItem[];
+}
+
+export interface SaleCatalogVariant {
+  variant_id: string;
+  size?: string | null;
+  color?: string | null;
+  style_code?: string | null;
+  sku: string;
+  barcode: string;
+  mrp?: string | null;
+  selling_price: string;
+  available_stock: number;
+  classification_review_required: boolean;
+  is_active: boolean;
+}
+
+export interface SaleCatalogProduct {
+  product_id: string;
+  name: string;
+  category_name?: string | null;
+  brand_name?: string | null;
+  total_available_stock: number;
+  variants: SaleCatalogVariant[];
 }
 
 export interface SaleItem {
   id: string;
   product_id: string;
+  product_variant_id?: string | null;
   product_name: string;
   barcode?: string | null;
   supplier_product_code?: string | null;
@@ -102,6 +213,8 @@ export interface SaleItem {
   barcode_snapshot?: string | null;
   size_snapshot?: string | null;
   color_snapshot?: string | null;
+  style_snapshot?: string | null;
+  mrp_snapshot?: string | null;
 }
 
 export interface Sale {
@@ -189,13 +302,17 @@ export interface PurchaseItem {
   id?: string;
   product_id?: string | null;
   matched_product_id?: string | null;
+  product_variant_id?: string | null;
   category_id?: string | null;
   brand_id?: string | null;
   brand_name?: string | null;
   category_name?: string | null;
   product_name: string;
+  proposed_product_name?: string | null;
   barcode?: string | null;
   supplier_product_code?: string | null;
+  internal_sku?: string | null;
+  style_code?: string | null;
   hsn_sac?: string | null;
   unit: string;
   size: string;
@@ -226,11 +343,16 @@ export interface PurchaseItem {
   tax_amount: string;
   tax_rate: string;
   mrp?: string | null;
+  selling_price?: string | null;
   line_total: string;
   confidence?: string | null;
   match_status: string;
   batch_number?: string | null;
+  manufacturing_date?: string | null;
   expiry_date?: string | null;
+  create_new_product?: boolean;
+  variant_attributes?: Record<string, string>;
+  classification_verified?: boolean;
   user_verified: boolean;
 }
 
@@ -343,6 +465,7 @@ export interface PurchaseDocumentAccepted {
   job_id: string;
   status: string;
   request_id: string;
+  duplicate?: boolean;
 }
 
 export interface PurchaseDocumentJob {
@@ -352,6 +475,7 @@ export interface PurchaseDocumentJob {
   progress: number;
   message: string;
   request_id: string;
+  provider_name: string;
   error_code?: string | null;
   error_message?: string | null;
   result?: { extracted_invoice: PurchaseUploadResponse["extracted_invoice"]; review_items: PurchaseItem[]; warnings: string[] } | null;

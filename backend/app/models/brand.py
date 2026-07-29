@@ -28,3 +28,4 @@ class Brand(Base):
     category = relationship("Category", back_populates="brands")
     products = relationship("Product", back_populates="brand")
     purchase_items = relationship("PurchaseItem", back_populates="brand")
+    store = relationship("Store")

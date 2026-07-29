@@ -17,6 +17,7 @@ from app.schemas.purchase import (
     PurchaseDetailRead,
     PurchaseFromDocumentCreate,
     PurchaseItemPatch,
+    PurchaseItemClassificationPatch,
     PurchaseItemReview,
     PurchasePatch,
     PurchaseRead,
@@ -101,6 +102,11 @@ def cancel_purchase(purchase_id: UUID, payload: PurchaseCancelRequest, db: Sessi
 @router.post("/{purchase_id}/items", response_model=PurchaseRead)
 def add_purchase_item(purchase_id: UUID, payload: PurchaseItemReview, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> PurchaseRead:
     return PurchaseService(db).add_item(purchase_id, payload, current_user)
+
+
+@router.patch("/{purchase_id}/items/classification", response_model=PurchaseRead)
+def patch_purchase_item_classification(purchase_id: UUID, payload: PurchaseItemClassificationPatch, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> PurchaseRead:
+    return PurchaseService(db).patch_item_classification(purchase_id, payload, current_user)
 
 
 @router.patch("/{purchase_id}/items/{item_id}", response_model=PurchaseRead)

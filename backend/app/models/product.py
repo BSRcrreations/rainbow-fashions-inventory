@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -33,6 +33,10 @@ class Product(Base):
     minimum_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     barcode: Mapped[Optional[str]] = mapped_column(String(80), unique=True, index=True)
     product_date: Mapped[date] = mapped_column(Date, nullable=False, server_default=func.current_date())
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    hsn_sac: Mapped[Optional[str]] = mapped_column(String(40))
+    unit: Mapped[str] = mapped_column(String(40), nullable=False, default="Each")
+    warehouse: Mapped[Optional[str]] = mapped_column(String(120))
     image_url: Mapped[Optional[str]] = mapped_column(String(500))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_test_data: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)

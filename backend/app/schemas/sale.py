@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.enums import SaleStatus
 from app.schemas.common import ORMBaseModel
@@ -23,9 +23,16 @@ class SaleDeleteRequest(SaleDeleteCheckRequest):
 
 
 class SaleItemCreate(BaseModel):
-    product_id: UUID
+    product_id: Optional[UUID] = None
+    product_variant_id: Optional[UUID] = None
     quantity: int = Field(gt=0)
     unit_price: Optional[Decimal] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def require_sellable_item(self) -> "SaleItemCreate":
+        if not self.product_id and not self.product_variant_id:
+            raise ValueError("product_variant_id is required")
+        return self
 
 
 class SaleItemUpdate(SaleItemCreate):
@@ -46,6 +53,13 @@ class SaleCreate(BaseModel):
         if not isinstance(value, str):
             return value
         return value.strip() or None
+
+    @model_validator(mode="after")
+    def keep_sale_items_on_one_inventory_contract(self) -> "SaleCreate":
+        has_variant_items = [item.product_variant_id is not None for item in self.items]
+        if any(has_variant_items) and not all(has_variant_items):
+            raise ValueError("Use product_variant_id for every item when creating a variant-level sale")
+        return self
 
 
 class SaleUpdate(BaseModel):
@@ -93,6 +107,7 @@ class SaleReturnCreate(BaseModel):
 class SaleItemRead(ORMBaseModel):
     id: UUID
     product_id: UUID
+    product_variant_id: Optional[UUID] = None
     product_name: str
     quantity: int
     unit_price: Decimal
@@ -102,6 +117,31 @@ class SaleItemRead(ORMBaseModel):
     barcode_snapshot: Optional[str] = None
     size_snapshot: Optional[str] = None
     color_snapshot: Optional[str] = None
+    style_snapshot: Optional[str] = None
+    mrp_snapshot: Optional[Decimal] = None
+
+
+class SaleCatalogVariant(BaseModel):
+    variant_id: UUID
+    size: Optional[str] = None
+    color: Optional[str] = None
+    style_code: Optional[str] = None
+    sku: str
+    barcode: str
+    mrp: Optional[Decimal] = None
+    selling_price: Decimal
+    available_stock: int
+    classification_review_required: bool = False
+    is_active: bool
+
+
+class SaleCatalogProduct(BaseModel):
+    product_id: UUID
+    name: str
+    category_name: Optional[str] = None
+    brand_name: Optional[str] = None
+    total_available_stock: int
+    variants: list[SaleCatalogVariant] = Field(default_factory=list)
 
 
 class CashierRead(ORMBaseModel):

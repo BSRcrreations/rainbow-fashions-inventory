@@ -25,3 +25,7 @@ Remaining frontend issues:
 
 - No automated browser/component test framework exists yet.
 - Product image previews assume the API is served from the same host on port `8000`, matching the current default API behavior.
+# Purchase intake follow-up (2026-07-28)
+
+- The shared client now keeps FastAPI messages, nested validation fields, error code, request ID, plain-text failures, and network failures intact instead of replacing all server failures with one generic message.
+- The Purchase Details page presents field errors, error code, and request ID inline; the API client itself does not raise toasts, preventing duplicate notifications.

@@ -26,11 +26,14 @@ class StockService:
         limit: int = 100,
         product_id: Optional[UUID] = None,
         movement_type: Optional[StockMovementType] = None,
+        store_id: Optional[UUID] = None,
     ) -> list[StockHistory]:
-        return self.repo.list_recent(skip, limit, product_id, movement_type)
+        return self.repo.list_recent(skip, limit, product_id, movement_type, store_id)
 
     def adjust(self, payload: StockAdjustmentCreate, current_user: User) -> StockHistory:
-        product = self.db.get(Product, payload.product_id)
+        if not current_user.store_id:
+            raise bad_request("Current user is not assigned to a store")
+        product = self.db.query(Product).filter(Product.id == payload.product_id, Product.store_id == current_user.store_id).first()
         if not product:
             raise not_found("Product")
 

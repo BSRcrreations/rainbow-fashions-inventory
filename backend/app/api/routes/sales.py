@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_manager_or_owner, require_owner
 from app.database.session import get_db
 from app.models.user import User
-from app.schemas.sale import SaleAuditRead, SaleCreate, SaleDeleteCheckRequest, SaleDeleteRequest, SaleListResponse, SaleRead, SaleReturnCreate, SaleReturnRead, SaleUpdate, SaleVoidRequest, SalesDashboardResponse
+from app.schemas.sale import SaleAuditRead, SaleCatalogProduct, SaleCatalogVariant, SaleCreate, SaleDeleteCheckRequest, SaleDeleteRequest, SaleListResponse, SaleRead, SaleReturnCreate, SaleReturnRead, SaleUpdate, SaleVoidRequest, SalesDashboardResponse
 from app.services.destructive_action_service import DestructiveActionService
 from app.services.sale_service import SaleService
 
@@ -38,6 +38,16 @@ def sales_dashboard(
     current_user: User = Depends(get_current_user),
 ):
     return SaleService(db).dashboard(preset, start_date, end_date, current_user)
+
+
+@router.get("/catalog", response_model=list[SaleCatalogProduct])
+def sale_catalog(search: Optional[str] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return SaleService(db).catalog(search, current_user)
+
+
+@router.get("/catalog/barcode/{barcode}", response_model=SaleCatalogVariant)
+def sale_catalog_barcode(barcode: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return SaleService(db).variant_by_barcode(barcode, current_user)
 
 
 @router.get("/export")

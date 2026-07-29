@@ -1,6 +1,13 @@
 # OCR Integration Interface
 
-Phase 1 uses `MockOCRService`, selected by `OCR_PROVIDER=mock`.
+The default local provider is selected with `OCR_PROVIDER=local`.
+
+`LocalOCRService` extracts text-native PDFs with `pypdf` and sends JPG, PNG,
+and WebP images to the locally installed Tesseract executable. It never
+manufactures supplier or product values. Image-only PDFs, HEIC/HEIF files,
+encrypted PDFs, and PDFs over the configured page limit return a specific safe
+job failure code for review or retry. `OCR_PROVIDER=mock` remains available for
+deterministic development tests and returns an empty editable draft.
 
 The application code depends on `OCRService.extract_text(file_path: Path) -> str`.
 Any future provider should implement the same interface in `backend/app/ai/base.py`.

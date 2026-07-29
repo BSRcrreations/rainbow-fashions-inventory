@@ -27,3 +27,4 @@ class SubCategory(Base):
 
     category = relationship("Category", back_populates="subcategories")
     products = relationship("Product", back_populates="subcategory")
+    store = relationship("Store")
