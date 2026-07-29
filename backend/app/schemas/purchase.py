@@ -55,6 +55,7 @@ class ExtractedInvoice(BaseModel):
 class PurchaseItemReview(BaseModel):
     product_id: Optional[UUID] = None
     matched_product_id: Optional[UUID] = None
+    product_variant_id: Optional[UUID] = None
     category_id: Optional[UUID] = None
     brand_id: Optional[UUID] = None
     brand_name: Optional[str] = None
@@ -63,6 +64,8 @@ class PurchaseItemReview(BaseModel):
     proposed_product_name: Optional[str] = Field(default=None, min_length=1, max_length=180)
     barcode: Optional[str] = Field(default=None, max_length=80)
     supplier_product_code: Optional[str] = Field(default=None, max_length=120)
+    internal_sku: Optional[str] = Field(default=None, max_length=120)
+    style_code: Optional[str] = Field(default=None, max_length=80)
     hsn_sac: Optional[str] = Field(default=None, max_length=40)
     unit: str = Field(default="Each", min_length=1, max_length=40)
     size: str = Field(default="", max_length=60)
@@ -147,6 +150,7 @@ class PurchasePatch(BaseModel):
 class PurchaseItemPatch(BaseModel):
     product_id: Optional[UUID] = None
     matched_product_id: Optional[UUID] = None
+    product_variant_id: Optional[UUID] = None
     category_id: Optional[UUID] = None
     brand_id: Optional[UUID] = None
     brand_name: Optional[str] = Field(default=None, max_length=120)
@@ -155,6 +159,8 @@ class PurchaseItemPatch(BaseModel):
     proposed_product_name: Optional[str] = Field(default=None, min_length=1, max_length=180)
     barcode: Optional[str] = Field(default=None, max_length=80)
     supplier_product_code: Optional[str] = Field(default=None, max_length=120)
+    internal_sku: Optional[str] = Field(default=None, max_length=120)
+    style_code: Optional[str] = Field(default=None, max_length=80)
     hsn_sac: Optional[str] = Field(default=None, max_length=40)
     unit: Optional[str] = Field(default=None, min_length=1, max_length=40)
     size: Optional[str] = Field(default=None, max_length=60)

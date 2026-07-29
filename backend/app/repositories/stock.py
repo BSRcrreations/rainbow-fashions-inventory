@@ -19,10 +19,13 @@ class StockHistoryRepository(BaseRepository[StockHistory]):
         limit: int = 100,
         product_id: Optional[UUID] = None,
         movement_type: Optional[StockMovementType] = None,
+        store_id: Optional[UUID] = None,
     ) -> list[StockHistory]:
         query = self.db.query(StockHistory).options(joinedload(StockHistory.product), joinedload(StockHistory.created_by_user))
         if product_id:
             query = query.filter(StockHistory.product_id == product_id)
         if movement_type:
             query = query.filter(StockHistory.movement_type == movement_type)
+        if store_id:
+            query = query.filter(StockHistory.store_id == store_id)
         return query.order_by(StockHistory.movement_date.desc()).offset(skip).limit(limit).all()

@@ -20,10 +20,13 @@ from app.schemas.purchase import ExtractedInvoice
 from app.schemas.purchase import PurchaseItemReview, PurchasePatch
 from app.schemas.subcategory import SubCategoryCreate
 from app.schemas.stock import StockAdjustmentCreate
+from app.schemas.stock_scan import BarcodeAssignment, BarcodeOnboarding, StockScanRequest, StockScanSessionCreate
+from app.models.enums import StockScanMode, StockScanQuantityMode
 from app.services.catalog_service import BrandService, CategoryService
 from app.services.purchase_service import PurchaseService
 from app.services.product_service import ProductService
 from app.services.sale_service import SaleService
+from app.services.stock_scan_service import StockScanService
 from app.models.brand import Brand
 from app.models.category import Category
 
@@ -66,6 +69,45 @@ class FakeCatalogRepo:
 
 
 class Stage1ValidationTests(unittest.TestCase):
+    def test_scan_barcode_preserves_leading_zeros(self) -> None:
+        request = StockScanRequest(barcode=" 0012345678905 ")
+
+        self.assertEqual(request.barcode, "0012345678905")
+
+    def test_scan_session_defaults_to_physical_count_increment_mode(self) -> None:
+        session = StockScanSessionCreate()
+
+        self.assertEqual(session.mode, StockScanMode.PHYSICAL_COUNT)
+        self.assertEqual(session.quantity_mode, StockScanQuantityMode.INCREMENT)
+
+    def test_scan_quantity_must_be_positive(self) -> None:
+        with self.assertRaises(ValidationError):
+            StockScanRequest(barcode="001234", quantity=0)
+
+    def test_barcode_assignment_rejects_empty_value(self) -> None:
+        with self.assertRaises(ValidationError):
+            BarcodeAssignment(barcode="   ")
+
+    def test_ean_13_examples_pass_check_digit_validation(self) -> None:
+        for barcode in ("8905072506479", "8906058070533", "8903289029149"):
+            StockScanService._validate_barcode(barcode)
+
+    def test_invalid_ean_13_check_digit_is_rejected(self) -> None:
+        with self.assertRaises(HTTPException) as error:
+            StockScanService._validate_barcode("8906058070534")
+        self.assertEqual(error.exception.detail["code"], "BARCODE_CHECK_DIGIT_INVALID")
+
+    def test_multipack_onboarding_requires_pack_scan_unit(self) -> None:
+        with self.assertRaises(ValidationError):
+            BarcodeOnboarding(product_variant_id=uuid4(), barcode="RF-PACK-3", package_quantity=3, scan_unit="PIECE")
+
+    def test_three_piece_pack_converts_to_physical_pieces(self) -> None:
+        self.assertEqual(StockScanService._base_quantity(scanned_quantity=2, package_quantity=3), 6)
+
+    def test_physical_count_difference_is_calculated_from_expected_quantity(self) -> None:
+        self.assertEqual(StockScanService._difference(StockScanMode.PHYSICAL_COUNT, 10, 12), -2)
+        self.assertEqual(StockScanService._difference(StockScanMode.PHYSICAL_COUNT, 14, 12), 2)
+
     def test_purchase_tax_rate_is_limited_to_a_valid_percentage(self) -> None:
         patch = PurchasePatch(invoice_tax_rate=Decimal("18"), version=4)
 
@@ -179,6 +221,16 @@ class Stage1ValidationTests(unittest.TestCase):
         self.assertEqual(product.colors, ["Black", "White"])
         self.assertEqual(product.sizes, ["M", "L"])
 
+    def test_product_variant_generation_distributes_initial_stock(self) -> None:
+        product = SimpleNamespace(
+            variants=[], current_stock=5, store_id=uuid4(), id=uuid4(),
+            mrp=Decimal("100"), selling_price=Decimal("90"), purchase_price=Decimal("50"),
+        )
+
+        ProductService._replace_variants(product, [], ["S", "M"])
+
+        self.assertEqual([variant.current_stock for variant in product.variants], [3, 2])
+
     def test_product_date_is_required_and_serialized(self) -> None:
         with self.assertRaises(ValidationError):
             ProductCreate(
@@ -252,11 +304,28 @@ class Stage1ValidationTests(unittest.TestCase):
         product_index = paths.index("/api/v1/products/{product_id}")
         self.assertLess(barcode_index, product_index)
 
+    def test_variant_catalog_routes_precede_dynamic_sale_route(self) -> None:
+        from app.main import app
+
+        paths = [route.path for route in app.routes]
+        catalog_index = paths.index("/api/v1/sales/catalog")
+        barcode_index = paths.index("/api/v1/sales/catalog/barcode/{barcode}")
+        sale_index = paths.index("/api/v1/sales/{sale_id}")
+        self.assertLess(catalog_index, sale_index)
+        self.assertLess(barcode_index, sale_index)
+
     def test_sale_requires_positive_line_items(self) -> None:
         with self.assertRaises(ValidationError):
             SaleCreate(payment_mode="CASH", items=[])
         with self.assertRaises(ValidationError):
             SaleCreate(payment_mode="CASH", items=[{"product_id": uuid4(), "quantity": 0}])
+
+    def test_variant_sale_requires_a_variant_for_every_line(self) -> None:
+        variant_id, product_id = uuid4(), uuid4()
+        with self.assertRaises(ValidationError):
+            SaleCreate(payment_mode="CASH", items=[{"product_variant_id": variant_id, "quantity": 1}, {"product_id": product_id, "quantity": 1}])
+        sale = SaleCreate(payment_mode="CASH", items=[{"product_variant_id": variant_id, "quantity": 1}])
+        self.assertEqual(sale.items[0].product_variant_id, variant_id)
 
     def test_sale_update_cannot_have_zero_items(self) -> None:
         with self.assertRaises(ValidationError):
@@ -287,6 +356,15 @@ class Stage1ValidationTests(unittest.TestCase):
 
         self.assertEqual(item.size, "")
         self.assertEqual(item.color, "")
+
+    def test_purchase_item_keeps_sellable_variant_fields(self) -> None:
+        item = PurchaseItemReview(
+            product_name="OE panties", quantity=6, purchase_price=Decimal("318.25"), line_total=Decimal("1909.50"),
+            size="4XL", style_code="B", internal_sku="OP-4XL-475-B", mrp=Decimal("475"), selling_price=Decimal("475"),
+        )
+        self.assertEqual(item.style_code, "B")
+        self.assertEqual(item.internal_sku, "OP-4XL-475-B")
+        self.assertEqual(item.selling_price, Decimal("475"))
 
     def test_purchase_item_catalog_selection_is_synchronized_and_validated(self) -> None:
         category_id, other_category_id, brand_id = uuid4(), uuid4(), uuid4()

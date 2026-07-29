@@ -6,7 +6,7 @@ from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException, UploadFile, status
 from fastapi.encoders import jsonable_encoder
@@ -22,7 +22,7 @@ from app.models.brand import Brand
 from app.models.category import Category
 from app.models.enums import PricingType, PurchaseStatus, StockMovementType
 from app.models.product import Product
-from app.models.product_variant import ProductVariant
+from app.models.product_variant import InventoryCostLot, ProductVariant
 from app.models.product_inventory import ProductInventory
 from app.models.subcategory import SubCategory
 from app.models.purchase import Purchase
@@ -397,30 +397,57 @@ class PurchaseService:
 
         for purchase_item in purchase.items:
             product = self._resolve_product_for_item(purchase_item, current_user)
+            variant = self._resolve_variant_for_purchase_item(product, purchase_item, current_user)
             received_quantity = purchase_item.accepted_quantity
             if received_quantity != received_quantity.to_integral_value():
                 raise bad_request("Inventory quantities must be whole units for this store.")
             stock_quantity = int(received_quantity)
             before_stock = product.current_stock
+            before_variant_stock = variant.current_stock
             product.current_stock += stock_quantity
             after_stock = product.current_stock
             product.purchase_price = purchase_item.landed_unit_cost
+
+            existing_value = variant.average_cost * before_variant_stock
+            received_value = purchase_item.landed_unit_cost * stock_quantity
+            variant.current_stock += stock_quantity
+            variant.last_purchase_cost = purchase_item.landed_unit_cost
+            variant.average_cost = (existing_value + received_value) / variant.current_stock if variant.current_stock else Decimal("0")
 
             inventory = self._get_or_create_inventory(product.id, current_user.store_id)
             inventory.current_stock += stock_quantity
 
             purchase_item.product_id = product.id
+            purchase_item.product_variant_id = variant.id
+            cost_lot = InventoryCostLot(
+                store_id=current_user.store_id,
+                product_variant_id=variant.id,
+                purchase_id=purchase.id,
+                purchase_item_id=purchase_item.id,
+                supplier_id=purchase.supplier_id,
+                received_quantity=stock_quantity,
+                remaining_quantity=stock_quantity,
+                unit_purchase_cost=purchase_item.purchase_price,
+                allocated_landed_cost=max(Decimal("0"), purchase_item.landed_unit_cost - purchase_item.purchase_price),
+                effective_unit_cost=purchase_item.landed_unit_cost,
+                lot_reference=purchase.invoice_number or f"Purchase {purchase.id}",
+            )
+            self.db.add(cost_lot)
+            self.db.flush()
             stock_history = StockHistory(
                 product_id=product.id,
+                product_variant_id=variant.id,
+                purchase_cost_lot_id=cost_lot.id,
                 store_id=current_user.store_id,
                 movement_type=StockMovementType.PURCHASE,
                 qty=stock_quantity,
-                before_stock=before_stock,
-                after_stock=after_stock,
+                before_stock=before_variant_stock,
+                after_stock=variant.current_stock,
                 reference=purchase.invoice_number or f"Purchase {purchase.id}",
                 purchase_id=purchase.id,
                 purchase_item_id=purchase_item.id,
                 created_by=current_user.id,
+                unit_cost=purchase_item.landed_unit_cost,
             )
             self.db.add(stock_history)
 
@@ -471,6 +498,7 @@ class PurchaseService:
                 PurchaseItemReview(
                     product_id=item.product_id,
                     matched_product_id=item.matched_product_id,
+                    product_variant_id=item.product_variant_id,
                     category_id=item.category_id,
                     brand_id=item.brand_id,
                     brand_name=item.brand_name,
@@ -478,6 +506,8 @@ class PurchaseService:
                     product_name=item.product_name,
                     barcode=item.barcode,
                     supplier_product_code=item.supplier_product_code,
+                    internal_sku=item.internal_sku,
+                    style_code=item.style_code,
                     hsn_sac=item.hsn_sac,
                     unit=item.unit,
                     size=item.size,
@@ -508,6 +538,7 @@ class PurchaseService:
                     tax_amount=item.tax_amount,
                     tax_rate=item.tax_rate,
                     mrp=item.mrp,
+                    selling_price=item.selling_price,
                     line_total=item.line_total,
                     confidence=item.confidence,
                     match_status=item.match_status,
@@ -527,6 +558,7 @@ class PurchaseService:
             purchase_id=purchase_id,
             product_id=item.product_id,
             matched_product_id=item.matched_product_id,
+            product_variant_id=item.product_variant_id,
             category_id=item.category_id,
             brand_id=item.brand_id,
             brand_name=item.brand_name,
@@ -534,6 +566,8 @@ class PurchaseService:
             product_name=item.product_name.strip(),
             barcode=item.barcode.strip() if item.barcode else None,
             supplier_product_code=item.supplier_product_code.strip() if item.supplier_product_code else None,
+            internal_sku=item.internal_sku.strip() if item.internal_sku else None,
+            style_code=item.style_code.strip() if item.style_code else None,
             hsn_sac=item.hsn_sac.strip() if item.hsn_sac else None,
             unit=item.unit.strip(),
             size=item.size.strip(),
@@ -564,6 +598,7 @@ class PurchaseService:
             tax_amount=item.tax_amount,
             tax_rate=item.tax_rate,
             mrp=item.mrp,
+            selling_price=item.selling_price,
             line_total=item.line_total,
             confidence=item.confidence,
             match_status=item.match_status,
@@ -577,7 +612,7 @@ class PurchaseService:
         product_id = item.product_id or item.matched_product_id
         if product_id:
             product = self.db.get(Product, product_id)
-            if product:
+            if product and product.store_id == store_id:
                 return product
 
         category = self.db.query(Category).filter(Category.id == item.category_id, Category.store_id == store_id).first() if item.category_id else self._get_or_create_category(item.category_name, store_id)
@@ -590,13 +625,6 @@ class PurchaseService:
 
         duplicate = self.product_repo.get_duplicate(category.id, subcategory.id, brand.id, item.product_name)
         if duplicate:
-            has_variant = any(
-                (variant.size or "").casefold() == (item.size or "").casefold()
-                and (variant.color or "").casefold() == (item.color or "").casefold()
-                for variant in duplicate.variants
-            )
-            if not has_variant and (item.size or item.color):
-                duplicate.variants.append(ProductVariant(size=item.size or None, color=item.color or None))
             return duplicate
 
         product = Product(
@@ -608,19 +636,101 @@ class PurchaseService:
             size=item.size,
             color=item.color,
             purchase_price=item.purchase_price,
-            selling_price=item.mrp or item.purchase_price,
+            selling_price=item.selling_price or item.mrp or item.purchase_price,
             pricing_type=PricingType.MRP if item.mrp else PricingType.OWN_PRICE,
             mrp=item.mrp,
             current_stock=0,
             minimum_stock=0,
             barcode=None,
         )
-        if item.size or item.color:
-            product.variants.append(ProductVariant(size=item.size or None, color=item.color or None))
         self.db.add(product)
         self.db.flush()
         self.db.refresh(product)
         return product
+
+    def _resolve_variant_for_purchase_item(self, product: Product, item: PurchaseItem, current_user: User) -> ProductVariant:
+        """Return the precise sellable variant for a reviewed purchase line."""
+        store_id = self._store_id(current_user)
+        if item.product_variant_id:
+            variant = (
+                self.db.query(ProductVariant)
+                .filter(
+                    ProductVariant.id == item.product_variant_id,
+                    ProductVariant.product_id == product.id,
+                    ProductVariant.store_id == store_id,
+                )
+                .first()
+            )
+            if not variant:
+                raise bad_request("Selected product variant does not belong to this product or store")
+            return variant
+
+        def normalized(value: Optional[str]) -> str:
+            return (value or "").strip().casefold()
+
+        selling_price = item.selling_price or item.mrp or product.selling_price
+        mrp = item.mrp or product.mrp
+        base_identity = "|".join(
+            [
+                normalized(item.size),
+                normalized(item.color),
+                normalized(item.style_code),
+                normalized(item.supplier_product_code),
+                normalized(item.internal_sku),
+                normalized(item.barcode),
+                str(mrp or ""),
+                str(selling_price),
+            ]
+        )
+        identity_key = f"{product.id}|{base_identity}"
+        variant = (
+            self.db.query(ProductVariant)
+            .filter(ProductVariant.store_id == store_id, ProductVariant.product_id == product.id, ProductVariant.identity_key == identity_key)
+            .first()
+        )
+        if variant:
+            return variant
+
+        same_attribute_variants = (
+            self.db.query(ProductVariant)
+            .filter(
+                ProductVariant.store_id == store_id,
+                ProductVariant.product_id == product.id,
+                func.coalesce(ProductVariant.size, "") == (item.size or ""),
+                func.coalesce(ProductVariant.color, "") == (item.color or ""),
+            )
+            .count()
+        )
+        style_code = item.style_code or (f"TEMP-{same_attribute_variants + 1}" if same_attribute_variants else None)
+        internal_sku = item.internal_sku or item.supplier_product_code or f"RFV-{str(product.id)[:8]}-{uuid4().hex[:8].upper()}"
+        barcode = item.barcode or f"RFV-{uuid4().hex[:16].upper()}"
+        if self.db.query(ProductVariant.id).filter(ProductVariant.store_id == store_id, ProductVariant.internal_sku == internal_sku).first():
+            internal_sku = f"{internal_sku}-{uuid4().hex[:6].upper()}"
+        if self.db.query(ProductVariant.id).filter(ProductVariant.store_id == store_id, ProductVariant.barcode == barcode).first():
+            barcode = f"RFV-{uuid4().hex[:16].upper()}"
+        variant = ProductVariant(
+            store_id=store_id,
+            product_id=product.id,
+            size=item.size or None,
+            color=item.color or None,
+            style_code=style_code,
+            manufacturer_sku=item.supplier_product_code or None,
+            internal_sku=internal_sku,
+            barcode=barcode,
+            identity_key=identity_key,
+            mrp=mrp,
+            selling_price=selling_price,
+            last_purchase_cost=item.landed_unit_cost,
+            average_cost=item.landed_unit_cost,
+            current_stock=0,
+            classification_review_required=not bool(item.style_code or item.internal_sku or item.supplier_product_code or item.barcode),
+        )
+        item.internal_sku = internal_sku
+        item.style_code = style_code
+        item.selling_price = selling_price
+        self.db.add(variant)
+        self.db.flush()
+        return variant
 
     def _synchronize_item_catalog(self, item: PurchaseItem, current_user: User) -> None:
         store_id = self._store_id(current_user)

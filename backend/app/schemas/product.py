@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.enums import PricingType
 from app.schemas.brand import BrandRead
@@ -151,11 +151,27 @@ class ProductUpdate(BaseModel):
 
 
 class ProductVariantRead(ORMBaseModel):
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+
     id: UUID
     product_id: UUID
+    store_id: UUID
     color: Optional[str] = None
     size: Optional[str] = None
+    style_code: Optional[str] = None
+    model_number: Optional[str] = None
+    manufacturer_sku: Optional[str] = None
+    internal_sku: str
+    barcode: str
+    mrp: Optional[Decimal] = None
+    selling_price: Decimal
+    last_purchase_cost: Decimal
+    average_cost: Decimal
+    current_stock: int
+    classification_review_required: bool
+    is_active: bool
     created_at: datetime
+    updated_at: datetime
 
 
 class ProductRead(ProductBase, ORMBaseModel):

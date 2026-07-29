@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.staticfiles import StaticFiles
 
-from app.api.routes import auth, brands, categories, dashboard, products, purchases, sales, security, stock, subcategories, purchase_documents
+from app.api.routes import auth, brands, categories, dashboard, products, purchases, sales, security, stock, stock_scan, subcategories, purchase_documents
 from app.core.config import get_settings
 from app.core.exceptions import error_payload
 from app.core.logging import configure_logging
@@ -94,6 +94,9 @@ app.include_router(products.router, prefix=settings.api_v1_prefix)
 app.include_router(purchases.router, prefix=settings.api_v1_prefix)
 app.include_router(purchase_documents.router, prefix=settings.api_v1_prefix)
 app.include_router(stock.router, prefix=settings.api_v1_prefix)
+app.include_router(stock_scan.router, prefix=settings.api_v1_prefix)
+app.include_router(stock_scan.variants_router, prefix=settings.api_v1_prefix)
+app.include_router(stock_scan.barcodes_router, prefix=settings.api_v1_prefix)
 app.include_router(security.router, prefix=settings.api_v1_prefix)
 
 
