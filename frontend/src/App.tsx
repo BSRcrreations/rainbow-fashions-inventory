@@ -12,6 +12,7 @@ import PurchasesPage from "./pages/PurchasesPage";
 import PurchaseDetailPage from "./pages/PurchaseDetailPage";
 import StockPage from "./pages/StockPage";
 import StockAdjustmentPage from "./pages/StockAdjustmentPage";
+import StockScanPage from "./pages/StockScanPage";
 import SecuritySettingsPage from "./pages/SecuritySettingsPage";
 
 export default function App() {
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/purchases" element={<PurchasesPage />} />
           <Route path="/purchases/:purchaseId" element={<PurchaseDetailPage />} />
           <Route path="/stock" element={<StockPage />} />
+          <Route path="/stock/scan" element={<StockScanPage />} />
           <Route path="/stock/adjustment" element={<StockAdjustmentPage />} />
           <Route path="/stock-adjustments" element={<StockAdjustmentPage />} />
           <Route path="/settings/security" element={<SecuritySettingsPage />} />

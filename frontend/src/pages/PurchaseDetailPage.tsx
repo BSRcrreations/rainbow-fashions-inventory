@@ -14,7 +14,7 @@ import { money, shortDate } from "../utils/format";
 import { addMoney, addQuantity, previewInvoiceDiscount, previewPurchaseLine, subtractMoney } from "../utils/purchaseDiscount";
 
 type HeaderField = "supplier_name" | "invoice_number" | "purchase_date" | "invoice_date" | "received_date" | "due_date" | "payment_mode" | "amount_paid" | "place_of_supply" | "purchase_reference" | "notes" | "warehouse" | "currency" | "packaging_amount" | "freight_amount" | "round_off" | "invoice_discount_type" | "invoice_discount_percentage" | "invoice_discount_amount" | "invoice_discount_reason" | "invoice_discount_allocation_method" | "invoice_tax_rate";
-type ItemField = "product_name" | "barcode" | "supplier_product_code" | "hsn_sac" | "category_id" | "category_name" | "brand_id" | "brand_name" | "size" | "color" | "quantity" | "unit" | "purchase_price" | "list_unit_price" | "discount" | "discount_type" | "discount_percentage" | "discount_per_unit" | "discount_amount" | "discount_reason" | "free_quantity" | "invoiced_unit_price" | "tax_rate" | "tax_amount" | "mrp";
+type ItemField = "product_name" | "barcode" | "supplier_product_code" | "internal_sku" | "style_code" | "hsn_sac" | "category_id" | "category_name" | "brand_id" | "brand_name" | "size" | "color" | "quantity" | "unit" | "purchase_price" | "list_unit_price" | "discount" | "discount_type" | "discount_percentage" | "discount_per_unit" | "discount_amount" | "discount_reason" | "free_quantity" | "invoiced_unit_price" | "tax_rate" | "tax_amount" | "mrp" | "selling_price";
 type PurchasePageError = { message: string; code?: string; requestId?: string; fields?: Array<{ field: string; message: string }> };
 
 function toPurchaseError(error: unknown, fallback: string): PurchasePageError {
@@ -31,7 +31,7 @@ function draftFrom(purchase: PurchaseDetail): PurchaseDetail {
 }
 
 function itemChanged(original: PurchaseItem, next: PurchaseItem): boolean {
-  const fields: Array<keyof PurchaseItem> = ["product_name", "barcode", "supplier_product_code", "hsn_sac", "category_id", "category_name", "brand_id", "brand_name", "unit", "size", "color", "quantity", "purchase_price", "list_unit_price", "discount", "discount_type", "discount_percentage", "discount_per_unit", "discount_amount", "discount_reason", "free_quantity", "invoiced_unit_price", "tax_rate", "tax_amount", "mrp"];
+  const fields: Array<keyof PurchaseItem> = ["product_name", "barcode", "supplier_product_code", "internal_sku", "style_code", "hsn_sac", "category_id", "category_name", "brand_id", "brand_name", "unit", "size", "color", "quantity", "purchase_price", "list_unit_price", "discount", "discount_type", "discount_percentage", "discount_per_unit", "discount_amount", "discount_reason", "free_quantity", "invoiced_unit_price", "tax_rate", "tax_amount", "mrp", "selling_price"];
   return fields.some((field) => String(original[field] ?? "") !== String(next[field] ?? ""));
 }
 
@@ -304,8 +304,8 @@ export default function PurchaseDetailPage() {
         {editing ? <Button size="sm" variant="secondary" onClick={() => { setDraft((current) => current ? { ...current, items: [...current.items, blankItem()] } : current); setDirty(true); }}><Plus size={16} /> Add item</Button> : null}
       </div>
       <div className="overflow-x-auto">
-        <table className="ds-table min-w-[1460px]">
-          <thead><tr><th>#</th><th>Product</th><th>Category</th><th>Brand</th><th>Barcode / SKU</th><th>HSN</th><th>Size</th><th>Colour</th><th className="text-right">Qty</th><th>Unit</th><th className="text-right">List cost</th><th className="text-right">MRP</th><th className="text-right">Line subtotal</th><th>Match</th>{editing ? <th /> : null}</tr></thead>
+        <table className="ds-table min-w-[1750px]">
+          <thead><tr><th>#</th><th>Product</th><th>Category</th><th>Brand</th><th>Style</th><th>Internal SKU</th><th>Barcode</th><th>HSN</th><th>Size</th><th>Colour</th><th className="text-right">Qty</th><th>Unit</th><th className="text-right">List cost</th><th className="text-right">MRP</th><th className="text-right">Selling price</th><th className="text-right">Line subtotal</th><th>Match</th>{editing ? <th /> : null}</tr></thead>
           <tbody>{draft.items.map((item, index) => {
             const categoryId = selectedCategoryId(item);
             const brands = catalog.find((category) => category.id === categoryId)?.brands.filter((brand) => brand.is_active) ?? [];
@@ -314,6 +314,8 @@ export default function PurchaseDetailPage() {
               <ItemInput editing={editing} value={item.product_name} onChange={(value) => updateItem(index, "product_name", value)} />
               <CatalogSelect editing={editing} value={categoryId} displayValue={item.category_name} ariaLabel={`Category for item ${index + 1}`} options={catalog.filter((category) => category.is_active).map((category) => ({ value: category.id, label: category.name }))} onChange={(value) => updateItemCategory(index, value)} />
               <CatalogSelect editing={editing} value={item.brand_id ?? ""} displayValue={item.brand_name} ariaLabel={`Brand for item ${index + 1}`} options={brands.map((brand) => ({ value: brand.id, label: brand.name }))} disabled={!categoryId} onChange={(value) => updateItemBrand(index, value)} />
+              <ItemInput editing={editing} value={item.style_code ?? ""} onChange={(value) => updateItem(index, "style_code", value)} />
+              <ItemInput editing={editing} value={item.internal_sku ?? ""} onChange={(value) => updateItem(index, "internal_sku", value)} />
               <ItemInput editing={editing} value={item.barcode ?? item.supplier_product_code ?? ""} onChange={(value) => updateItem(index, "barcode", value)} />
               <ItemInput editing={editing} value={item.hsn_sac ?? ""} onChange={(value) => updateItem(index, "hsn_sac", value)} />
               <ItemInput editing={editing} value={item.size} onChange={(value) => updateItem(index, "size", value)} />
@@ -322,6 +324,7 @@ export default function PurchaseDetailPage() {
               <ItemInput editing={editing} value={item.unit} onChange={(value) => updateItem(index, "unit", value)} />
               <ItemInput editing={editing} value={item.list_unit_price ?? item.purchase_price} type="number" className="text-right" onChange={(value) => updateItem(index, "list_unit_price", value)} />
               <ItemInput editing={editing} value={item.mrp ?? ""} type="number" className="text-right" onChange={(value) => updateItem(index, "mrp", value)} />
+              <ItemInput editing={editing} value={item.selling_price ?? item.mrp ?? ""} type="number" className="text-right" onChange={(value) => updateItem(index, "selling_price", value)} />
               <td className="text-right font-semibold">{money(previewPurchaseLine(item).taxableAmount)}</td>
               <td><StatusBadge value={item.match_status} /></td>
               {editing ? <td><Button size="icon" variant="ghost" title="Delete item" aria-label="Delete item" onClick={() => removeItem(index)}><Trash2 size={16} /></Button></td> : null}

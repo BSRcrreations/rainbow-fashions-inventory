@@ -9,9 +9,13 @@ Sales and hierarchy additions:
 - `GET /brands?category_id={id}` filters brands by category; brand create requires `category_id`.
 - Product create/update requires `category_id`, `subcategory_id`, and `brand_id`; mismatched parent categories return a validation error.
 - Product `size` and `color` are optional compatibility fields. Create/update accepts optional `sizes: string[]` and `colors: string[]`; responses include linked `variants`. Supplying neither list creates a product without variants.
+- Product variants are store-scoped sellable records. Their identity includes meaningful size, color, style/SKU/barcode, MRP, and selling price fields, so different prices are never silently combined.
 - `GET /sales/dashboard?preset=today|yesterday|week|month|custom` returns KPIs, trends, rankings, recent sales, and stock alerts. Custom ranges require `start_date` and `end_date`.
 - `GET /sales` returns paginated, searchable sales history with payment and date filters.
 - `POST /sales` creates an atomic sale and related stock movements.
+- `GET /sales/catalog?search=...` returns store-scoped products grouped with their sellable variants, including exact SKU, barcode, size, style, MRP, selling price, and available stock.
+- `GET /sales/catalog/barcode/{barcode}` resolves one exact store-scoped sellable variant for POS scanning.
+- New POS checkout submits `product_variant_id` for every line. The server locks that variant, decrements only its stock, consumes its cost lots FIFO, and snapshots its price and attributes on the invoice.
 - `GET /sales/{id}` returns invoice detail.
 - `GET /sales/export?format=xlsx|pdf` exports the filtered history.
 - `GET /stock/history` supports `product_id` and explicit `movement_type` filters and returns product/user attribution.
@@ -80,6 +84,8 @@ Products:
 - `POST /products/bulk/brand`
 - `POST /products/bulk/stock`
 - `POST /products/bulk/export?format=csv`
+
+Purchase confirmation creates an `InventoryCostLot` for each received variant. Purchase lines can supply a style, internal SKU, barcode, MRP, and selling price; all remain editable until confirmation. A sale line consumes its exact variant and cost-lot history, while legacy product stock remains a compatibility aggregate for existing reports.
 
 Pagination response when `paginated=true`:
 
@@ -195,6 +201,14 @@ Stock:
 - `GET /stock/history?product_id=...&movement_type=MANUAL_ADJUSTMENT`
 - `GET /stock/history/export?product_id=...&movement_type=MANUAL_ADJUSTMENT`
 - `POST /stock/adjustments`
+- `GET /product-variants/by-barcode/{barcode}` resolves one active, store-scoped product variant. Barcode values stay strings, preserving scanner leading zeroes.
+- `POST /stock-scan/sessions` starts a persistent scan draft. Use the session `scan`, item update/delete, `validate`, `confirm`, and `cancel` endpoints to complete the review workflow.
+- `POST /product-variants/{variant_id}/barcode` assigns a unique store-scoped barcode for an owner or manager.
+- `POST /product-variants/{variant_id}/barcodes` and `POST /barcodes/onboard` create an audited, store-scoped barcode mapping for one exact variant. They accept package conversion fields such as `package_quantity`, `scan_unit`, and `inventory_unit`.
+- `GET /product-variants/by-barcode/{barcode}` resolves an active exact variant from `product_barcodes` before the legacy variant barcode. The response includes package quantity, scan unit, inventory unit, and base conversion.
+- Numeric EAN-8, UPC-A, and EAN-13 values are check-digit validated. Other string values remain valid Code 128-compatible internal barcodes; leading zeroes are preserved.
+- Barcode onboarding rejects an active duplicate with `409` and code `BARCODE_ALREADY_ASSIGNED`. Unknown scan values return `400` with code `BARCODE_NOT_FOUND` and do not create inventory.
+- Scan sessions retain both `scanned_quantity` (packages/scans) and `base_quantity` (physical inventory pieces). Confirmation writes the base quantity only after review.
 
 Validation:
 

@@ -22,13 +22,11 @@ Key decisions:
 - SQLAlchemy models mirror the PostgreSQL schema.
 - Repository classes isolate persistence queries.
 - Service classes own business rules and transaction boundaries.
-<<<<<<< HEAD
 - OCR is behind an interface in `app/ai`. The local provider reads text-native PDFs through `pypdf` and invokes Tesseract for supported images, returning explicit safe failures when a format requires unavailable conversion or image-PDF OCR.
-- Purchases are queue/draft/review/confirm to prevent accidental stock changes; upload commits the job before background recognition begins. Purchase edits use optimistic versions and append purchase audit records; only confirmation writes stock history.
-=======
-- OCR is behind an interface in `app/ai`.
 - Purchases are queue/draft/review/confirm to prevent accidental stock changes; upload commits the job before background recognition begins. Purchase edits use optimistic versions and append purchase audit records; only confirmation writes stock history. `services/discount_calculator.py` is the server-side decimal authority for purchase discount, tax, invoice allocation, and free-quantity cost calculations.
->>>>>>> shop-inventory
+- `ProductVariant` is the store-scoped sellable inventory identity. `InventoryCostLot` preserves each received variant cost and remaining quantity. POS sale creation locks variants and lots, writes immutable sale snapshots and variant-linked stock movements, and keeps `Product.current_stock` and `product_inventory` as compatibility aggregates for existing reports.
+- `StockScanSession` is a store-scoped persistent draft. Barcode lookup resolves one `ProductVariant`; confirmation locks the session and variants, appends explicit count/opening movements, updates compatibility aggregates and cost lots, then commits once.
+- `ProductBarcode` is the store-scoped barcode identity layer. It maps each scanner value to one exact sellable variant and package configuration, preserves string/leading-zero identifiers, stores package-to-base-piece conversion, and records each assignment in `ProductBarcodeAudit`. Scan-session lines are keyed by barcode mapping so different package configurations for the same variant never merge accidentally.
 - Catalog and product duplicate/delete rules live in services and repositories, not React.
 - API errors are normalized in FastAPI exception handlers before reaching the client. Error payloads and response headers include a request ID, while the frontend keeps error presentation separate from transport so a request can produce one local toast and one optional inline state.
 - Product images are stored as uploaded files and referenced from products by `image_url`.
