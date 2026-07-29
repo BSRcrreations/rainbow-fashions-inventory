@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, CheckCircle2, ClipboardCheck, Download, FileText, Pencil, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApiError, api } from "../api/client";
+import BarcodeScannerInput from "../components/BarcodeScannerInput";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ErrorState from "../components/ErrorState";
 import { SkeletonRows } from "../components/LoadingState";
@@ -9,7 +10,7 @@ import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { useToast } from "../components/ToastProvider";
 import { Button } from "../components/ui/button";
-import type { CategoryHierarchy, Purchase, PurchaseDetail, PurchaseItem } from "../types";
+import type { CategoryHierarchy, Product, ProductVariantBarcode, Purchase, PurchaseDetail, PurchaseItem } from "../types";
 import { money, shortDate } from "../utils/format";
 import { addMoney, addQuantity, previewInvoiceDiscount, previewPurchaseLine, subtractMoney } from "../utils/purchaseDiscount";
 
@@ -175,6 +176,30 @@ export default function PurchaseDetailPage() {
     setDirty(true);
   }
 
+  async function scanPurchaseItem(barcode: string, signal: AbortSignal) {
+    if (!editing) throw new Error("Click Edit before scanning items into this purchase draft");
+    const variant = await api.get<ProductVariantBarcode>(`/product-variants/by-barcode/${encodeURIComponent(barcode)}`, { signal });
+    const product = await api.get<Product>(`/products/${variant.product_id}`, { signal });
+    const amount = variant.package_quantity;
+    setDraft((current) => {
+      if (!current) return current;
+      const existingIndex = current.items.findIndex((item) => item.product_variant_id === variant.variant_id);
+      if (existingIndex >= 0) {
+        const items = current.items.map((item, index) => index === existingIndex ? { ...item, quantity: Number(item.quantity) + amount, chargeable_quantity: String(Number(item.quantity) + amount) } : item);
+        return { ...current, items };
+      }
+      const item: PurchaseItem = {
+        ...blankItem(), product_id: variant.product_id, matched_product_id: variant.product_id, product_variant_id: variant.variant_id,
+        product_name: variant.product_name, barcode: variant.barcode, internal_sku: variant.sku, category_id: variant.category_id, category_name: variant.category, brand_id: variant.brand_id, brand_name: variant.brand,
+        size: variant.size ?? "", color: variant.color ?? "", style_code: variant.style_code, quantity: amount, chargeable_quantity: String(amount),
+        purchase_price: product.purchase_price, list_unit_price: product.purchase_price, selling_price: variant.selling_price, mrp: variant.mrp,
+      };
+      return { ...current, items: [...current.items, item] };
+    });
+    setDirty(true); setError(null);
+    toast.success(`${variant.product_name} added to draft${amount > 1 ? ` (${amount} base pieces)` : ""}`);
+  }
+
   function startEditing() {
     if (!editable) return;
     setDraft(purchase ? draftFrom(purchase) : null);
@@ -303,6 +328,7 @@ export default function PurchaseDetailPage() {
         <div><h2 className="text-lg font-semibold">Product items</h2><p className="text-sm text-muted">Select the category first, then its brand. Tax is calculated once at invoice level.</p></div>
         {editing ? <Button size="sm" variant="secondary" onClick={() => { setDraft((current) => current ? { ...current, items: [...current.items, blankItem()] } : current); setDirty(true); }}><Plus size={16} /> Add item</Button> : null}
       </div>
+      {editing ? <div className="border-b border-border p-4"><BarcodeScannerInput label="Scan purchase item" placeholder="Scan a product barcode to add it to this draft" onScan={scanPurchaseItem} /></div> : null}
       <div className="overflow-x-auto">
         <table className="ds-table min-w-[1750px]">
           <thead><tr><th>#</th><th>Product</th><th>Category</th><th>Brand</th><th>Style</th><th>Internal SKU</th><th>Barcode</th><th>HSN</th><th>Size</th><th>Colour</th><th className="text-right">Qty</th><th>Unit</th><th className="text-right">List cost</th><th className="text-right">MRP</th><th className="text-right">Selling price</th><th className="text-right">Line subtotal</th><th>Match</th>{editing ? <th /> : null}</tr></thead>

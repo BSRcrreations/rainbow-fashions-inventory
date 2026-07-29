@@ -1,8 +1,9 @@
-import { FormEvent, KeyboardEvent, useMemo, useRef, useState } from "react";
+import { FormEvent, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Banknote, CheckCircle2, CreditCard, Minus, PackageOpen, Plus, ReceiptText, ScanLine, Search, ShoppingCart, Smartphone, Trash2, WalletCards, X } from "lucide-react";
+import { Banknote, CheckCircle2, CreditCard, Minus, PackageOpen, Plus, ReceiptText, Search, ShoppingCart, Smartphone, Trash2, WalletCards, X } from "lucide-react";
 import { api } from "../api/client";
 import Dialog from "../components/Dialog";
+import BarcodeScannerInput from "../components/BarcodeScannerInput";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
 import { SkeletonRows } from "../components/LoadingState";
@@ -10,7 +11,7 @@ import PageHeader from "../components/PageHeader";
 import { useToast } from "../components/ToastProvider";
 import { Button } from "../components/ui/button";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
-import type { Sale, SaleCatalogProduct, SaleCatalogVariant } from "../types";
+import type { ProductVariantBarcode, Sale, SaleCatalogProduct, SaleCatalogVariant } from "../types";
 import { money } from "../utils/format";
 
 type PaymentMode = "CASH" | "UPI" | "CARD" | "BANK" | "OTHER";
@@ -31,9 +32,7 @@ export default function NewSalePage() {
   const toast = useToast();
   const queryClient = useQueryClient();
   const searchRef = useRef<HTMLInputElement>(null);
-  const barcodeRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
-  const [barcode, setBarcode] = useState("");
   const [scanError, setScanError] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<SaleCatalogProduct | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -54,7 +53,7 @@ export default function NewSalePage() {
   const total = Math.max(0, subtotal - discountAmount);
   const itemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
 
-  function addVariant(product: SaleCatalogProduct, variant: SaleCatalogVariant, focusTarget: HTMLInputElement | null = searchRef.current) {
+  function addVariant(product: SaleCatalogProduct, variant: SaleCatalogVariant, quantityToAdd = 1, focusTarget: HTMLInputElement | null = searchRef.current) {
     if (!variant.is_active || variant.available_stock <= 0) {
       toast.error(`${product.name} (${variantLabel(variant)}) is out of stock`);
       return;
@@ -63,37 +62,29 @@ export default function NewSalePage() {
     setCart((current) => {
       const existing = current.find((line) => line.variant.variant_id === variant.variant_id);
       if (existing) {
-        if (existing.quantity >= variant.available_stock) {
+        if (existing.quantity + quantityToAdd > variant.available_stock) {
           toast.error(`Only ${variant.available_stock} units available`);
           return current;
         }
-        return current.map((line) => line.variant.variant_id === variant.variant_id ? { ...line, quantity: line.quantity + 1 } : line);
+        return current.map((line) => line.variant.variant_id === variant.variant_id ? { ...line, quantity: line.quantity + quantityToAdd } : line);
       }
-      return [...current, { product, variant, quantity: 1 }];
+      if (quantityToAdd > variant.available_stock) { toast.error(`Only ${variant.available_stock} units available`); return current; }
+      return [...current, { product, variant, quantity: quantityToAdd }];
     });
     setSelectedProduct(null);
     setSearch("");
     focusTarget?.focus();
   }
 
-  const scanMutation = useMutation({
-    mutationFn: (value: string) => api.get<SaleCatalogVariant>(`/sales/catalog/barcode/${encodeURIComponent(value)}`),
-    onSuccess: (variant) => {
-      const product = catalog.find((entry) => entry.variants.some((candidate) => candidate.variant_id === variant.variant_id))
-        ?? { product_id: "scanned", name: "Scanned product", total_available_stock: variant.available_stock, variants: [variant] };
-      setScanError("");
-      addVariant(product, variant, barcodeRef.current);
-    },
-    onError: (cause) => {
-      const message = cause instanceof Error ? cause.message : "Unknown barcode";
-      setScanError(message.toLowerCase().includes("not found") ? "Unknown barcode. Check the label and try again." : message);
-    },
-    onSettled: () => { setBarcode(""); window.requestAnimationFrame(() => barcodeRef.current?.focus()); },
-  });
-
-  function scanBarcode() {
-    const value = barcode.trim();
-    if (value && !scanMutation.isPending) scanMutation.mutate(value);
+  async function scanBarcode(value: string, signal: AbortSignal) {
+    const found = await api.get<ProductVariantBarcode>(`/product-variants/by-barcode/${encodeURIComponent(value)}`, { signal });
+    if (!found.active) throw new Error("This barcode is inactive");
+    if (found.package_quantity > 1 && found.sale_mode === "PIECE_ONLY") throw new Error("This package barcode is not enabled for sale");
+    const variant: SaleCatalogVariant = { variant_id: found.variant_id, size: found.size, color: found.color, style_code: found.style_code, sku: found.sku, barcode: found.barcode, mrp: found.mrp, selling_price: found.selling_price, available_stock: found.current_available_stock, classification_review_required: false, is_active: found.active };
+    const product: SaleCatalogProduct = { product_id: found.product_id, name: found.product_name, category_name: found.category, brand_name: found.brand, total_available_stock: found.current_available_stock, variants: [variant] };
+    setScanError("");
+    addVariant(product, variant, found.package_quantity);
+    toast.success(`${found.product_name} added${found.package_quantity > 1 ? ` (${found.package_quantity} pieces)` : ""}`);
   }
 
   function changeQuantity(variantId: string, change: number) {
@@ -127,10 +118,7 @@ export default function NewSalePage() {
     <PageHeader title="New Sale" subtitle="Select the exact size, style, barcode and price before adding it to the cart" />
     <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
       <section className="min-w-0">
-        <div className="mb-4 rounded-lg border border-primary-200 bg-primary-50/60 p-3 shadow-sm">
-          <label className="flex items-center gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-primary-700 text-white"><ScanLine size={19} /></div><div className="min-w-0 flex-1"><div className="text-sm font-semibold text-foreground">Barcode scanner</div><input ref={barcodeRef} autoFocus aria-label="Scan product barcode" className="mt-1 w-full border-0 bg-transparent p-0 text-sm outline-none placeholder:text-slate-400" placeholder="Scan a variant barcode and press Enter" value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => { if (event.key === "Enter") { event.preventDefault(); scanBarcode(); } }} autoComplete="off" /></div>{scanMutation.isPending ? <span className="text-xs font-semibold text-primary-700">Looking up</span> : null}</label>
-          {scanError ? <p className="mt-2 text-sm font-medium text-rose-700">{scanError}</p> : null}
-        </div>
+        <div className="mb-4"><BarcodeScannerInput autoFocus label="Barcode scanner" placeholder="Scan an exact variant barcode and press Enter" onScan={scanBarcode} />{scanError ? <p className="mt-2 text-sm font-medium text-rose-700">{scanError}</p> : null}</div>
         <div className="mb-4 flex h-12 items-center rounded-lg border border-slate-200 bg-white px-4 shadow-sm"><Search size={19} className="shrink-0 text-slate-400" /><input ref={searchRef} aria-label="Search products" className="min-w-0 flex-1 border-0 px-3 outline-none" placeholder="Search product, SKU, style or barcode" value={search} onChange={(event) => setSearch(event.target.value)} />{search ? <button type="button" onClick={() => setSearch("")} aria-label="Clear product search"><X size={18} className="text-slate-400" /></button> : null}</div>
         {catalogQuery.isLoading ? <SkeletonRows rows={6} /> : catalogQuery.error ? <ErrorState message={catalogQuery.error instanceof Error ? catalogQuery.error.message : "Unable to load the sellable catalog"} /> : catalog.length ? <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">{catalog.map((product) => <button key={product.product_id} type="button" disabled={product.total_available_stock <= 0} onClick={() => product.variants.length === 1 ? addVariant(product, product.variants[0]) : setSelectedProduct(product)} className="group flex min-h-28 items-start gap-3 rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-teal-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-55"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-400"><PackageOpen size={21} /></div><div className="min-w-0 flex-1"><div className="truncate font-semibold text-slate-950">{product.name}</div><div className="mt-1 truncate text-xs text-slate-500">{product.category_name} · {product.brand_name}</div><div className="mt-3 flex items-center justify-between gap-2"><strong className="text-teal-800">{product.variants.length} variant{product.variants.length === 1 ? "" : "s"}</strong><span className={`text-xs font-semibold ${product.total_available_stock ? "text-slate-500" : "text-red-600"}`}>{product.total_available_stock} in stock</span></div></div></button>)}</div> : <div className="rounded-lg border border-slate-200 bg-white"><EmptyState icon={PackageOpen} title="No sellable variants found" description="Confirm purchase items first, then try product name, SKU, style or barcode." /></div>}
       </section>
