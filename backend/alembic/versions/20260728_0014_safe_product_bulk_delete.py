@@ -1,7 +1,7 @@
 """add safe product bulk deletion controls
 
 Revision ID: 20260728_0014
-Revises: 20260728_0013
+Revises: 20260728_0013_merge
 Create Date: 2026-07-28
 """
 
@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = "20260728_0014"
-down_revision = "20260728_0013"
+down_revision = "20260728_0013_merge"
 branch_labels = None
 depends_on = None
 

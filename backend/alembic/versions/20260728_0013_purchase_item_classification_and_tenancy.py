@@ -1,6 +1,6 @@
 """persist purchase classification and scope catalog records to stores
 
-Revision ID: 20260728_0013
+Revision ID: 20260728_0013_classification
 Revises: 20260727_0012
 Create Date: 2026-07-28
 """
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision = "20260728_0013"
+revision = "20260728_0013_classification"
 down_revision = "20260727_0012"
 branch_labels = None
 depends_on = None
