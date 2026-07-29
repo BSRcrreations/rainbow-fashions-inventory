@@ -1,7 +1,8 @@
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Barcode, ChevronLeft, ChevronRight, Download, Edit3, FileDown, FileUp, Filter, ImagePlus, PackageOpen, Plus, RefreshCw, Search, Trash2, Wand2, X } from "lucide-react";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
+import BarcodeScannerInput from "../components/BarcodeScannerInput";
 import BarcodeLabelDialog from "../components/BarcodeLabelDialog";
 import Dialog from "../components/Dialog";
 import EmptyState from "../components/EmptyState";
@@ -13,7 +14,7 @@ import { useToast } from "../components/ToastProvider";
 import { Button } from "../components/ui/button";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useAuth } from "../hooks/useAuth";
-import type { CategoryHierarchy, PaginatedProducts, PricingType, Product } from "../types";
+import type { CategoryHierarchy, PaginatedProducts, PricingType, Product, ProductVariantBarcode } from "../types";
 import { money } from "../utils/format";
 import { productVariantLabel } from "../utils/product";
 
@@ -534,6 +535,23 @@ export default function ProductsPage() {
     }
   }
 
+  async function scanProduct(barcode: string, signal: AbortSignal) {
+    try {
+      const variant = await api.get<ProductVariantBarcode>(`/product-variants/by-barcode/${encodeURIComponent(barcode)}`, { signal });
+      const product = await api.get<Product>(`/products/${variant.product_id}`, { signal });
+      beginEdit(product);
+      toast.success(`${product.name} opened (${variant.size || variant.color || "standard"})`);
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 404) {
+        beginCreate();
+        setForm((current) => ({ ...current, barcode }));
+        toast.success("Barcode not registered. Complete the product form to create it.");
+        return;
+      }
+      throw cause;
+    }
+  }
+
   async function exportProducts(format: "csv" | "xlsx", selected = false) {
     try {
       const blob = selected
@@ -644,6 +662,7 @@ export default function ProductsPage() {
       />
 
       <div className="sticky top-[65px] z-[5] mb-4 rounded-md border border-line bg-white p-3 shadow-sm">
+        <div className="mb-3"><BarcodeScannerInput label="Scan product" placeholder="Scan a known barcode to open it, or scan a new barcode to create a product" onScan={scanProduct} /></div>
         <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 sm:flex">
           <div className="col-span-2 flex h-10 min-w-0 flex-1 items-center rounded-md border border-line bg-white px-3 sm:col-span-1">
           <Search size={16} className="shrink-0 text-slate-400" />
