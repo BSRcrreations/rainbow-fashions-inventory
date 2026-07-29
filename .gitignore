@@ -24,6 +24,12 @@ build/
 # Logs
 *.log
 
+# Database migration artifacts and local configuration
+*.dump
+*.backup
+database-migration-artifacts/
+scripts/database/database-migration.env
+
 # IDE
 .vscode/
 .idea/

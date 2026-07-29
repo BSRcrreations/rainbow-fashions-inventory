@@ -54,6 +54,7 @@ class SaleItem(Base):
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     sale_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("sales.id", ondelete="CASCADE"), nullable=False, index=True)
     product_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True)
+    product_variant_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("product_variants.id", ondelete="RESTRICT"), index=True)
     product_name: Mapped[str] = mapped_column(String(180), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
@@ -63,10 +64,13 @@ class SaleItem(Base):
     barcode_snapshot: Mapped[Optional[str]] = mapped_column(String(80))
     size_snapshot: Mapped[Optional[str]] = mapped_column(String(60))
     color_snapshot: Mapped[Optional[str]] = mapped_column(String(80))
+    style_snapshot: Mapped[Optional[str]] = mapped_column(String(80))
+    mrp_snapshot: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     sale = relationship("Sale", back_populates="items")
     product = relationship("Product", back_populates="sale_items")
+    product_variant = relationship("ProductVariant", back_populates="sale_items")
     return_items = relationship("SaleReturnItem", back_populates="sale_item")
 
 

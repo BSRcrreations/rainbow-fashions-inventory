@@ -409,7 +409,27 @@ class ProductService:
             combinations = ((None, size) for size in sizes)
         else:
             return
-        product.variants.extend(ProductVariant(color=color, size=size) for color, size in combinations)
+        combination_values = list(combinations)
+        stock_per_variant, remainder = divmod(product.current_stock, len(combination_values))
+        for index, (color, size) in enumerate(combination_values, start=1):
+            sku = f"RFV-{uuid4().hex[:12].upper()}"
+            barcode = f"RFV{uuid4().hex[:14].upper()}"
+            identity = "|".join((str(product.id or "pending"), (size or "").casefold(), (color or "").casefold(), "", str(product.mrp or product.selling_price), str(product.selling_price), str(index)))
+            product.variants.append(
+                ProductVariant(
+                    store_id=product.store_id,
+                    color=color,
+                    size=size,
+                    internal_sku=sku,
+                    barcode=barcode,
+                    identity_key=identity,
+                    mrp=product.mrp,
+                    selling_price=product.selling_price,
+                    last_purchase_cost=product.purchase_price,
+                    average_cost=product.purchase_price,
+                    current_stock=stock_per_variant + (1 if index <= remainder else 0),
+                )
+            )
 
     def _products_for_bulk(self, product_ids: list[UUID]) -> list[Product]:
         products = self.repo.list_by_ids(product_ids)

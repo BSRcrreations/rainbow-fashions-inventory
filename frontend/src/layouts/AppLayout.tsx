@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Boxes, ChevronDown, ClipboardPenLine, FolderTree, LayoutDashboard, LogOut, Menu, Package, PackagePlus, ReceiptText, Settings, ShoppingCart, X } from "lucide-react";
+import { Boxes, ChevronDown, ClipboardPenLine, FolderTree, LayoutDashboard, LogOut, Menu, Package, PackagePlus, ReceiptText, ScanLine, Settings, ShoppingCart, X } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 
 const inventoryGroups = [
   { label: "Purchases", icon: PackagePlus, active: (path: string) => ["/purchases", "/categories", "/categories-brands", "/products"].some((prefix) => path.startsWith(prefix)), children: [{ to: "/purchases", label: "Purchase List", icon: PackagePlus }, { to: "/categories-brands", label: "Categories & Brands", icon: FolderTree }, { to: "/products", label: "Products", icon: Package }] },
-  { label: "Stock", icon: Boxes, active: (path: string) => path.startsWith("/stock"), children: [{ to: "/stock", label: "Stock Overview", icon: Boxes, end: true }, { to: "/stock-adjustments", label: "Stock Adjustment", icon: ClipboardPenLine }] },
+  { label: "Stock", icon: Boxes, active: (path: string) => path.startsWith("/stock"), children: [{ to: "/stock", label: "Stock Overview", icon: Boxes, end: true }, { to: "/stock/scan", label: "Scan & Add Stock", icon: ScanLine }, { to: "/stock-adjustments", label: "Stock Adjustment", icon: ClipboardPenLine }] },
 ];
 
 function SidebarContent({ compact = false, onNavigate }: { compact?: boolean; onNavigate?: () => void }) {

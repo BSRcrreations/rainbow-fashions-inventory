@@ -835,7 +835,7 @@ export default function ProductsPage() {
                     <div className="truncate font-semibold text-slate-950"><HighlightText text={product.name} query={debouncedSearch} /></div>
                     <div className="mt-0.5 truncate text-xs text-slate-500"><HighlightText text={product.category?.name} query={debouncedSearch} /> · <HighlightText text={product.subcategory?.name} query={debouncedSearch} /> · <HighlightText text={product.brand?.name} query={debouncedSearch} /></div>
                     <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600">
-                      <span>{productVariantLabel(product)}</span>
+                      <span>{product.variants.length ? `${product.variants.length} sellable variant${product.variants.length === 1 ? "" : "s"}` : productVariantLabel(product)}</span>
                       <span>{product.sku || product.barcode || "No code"}</span>
                     </div>
                   </div>
@@ -886,7 +886,9 @@ export default function ProductsPage() {
                     <div><HighlightText text={product.sku || "-"} query={debouncedSearch} /></div>
                     <div className="text-slate-500"><HighlightText text={product.barcode || "-"} query={debouncedSearch} /></div>
                   </td>
-                  <td className="px-4 py-3">{productVariantLabel(product)}</td>
+                  <td className="px-4 py-3">
+                    {product.variants.length ? <div className="space-y-1 text-xs">{product.variants.slice(0, 4).map((variant) => <div key={variant.id} className="flex min-w-52 items-center justify-between gap-2"><span className="truncate text-slate-700">{[variant.size, variant.color, variant.style_code].filter(Boolean).join(" / ") || "Standard"}</span><span className="whitespace-nowrap text-slate-500">{money(variant.selling_price)} · {variant.current_stock}</span></div>)}{product.variants.length > 4 ? <div className="text-slate-500">+{product.variants.length - 4} more variants</div> : null}</div> : <span className="text-slate-500">No sellable variant</span>}
+                  </td>
                   <td className="px-4 py-3">{money(product.selling_price)}</td>
                   <td className="px-4 py-3">{money(product.purchase_price)}</td>
                   <td className="px-4 py-3">

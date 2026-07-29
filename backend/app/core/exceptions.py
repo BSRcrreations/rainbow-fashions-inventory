@@ -23,8 +23,8 @@ def not_found(resource: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_payload(f"{resource} not found", "not_found"))
 
 
-def conflict(message: str) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error_payload(message, "conflict"))
+def conflict(message: str, code: str = "conflict") -> HTTPException:
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error_payload(message, code))
 
 
 def bad_request(message: str, code: str = "bad_request") -> HTTPException:

@@ -24,9 +24,9 @@ def export_stock_history(
     product_id: Optional[UUID] = None,
     movement_type: Optional[StockMovementType] = None,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
-    movements = StockService(db).history(0, 10000, product_id, movement_type)
+    movements = StockService(db).history(0, 10000, product_id, movement_type, current_user.store_id)
     output = StringIO()
     writer = csv.writer(output)
     writer.writerow(["Product", "Type", "Quantity", "Before", "After", "Reference", "User", "Date"])
@@ -51,9 +51,9 @@ def stock_history(
     product_id: Optional[UUID] = None,
     movement_type: Optional[StockMovementType] = None,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> list:
-    return StockService(db).history(skip, limit, product_id, movement_type)
+    return StockService(db).history(skip, limit, product_id, movement_type, current_user.store_id)
 
 
 @router.post("/adjustments", response_model=StockHistoryRead, status_code=status.HTTP_201_CREATED)
