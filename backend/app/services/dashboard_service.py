@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, time, timezone
 from decimal import Decimal
 
 from sqlalchemy import func
@@ -7,17 +8,19 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models.brand import Brand
 from app.models.category import Category
+from app.models.enums import StockMovementType, UserRole
 from app.models.product import Product
 from app.models.purchase import Purchase
 from app.models.stock_history import StockHistory
-from app.schemas.dashboard import DashboardSummary, LowStockProduct
+from app.models.user import User
+from app.schemas.dashboard import DashboardSummary, LowStockProduct, TodaySaleItem, TodaySalesReport
 
 
 class DashboardService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def summary(self) -> DashboardSummary:
+    def summary(self, current_user: User | None = None) -> DashboardSummary:
         total_products = self.db.query(func.count(Product.id)).scalar() or 0
         total_stock = self.db.query(func.coalesce(func.sum(Product.current_stock), 0)).scalar() or 0
         inventory_value = self.db.query(func.coalesce(func.sum(Product.current_stock * Product.purchase_price), 0)).scalar() or Decimal("0")
@@ -73,6 +76,41 @@ class DashboardService:
             .limit(8)
             .all()
         )
+        today_sales: TodaySalesReport | None = None
+        if current_user is not None and current_user.role == UserRole.OWNER:
+            now = datetime.now(timezone.utc)
+            start_of_day = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
+            end_of_day = datetime.combine(now.date(), time.max, tzinfo=timezone.utc)
+            sale_movements = (
+                self.db.query(StockHistory)
+                .options(joinedload(StockHistory.product))
+                .filter(
+                    StockHistory.movement_type == StockMovementType.SALE,
+                    StockHistory.movement_date >= start_of_day,
+                    StockHistory.movement_date <= end_of_day,
+                )
+                .order_by(StockHistory.movement_date.desc())
+                .all()
+            )
+            today_sales = TodaySalesReport(
+                total_count=len(sale_movements),
+                total_qty=sum(movement.qty for movement in sale_movements),
+                sales=[
+                    TodaySaleItem(
+                        id=movement.id,
+                        product_id=movement.product_id,
+                        product_name=movement.product.name,
+                        size=movement.product.size,
+                        color=movement.product.color,
+                        qty=movement.qty,
+                        before_stock=movement.before_stock,
+                        after_stock=movement.after_stock,
+                        reference=movement.reference,
+                        movement_date=movement.movement_date,
+                    )
+                    for movement in sale_movements
+                ],
+            )
 
         return DashboardSummary(
             total_products=total_products,
@@ -103,4 +141,5 @@ class DashboardService:
             category_distribution=[{"label": name, "value": count} for name, count in category_distribution],
             brand_distribution=[{"label": name, "value": count} for name, count in brand_distribution],
             top_selling_products=[],
+            today_sales=today_sales,
         )

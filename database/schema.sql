@@ -97,6 +97,8 @@ CREATE TABLE products (
     selling_price NUMERIC(12, 2) NOT NULL,
     pricing_type pricing_type NOT NULL,
     mrp NUMERIC(12, 2),
+    gst_rate NUMERIC(5, 2),
+    hsn_code VARCHAR(20),
     current_stock INTEGER NOT NULL DEFAULT 0,
     minimum_stock INTEGER NOT NULL DEFAULT 0,
     barcode VARCHAR(80),

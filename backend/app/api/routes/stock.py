@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from io import StringIO
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
@@ -50,10 +51,20 @@ def stock_history(
     limit: int = 100,
     product_id: Optional[UUID] = None,
     movement_type: Optional[StockMovementType] = None,
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list:
-    return StockService(db).history(skip, limit, product_id, movement_type, current_user.store_id)
+    return StockService(db).history(
+        skip,
+        limit,
+        product_id,
+        movement_type,
+        current_user.store_id,
+        from_date,
+        to_date,
+    )
 
 
 @router.post("/adjustments", response_model=StockHistoryRead, status_code=status.HTTP_201_CREATED)

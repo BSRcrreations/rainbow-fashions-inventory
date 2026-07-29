@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
@@ -27,8 +28,10 @@ class StockService:
         product_id: Optional[UUID] = None,
         movement_type: Optional[StockMovementType] = None,
         store_id: Optional[UUID] = None,
+        from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None,
     ) -> list[StockHistory]:
-        return self.repo.list_recent(skip, limit, product_id, movement_type, store_id)
+        return self.repo.list_recent(skip, limit, product_id, movement_type, store_id, from_date, to_date)
 
     def adjust(self, payload: StockAdjustmentCreate, current_user: User) -> StockHistory:
         if not current_user.store_id:
