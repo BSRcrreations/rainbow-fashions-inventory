@@ -186,3 +186,63 @@ ON CONFLICT (product_id, store_id) DO UPDATE
 SET
     current_stock = EXCLUDED.current_stock,
     minimum_stock = EXCLUDED.minimum_stock;
+
+UPDATE products AS product
+SET store_id = inventory.store_id
+FROM product_inventory AS inventory
+WHERE inventory.product_id = product.id
+  AND product.store_id IS NULL;
+
+INSERT INTO product_variants (
+    id, store_id, product_id, color, size, style_code, internal_sku,
+    barcode, identity_key, mrp, selling_price, last_purchase_cost,
+    average_cost, current_stock, classification_review_required, is_active
+)
+SELECT
+    gen_random_uuid(),
+    product.store_id,
+    product.id,
+    product.color,
+    product.size,
+    'SEED',
+    'SEED-' || replace(product.id::text, '-', ''),
+    'VAR-' || replace(product.id::text, '-', ''),
+    'seed|' || product.id::text,
+    product.mrp,
+    product.selling_price,
+    product.purchase_price,
+    product.purchase_price,
+    inventory.current_stock,
+    FALSE,
+    TRUE
+FROM products AS product
+JOIN product_inventory AS inventory ON inventory.product_id = product.id
+ON CONFLICT (store_id, identity_key) DO UPDATE
+SET
+    selling_price = EXCLUDED.selling_price,
+    last_purchase_cost = EXCLUDED.last_purchase_cost,
+    average_cost = EXCLUDED.average_cost,
+    current_stock = EXCLUDED.current_stock,
+    is_active = TRUE;
+
+INSERT INTO inventory_cost_lots (
+    id, store_id, product_variant_id, received_quantity, remaining_quantity,
+    unit_purchase_cost, allocated_landed_cost, effective_unit_cost, lot_reference
+)
+SELECT
+    gen_random_uuid(),
+    variant.store_id,
+    variant.id,
+    variant.current_stock,
+    variant.current_stock,
+    variant.last_purchase_cost,
+    0,
+    variant.average_cost,
+    'Seed inventory'
+FROM product_variants AS variant
+WHERE variant.current_stock > 0
+  AND NOT EXISTS (
+      SELECT 1
+      FROM inventory_cost_lots AS lot
+      WHERE lot.product_variant_id = variant.id
+  );

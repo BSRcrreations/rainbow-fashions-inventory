@@ -85,6 +85,7 @@ CREATE TABLE suppliers (
 
 CREATE TABLE products (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID REFERENCES stores(id) ON DELETE SET NULL,
     category_id UUID NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
     subcategory_id UUID NOT NULL REFERENCES subcategories(id) ON DELETE RESTRICT,
     brand_id UUID NOT NULL REFERENCES brands(id) ON DELETE RESTRICT,
@@ -106,6 +107,7 @@ CREATE TABLE products (
     warehouse VARCHAR(120),
     image_url VARCHAR(500),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    is_test_data BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT ck_products_purchase_price_non_negative CHECK (purchase_price >= 0),
@@ -118,6 +120,7 @@ CREATE TABLE products (
     ),
     CONSTRAINT fk_products_subcategory_category FOREIGN KEY (subcategory_id, category_id) REFERENCES subcategories(id, category_id) ON DELETE RESTRICT,
     CONSTRAINT fk_products_brand_category FOREIGN KEY (brand_id, category_id) REFERENCES brands(id, category_id) ON DELETE RESTRICT,
+    CONSTRAINT uq_products_catalog_variant UNIQUE (category_id, subcategory_id, brand_id, name, size, color),
     CONSTRAINT uq_products_sku UNIQUE (sku),
     CONSTRAINT uq_products_barcode UNIQUE (barcode)
 );
@@ -327,6 +330,7 @@ CREATE TABLE sale_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sale_id UUID NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
     product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    product_variant_id UUID REFERENCES product_variants(id) ON DELETE RESTRICT,
     product_name VARCHAR(180) NOT NULL,
     quantity INTEGER NOT NULL,
     unit_price NUMERIC(12, 2) NOT NULL,
@@ -336,6 +340,8 @@ CREATE TABLE sale_items (
     barcode_snapshot VARCHAR(80),
     size_snapshot VARCHAR(60),
     color_snapshot VARCHAR(80),
+    style_snapshot VARCHAR(80),
+    mrp_snapshot NUMERIC(12, 2),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT ck_sale_items_quantity_positive CHECK (quantity > 0),
     CONSTRAINT ck_sale_items_amounts_non_negative CHECK (unit_price >= 0 AND unit_cost >= 0 AND line_total >= 0)
@@ -400,6 +406,7 @@ CREATE INDEX ix_subcategories_category_id ON subcategories(category_id);
 CREATE INDEX ix_subcategories_name ON subcategories(name);
 CREATE INDEX ix_suppliers_name ON suppliers(name);
 CREATE INDEX ix_products_category_id ON products(category_id);
+CREATE INDEX ix_products_store_id ON products(store_id);
 CREATE INDEX ix_products_brand_id ON products(brand_id);
 CREATE INDEX ix_products_subcategory_id ON products(subcategory_id);
 CREATE INDEX ix_products_sku ON products(sku);
@@ -407,6 +414,7 @@ CREATE INDEX ix_products_name ON products(name);
 CREATE INDEX ix_products_color ON products(color);
 CREATE INDEX ix_products_size ON products(size);
 CREATE INDEX ix_products_barcode ON products(barcode);
+CREATE INDEX ix_products_is_test_data ON products(is_test_data);
 CREATE INDEX ix_product_variants_product_id ON product_variants(product_id);
 CREATE INDEX ix_products_search ON products USING gin (
     to_tsvector('simple', coalesce(sku, '') || ' ' || coalesce(name, '') || ' ' || coalesce(size, '') || ' ' || coalesce(color, '') || ' ' || coalesce(barcode, ''))
@@ -419,6 +427,94 @@ CREATE INDEX ix_purchases_status ON purchases(status);
 CREATE INDEX ix_purchases_invoice_number ON purchases(invoice_number);
 CREATE INDEX ix_purchases_invoice_date ON purchases(invoice_date);
 CREATE INDEX ix_purchases_purchase_date ON purchases(purchase_date);
+-- Bring the bootstrap schema in line with the current application models.
+ALTER TABLE stores
+    ADD COLUMN allow_test_data_purge BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE purchases
+    ADD COLUMN invoice_discount_type VARCHAR(40) NOT NULL DEFAULT 'NONE',
+    ADD COLUMN invoice_discount_percentage NUMERIC(7, 4) NOT NULL DEFAULT 0,
+    ADD COLUMN invoice_discount_amount NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN invoice_discount_reason VARCHAR(500),
+    ADD COLUMN invoice_discount_allocation_method VARCHAR(40) NOT NULL DEFAULT 'BY_ITEM_VALUE',
+    ADD COLUMN invoice_tax_rate NUMERIC(5, 2) NOT NULL DEFAULT 0;
+
+ALTER TABLE purchase_items
+    ADD COLUMN product_variant_id UUID REFERENCES product_variants(id) ON DELETE SET NULL,
+    ADD COLUMN internal_sku VARCHAR(120),
+    ADD COLUMN style_code VARCHAR(80),
+    ADD COLUMN list_unit_price NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN invoiced_unit_price NUMERIC(18, 2),
+    ADD COLUMN discount_type VARCHAR(40) NOT NULL DEFAULT 'NONE',
+    ADD COLUMN discount_percentage NUMERIC(7, 4) NOT NULL DEFAULT 0,
+    ADD COLUMN discount_per_unit NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN discount_amount NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN discount_reason VARCHAR(500),
+    ADD COLUMN discount_source VARCHAR(40) NOT NULL DEFAULT 'INVOICE_EXTRACTED',
+    ADD COLUMN free_quantity NUMERIC(18, 4) NOT NULL DEFAULT 0,
+    ADD COLUMN chargeable_quantity NUMERIC(18, 4) NOT NULL DEFAULT 0,
+    ADD COLUMN accepted_quantity NUMERIC(18, 4) NOT NULL DEFAULT 0,
+    ADD COLUMN gross_amount NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN taxable_amount NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN net_line_amount NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN effective_unit_cost NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN landed_unit_cost NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN allocated_invoice_discount NUMERIC(18, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN promotion_id UUID,
+    ADD COLUMN discount_rule_id UUID,
+    ADD COLUMN discount_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN discount_verified_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    ADD COLUMN discount_verified_at TIMESTAMPTZ;
+
+ALTER TABLE product_variants
+    ADD COLUMN store_id UUID REFERENCES stores(id) ON DELETE CASCADE,
+    ADD COLUMN style_code VARCHAR(80),
+    ADD COLUMN model_number VARCHAR(120),
+    ADD COLUMN manufacturer_sku VARCHAR(120),
+    ADD COLUMN internal_sku VARCHAR(120) NOT NULL DEFAULT '',
+    ADD COLUMN barcode VARCHAR(80) NOT NULL DEFAULT '',
+    ADD COLUMN identity_key VARCHAR(500) NOT NULL DEFAULT '',
+    ADD COLUMN mrp NUMERIC(12, 2),
+    ADD COLUMN selling_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN last_purchase_cost NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN average_cost NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN current_stock INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN classification_review_required BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+ALTER TABLE product_variants DROP CONSTRAINT uq_product_variants_combination;
+ALTER TABLE product_variants
+    ADD CONSTRAINT uq_product_variants_store_identity UNIQUE (store_id, identity_key),
+    ADD CONSTRAINT uq_product_variants_store_internal_sku UNIQUE (store_id, internal_sku),
+    ADD CONSTRAINT uq_product_variants_store_barcode UNIQUE (store_id, barcode);
+
+ALTER TABLE stock_history
+    ADD COLUMN product_variant_id UUID REFERENCES product_variants(id) ON DELETE SET NULL,
+    ADD COLUMN purchase_cost_lot_id UUID,
+    ADD COLUMN unit_cost NUMERIC(12, 2);
+
+CREATE TABLE inventory_cost_lots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    product_variant_id UUID NOT NULL REFERENCES product_variants(id) ON DELETE CASCADE,
+    purchase_id UUID REFERENCES purchases(id) ON DELETE SET NULL,
+    purchase_item_id UUID UNIQUE REFERENCES purchase_items(id) ON DELETE SET NULL,
+    supplier_id UUID REFERENCES suppliers(id) ON DELETE SET NULL,
+    received_quantity INTEGER NOT NULL,
+    remaining_quantity INTEGER NOT NULL,
+    unit_purchase_cost NUMERIC(12, 2) NOT NULL,
+    allocated_landed_cost NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    effective_unit_cost NUMERIC(12, 2) NOT NULL,
+    received_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    lot_reference VARCHAR(180),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE stock_history
+    ADD CONSTRAINT fk_stock_history_purchase_cost_lot_id
+    FOREIGN KEY (purchase_cost_lot_id) REFERENCES inventory_cost_lots(id) ON DELETE SET NULL;
+
 CREATE INDEX ix_purchases_received_date ON purchases(received_date);
 CREATE INDEX ix_purchases_image_hash ON purchases(image_hash);
 CREATE INDEX ix_purchases_created_at ON purchases(created_at);
@@ -426,10 +522,16 @@ CREATE INDEX ix_purchase_items_purchase_id ON purchase_items(purchase_id);
 CREATE INDEX ix_purchase_items_product_id ON purchase_items(product_id);
 CREATE INDEX ix_purchase_items_matched_product_id ON purchase_items(matched_product_id);
 CREATE INDEX ix_purchase_items_barcode ON purchase_items(barcode);
+CREATE INDEX ix_purchase_items_product_variant_id ON purchase_items(product_variant_id);
+CREATE INDEX ix_product_variants_store_id ON product_variants(store_id);
+CREATE INDEX ix_inventory_cost_lots_store_id ON inventory_cost_lots(store_id);
+CREATE INDEX ix_inventory_cost_lots_product_variant_id ON inventory_cost_lots(product_variant_id);
 CREATE INDEX ix_stock_history_product_id ON stock_history(product_id);
 CREATE INDEX ix_stock_history_store_id ON stock_history(store_id);
 CREATE INDEX ix_stock_history_movement_type ON stock_history(movement_type);
 CREATE INDEX ix_stock_history_movement_date ON stock_history(movement_date);
+CREATE INDEX ix_stock_history_product_variant_id ON stock_history(product_variant_id);
+CREATE INDEX ix_stock_history_purchase_cost_lot_id ON stock_history(purchase_cost_lot_id);
 CREATE INDEX ix_sales_sale_date ON sales(sale_date);
 CREATE INDEX ix_sales_invoice_number ON sales(invoice_number);
 CREATE INDEX ix_sales_customer_name ON sales(customer_name);
@@ -438,6 +540,7 @@ CREATE INDEX ix_sales_cashier_id ON sales(cashier_id);
 CREATE INDEX ix_sales_status ON sales(status);
 CREATE INDEX ix_sale_items_sale_id ON sale_items(sale_id);
 CREATE INDEX ix_sale_items_product_id ON sale_items(product_id);
+CREATE INDEX ix_sale_items_product_variant_id ON sale_items(product_variant_id);
 CREATE INDEX ix_sale_audits_sale_id ON sale_audits(sale_id);
 CREATE INDEX ix_sale_returns_sale_id ON sale_returns(sale_id);
 CREATE INDEX ix_sale_returns_store_id ON sale_returns(store_id);
