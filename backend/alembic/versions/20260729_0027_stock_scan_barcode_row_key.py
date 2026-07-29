@@ -1,15 +1,15 @@
 """key scan review rows by their barcode
 
-Revision ID: 20260728_0025
-Revises: 20260728_0024
+Revision ID: 20260729_0027
+Revises: 20260729_0026
 Create Date: 2026-07-28
 """
 
 from alembic import op
 
 
-revision = "20260728_0025"
-down_revision = "20260728_0024"
+revision = "20260729_0027"
+down_revision = "20260729_0026"
 branch_labels = None
 depends_on = None
 

@@ -1,7 +1,7 @@
 """add persistent barcode stock scan sessions
 
-Revision ID: 20260728_0023
-Revises: 20260728_0022
+Revision ID: 20260729_0025
+Revises: 20260729_0024
 Create Date: 2026-07-28
 """
 
@@ -10,8 +10,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 
-revision = "20260728_0023"
-down_revision = "20260728_0022"
+revision = "20260729_0025"
+down_revision = "20260729_0024"
 branch_labels = None
 depends_on = None
 

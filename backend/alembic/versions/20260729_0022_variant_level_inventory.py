@@ -1,7 +1,7 @@
 """add variant-level inventory, pricing, and cost lots
 
-Revision ID: 20260728_0020
-Revises: 20260728_0019
+Revision ID: 20260729_0022
+Revises: 20260728_0021
 Create Date: 2026-07-28
 """
 
@@ -14,8 +14,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 
-revision = "20260728_0020"
-down_revision = "20260728_0019"
+revision = "20260729_0022"
+down_revision = "20260728_0021"
 branch_labels = None
 depends_on = None
 

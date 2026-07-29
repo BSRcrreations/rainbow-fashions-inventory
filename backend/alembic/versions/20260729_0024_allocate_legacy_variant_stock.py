@@ -1,7 +1,7 @@
 """allocate legacy aggregate stock to sellable variants
 
-Revision ID: 20260728_0022
-Revises: 20260728_0021
+Revision ID: 20260729_0024
+Revises: 20260729_0023
 Create Date: 2026-07-28
 """
 
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision = "20260728_0022"
-down_revision = "20260728_0021"
+revision = "20260729_0024"
+down_revision = "20260729_0023"
 branch_labels = None
 depends_on = None
 

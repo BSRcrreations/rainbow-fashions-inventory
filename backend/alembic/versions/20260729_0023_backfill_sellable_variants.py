@@ -1,7 +1,7 @@
 """backfill sellable variants for legacy product stock
 
-Revision ID: 20260728_0021
-Revises: 20260728_0020
+Revision ID: 20260729_0023
+Revises: 20260729_0022
 Create Date: 2026-07-28
 """
 
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision = "20260728_0021"
-down_revision = "20260728_0020"
+revision = "20260729_0023"
+down_revision = "20260729_0022"
 branch_labels = None
 depends_on = None
 

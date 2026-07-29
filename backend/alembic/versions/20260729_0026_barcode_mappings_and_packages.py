@@ -1,7 +1,7 @@
 """add barcode mappings and package conversion
 
-Revision ID: 20260728_0024
-Revises: 20260728_0023
+Revision ID: 20260729_0026
+Revises: 20260729_0025
 Create Date: 2026-07-28
 """
 
@@ -11,8 +11,8 @@ from sqlalchemy.dialects import postgresql
 from uuid import uuid4
 
 
-revision = "20260728_0024"
-down_revision = "20260728_0023"
+revision = "20260729_0026"
+down_revision = "20260729_0025"
 branch_labels = None
 depends_on = None
 
