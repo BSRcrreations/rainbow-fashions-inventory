@@ -36,6 +36,7 @@ export interface Brand {
   category_id: string;
   name: string;
   description?: string | null;
+  logo_url?: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -80,6 +81,11 @@ export interface Product {
   category?: Category | null;
   subcategory?: SubCategory | null;
   brand?: Brand | null;
+  brand_name?: string | null;
+  brand_logo_url?: string | null;
+  category_name?: string | null;
+  variant_count?: number;
+  total_stock?: number;
 }
 
 export interface ProductVariant {
@@ -216,6 +222,11 @@ export interface SaleCatalogProduct {
   name: string;
   category_name?: string | null;
   brand_name?: string | null;
+  brand_logo_url?: string | null;
+  product_image_url?: string | null;
+  variant_count: number;
+  total_stock: number;
+  minimum_stock: number;
   total_available_stock: number;
   variants: SaleCatalogVariant[];
 }

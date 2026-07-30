@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, File, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_manager_or_owner
@@ -34,6 +34,21 @@ def get_brand(brand_id: UUID, db: Session = Depends(get_db), current_user: User 
 @router.put("/{brand_id}", response_model=BrandRead)
 def update_brand(brand_id: UUID, payload: BrandUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
     return BrandService(db).update(brand_id, payload, current_user)
+
+
+@router.post("/{brand_id}/logo", response_model=BrandRead)
+async def upload_brand_logo(
+    brand_id: UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_manager_or_owner),
+):
+    return await BrandService(db).upload_logo(brand_id, file, current_user)
+
+
+@router.delete("/{brand_id}/logo", response_model=BrandRead)
+def delete_brand_logo(brand_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+    return BrandService(db).delete_logo(brand_id, current_user)
 
 
 @router.delete("/{brand_id}", status_code=status.HTTP_204_NO_CONTENT)

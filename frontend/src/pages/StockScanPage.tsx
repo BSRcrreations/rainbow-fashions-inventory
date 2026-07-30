@@ -1,6 +1,6 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Barcode, CheckCircle2, ClipboardCheck, Minus, PackagePlus, Pencil, Plus, ScanLine, Search, Trash2, Volume2, VolumeX } from "lucide-react";
+import { CheckCircle2, ClipboardCheck, Minus, PackagePlus, Pencil, Plus, ScanLine, Search, Trash2, Volume2, VolumeX } from "lucide-react";
 import { api } from "../api/client";
 import ConfirmDialog from "../components/ConfirmDialog";
 import Dialog from "../components/Dialog";
@@ -43,6 +43,7 @@ export default function StockScanPage() {
   const [latestScan, setLatestScan] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [unknownBarcode, setUnknownBarcode] = useState("");
+  const [unknownDialogOpen, setUnknownDialogOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState("");
@@ -93,7 +94,7 @@ export default function StockScanPage() {
     onError: (cause) => {
       const message = cause instanceof Error ? cause.message : "Unable to resolve barcode";
       setError(message);
-      if (message.toLowerCase().includes("not assigned") || message.includes("BARCODE_NOT_FOUND")) setUnknownBarcode(latestScan);
+      if (message.toLowerCase().includes("not assigned") || message.includes("BARCODE_NOT_FOUND")) { setUnknownBarcode(latestScan); setUnknownDialogOpen(true); }
       toast.error(message);
     },
     onSettled: () => { setBarcode(""); window.requestAnimationFrame(() => scannerRef.current?.focus()); },
@@ -140,7 +141,7 @@ export default function StockScanPage() {
   }, [session?.items]);
 
   function changeMode(nextMode: StockScanMode) {
-    setMode(nextMode); setError(""); setLatestScan(""); setUnknownBarcode("");
+    setMode(nextMode); setError(""); setLatestScan(""); setUnknownBarcode(""); setUnknownDialogOpen(false);
     const stored = localStorage.getItem(sessionKey(nextMode));
     requestedSessionMode.current = stored ? nextMode : null;
     setSessionId(stored ?? "");
@@ -170,7 +171,6 @@ export default function StockScanPage() {
             <div className="mt-4 flex flex-col gap-3 border-t border-primary-200/70 pt-4 sm:flex-row sm:items-center sm:justify-between"><div className="inline-flex rounded-lg border border-primary-200 bg-white p-1"><button type="button" onClick={() => setQuantityMode("INCREMENT")} className={`rounded-md px-3 py-2 text-xs font-semibold ${quantityMode === "INCREMENT" ? "bg-primary-700 text-white" : "text-slate-600"}`}>Each scan adds 1</button><button type="button" onClick={() => setQuantityMode("QUANTITY_ENTRY")} className={`rounded-md px-3 py-2 text-xs font-semibold ${quantityMode === "QUANTITY_ENTRY" ? "bg-primary-700 text-white" : "text-slate-600"}`}>Enter quantity after scan</button></div>{quantityMode === "QUANTITY_ENTRY" ? <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">Quantity <input className="field-input h-10 w-24" min="1" step="1" type="number" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label> : null}</div>
             {latestScan && !error ? <div className="mt-3 flex items-center gap-2 text-sm font-medium text-success"><CheckCircle2 size={17} /> Latest barcode: {latestScan}</div> : null}
             {error ? <div className="mt-3"><ErrorState message={error} /></div> : null}
-    {unknownBarcode ? <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-200 bg-white p-3"><p className="text-sm text-rose-700">Barcode <strong>{unknownBarcode}</strong> is not assigned to a product.</p>{canAssign ? <Button type="button" variant="secondary" size="sm" onClick={() => setOnboardingOpen(true)}><Barcode size={15} /> Set up barcode</Button> : <span className="text-xs text-muted">Ask an owner or manager to assign it.</span>}</div> : null}
           </form>
           <section className="ds-surface overflow-hidden">
             <div className="flex flex-col gap-3 border-b border-border px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -187,8 +187,12 @@ export default function StockScanPage() {
       </div>
     </div>
     <ConfirmDialog open={confirmOpen} title="Confirm stock session" description="This creates append-only inventory movements for every reviewed difference. It cannot be applied twice." confirmLabel="Confirm stock" loading={confirmMutation.isPending} onCancel={() => setConfirmOpen(false)} onConfirm={() => confirmMutation.mutate()}><div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><div className="font-semibold">{totals.variants} variants · {totals.pieces} pieces</div>{mode === "PHYSICAL_COUNT" ? <div className="mt-1">{totals.positive} excess and {totals.negative} missing pieces will be recorded as count movements.</div> : null}</div></ConfirmDialog>
+    <Dialog open={unknownDialogOpen} onClose={() => { setUnknownDialogOpen(false); setUnknownBarcode(""); window.requestAnimationFrame(() => scannerRef.current?.focus()); }} title="Barcode not registered" description="This barcode is not linked to a product in this store. Nothing has been added to stock.">
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><div className="text-xs font-semibold uppercase tracking-wide">Scanned barcode</div><div className="mt-1 font-mono text-base font-bold">{unknownBarcode}</div></div>
+      <div className="mt-5 flex flex-wrap justify-end gap-2"><Button type="button" variant="secondary" onClick={() => { setUnknownDialogOpen(false); setUnknownBarcode(""); window.requestAnimationFrame(() => scannerRef.current?.focus()); }}>Cancel</Button><Button type="button" variant="secondary" onClick={() => { setUnknownDialogOpen(false); window.requestAnimationFrame(() => scannerRef.current?.focus()); }}>Scan again</Button>{canAssign ? <Button type="button" onClick={() => { setUnknownDialogOpen(false); setOnboardingOpen(true); }}>Create new product</Button> : <span className="self-center text-sm text-muted">Ask an owner or manager to create the product.</span>}</div>
+    </Dialog>
     <Dialog open={assignOpen} title="Onboard barcode for an exact variant" description="Set pack conversion before assigning the barcode. One pack scan can add multiple physical pieces." onClose={() => setAssignOpen(false)} maxWidth="xl"><div className="mb-4 grid gap-3 rounded-xl border border-border bg-slate-50 p-3 sm:grid-cols-2"><label className="field-label">Package quantity<input className="field-input" min="1" type="number" value={packageQuantity} onChange={(event) => setPackageQuantity(event.target.value)} /></label><label className="field-label">Scan unit<select className="field-input" value={scanUnit} onChange={(event) => setScanUnit(event.target.value as "PIECE" | "PACK")}><option value="PIECE">Piece</option><option value="PACK">Pack</option></select></label><p className="sm:col-span-2 text-xs text-muted">A pack of {packageQuantity || "1"} is converted into that many inventory pieces at review and confirmation.</p></div><div className="mb-4 flex h-11 items-center rounded-lg border border-border bg-surface px-3"><Search size={18} className="text-muted" /><input className="min-w-0 flex-1 border-0 px-2 outline-none" placeholder="Search product, SKU, style, or barcode" value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} /></div>{catalogQuery.isLoading ? <p className="text-sm text-muted">Loading variants...</p> : <div className="grid gap-3 sm:grid-cols-2">{(catalogQuery.data ?? []).flatMap((product) => product.variants.map((variant) => <button key={variant.variant_id} type="button" disabled={assignMutation.isPending} onClick={() => assignMutation.mutate(variant.variant_id)} className="rounded-xl border border-border p-4 text-left transition hover:border-primary-400 hover:bg-primary-50"><div className="font-semibold">{product.name}</div><div className="mt-1 text-xs text-muted">{detailLabel(variant)} · {variant.sku}</div><div className="mt-2 text-sm">MRP {variant.mrp ? money(variant.mrp) : "-"} · {money(variant.selling_price)}</div></button>))}</div>}</Dialog>
-    {session ? <BarcodeOnboardingDialog key={`${session.id}:${unknownBarcode}`} open={onboardingOpen} barcode={unknownBarcode} session={session} onClose={() => setOnboardingOpen(false)} onSaved={(next) => { void queryClient.setQueryData(["stock-scan-session", next.id], next); setOnboardingOpen(false); setUnknownBarcode(""); setError(""); toast.success("Product setup saved in the stock-entry session."); window.requestAnimationFrame(() => scannerRef.current?.focus()); }} /> : null}
+    {session ? <BarcodeOnboardingDialog key={`${session.id}:${unknownBarcode}`} open={onboardingOpen} barcode={unknownBarcode} session={session} initialQuantity={quantityMode === "QUANTITY_ENTRY" ? quantity : "1"} onClose={() => { setOnboardingOpen(false); window.requestAnimationFrame(() => scannerRef.current?.focus()); }} onSaved={(next) => { void queryClient.setQueryData(["stock-scan-session", next.id], next); setOnboardingOpen(false); setUnknownBarcode(""); setError(""); toast.success(`Product created and added to ${modeLabel(mode).toLowerCase()} draft.`); window.requestAnimationFrame(() => scannerRef.current?.focus()); }} /> : null}
   </>;
 }
 
