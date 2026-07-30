@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import asyncio
+import inspect
 from io import BytesIO
 from datetime import date
 from decimal import Decimal
@@ -73,6 +74,63 @@ class FakeCatalogRepo:
 
 
 class Stage1ValidationTests(unittest.TestCase):
+    def test_pos_catalog_searches_brand_and_variant_color(self) -> None:
+        source = inspect.getsource(SaleService.catalog)
+
+        self.assertIn("Brand.name.ilike(pattern)", source)
+        self.assertIn("ProductVariant.color.ilike(pattern)", source)
+
+    def test_variant_sale_locks_and_revalidates_stock_before_commit(self) -> None:
+        store_id, variant_id = uuid4(), uuid4()
+        variant = SimpleNamespace(
+            id=variant_id,
+            store_id=store_id,
+            current_stock=1,
+            selling_price=Decimal("499"),
+            average_cost=Decimal("250"),
+            size="L",
+            is_active=True,
+            product=SimpleNamespace(id=uuid4(), name="Prisma Leggings", is_active=True),
+        )
+        db = MagicMock()
+        variant_query = db.query.return_value
+        variant_query.options.return_value.filter.return_value.with_for_update.return_value.first.return_value = variant
+        service = SaleService.__new__(SaleService)
+        service.db = db
+        service.repo = MagicMock()
+        service.repo.get_by_invoice.return_value = None
+        service._store_id = MagicMock(return_value=store_id)
+        payload = SaleCreate(invoice_number="POS-STOCK-TEST", payment_mode="CASH", items=[{"product_variant_id": variant_id, "quantity": 2}])
+
+        with self.assertRaises(HTTPException) as context:
+            service.create(payload, SimpleNamespace(id=uuid4(), store_id=store_id, role="OWNER"))
+
+        self.assertEqual(context.exception.status_code, 400)
+        variant_query.options.return_value.filter.return_value.with_for_update.assert_called_once()
+        db.commit.assert_not_called()
+
+    def test_variant_sale_rejects_a_variant_outside_the_current_store(self) -> None:
+        store_id, foreign_variant_id = uuid4(), uuid4()
+        db = MagicMock()
+        db.query.return_value.options.return_value.filter.return_value.with_for_update.return_value.first.return_value = None
+        service = SaleService.__new__(SaleService)
+        service.db = db
+        service.repo = MagicMock()
+        service.repo.get_by_invoice.return_value = None
+        service._store_id = MagicMock(return_value=store_id)
+        payload = SaleCreate(invoice_number="POS-STORE-TEST", payment_mode="CASH", items=[{"product_variant_id": foreign_variant_id, "quantity": 1}])
+
+        with self.assertRaises(HTTPException) as context:
+            service.create(payload, SimpleNamespace(id=uuid4(), store_id=store_id, role="OWNER"))
+
+        self.assertEqual(context.exception.status_code, 400)
+        db.commit.assert_not_called()
+
+    def test_mapped_barcode_lookup_is_explicitly_store_scoped(self) -> None:
+        source = inspect.getsource(StockScanService.resolve_barcode)
+
+        self.assertIn("ProductVariant.store_id == store_id", source)
+
     @staticmethod
     def _image_bytes(image_format: str) -> bytes:
         output = BytesIO()
