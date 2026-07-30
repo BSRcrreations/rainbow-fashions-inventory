@@ -150,7 +150,23 @@ deploy_phase_3_activate:
       RELEASE_DIR="$APP_DIR/releases/$CI_COMMIT_SHORT_SHA"
       ENV_FILE="$APP_DIR/shared/backend.env"
       test -d "$RELEASE_DIR"
-      test -s "$ENV_FILE" || { echo 'Missing or empty production backend.env.'; exit 1; }
+      # The first hardened deployment may follow releases that kept their
+      # runtime environment inside the active release.  Move that existing
+      # secret file to the persistent shared location once; never generate
+      # or print production credentials in CI.
+      if [ ! -s "$ENV_FILE" ]; then
+        PREVIOUS_ENV_FILE="$APP_DIR/current/backend/.env"
+        if [ -s "$PREVIOUS_ENV_FILE" ]; then
+          mkdir -p "$APP_DIR/shared"
+          cp "$PREVIOUS_ENV_FILE" "$ENV_FILE"
+          chmod 600 "$ENV_FILE"
+          echo 'Bootstrapped shared production backend.env from the active release.'
+        else
+          echo 'Missing production backend.env and no active-release environment is available.'
+          exit 1
+        fi
+        unset PREVIOUS_ENV_FILE
+      fi
       set -a
       . "$ENV_FILE"
       set +a
