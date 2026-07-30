@@ -151,9 +151,11 @@ deploy_phase_3_activate:
       ENV_FILE="$APP_DIR/shared/backend.env"
       test -d "$RELEASE_DIR"
       # The first hardened deployment may follow releases that kept their
-      # runtime environment inside the active release.  Move that existing
-      # secret file to the persistent shared location once; never generate
-      # or print production credentials in CI.
+      # runtime environment inside the active release. Move that existing
+      # secret file to the persistent shared location once. If this is a
+      # legacy deployment with no secret file, create secrets only on the
+      # production host and rotate the existing local PostgreSQL role to the
+      # new generated password. Secrets are never committed or printed.
       if [ ! -s "$ENV_FILE" ]; then
         PREVIOUS_ENV_FILE="$APP_DIR/current/backend/.env"
         if [ -s "$PREVIOUS_ENV_FILE" ]; then
@@ -162,8 +164,32 @@ deploy_phase_3_activate:
           chmod 600 "$ENV_FILE"
           echo 'Bootstrapped shared production backend.env from the active release.'
         else
-          echo 'Missing production backend.env and no active-release environment is available.'
-          exit 1
+          test -d "$APP_DIR/current" || { echo 'No active release is available for secure environment bootstrap.'; exit 1; }
+          mkdir -p "$APP_DIR/shared"
+          umask 077
+          BOOTSTRAP_POSTGRES_PASSWORD="$(od -An -N48 -tx1 /dev/urandom | tr -d ' \n')"
+          BOOTSTRAP_JWT_SECRET="$(od -An -N64 -tx1 /dev/urandom | tr -d ' \n')"
+          BOOTSTRAP_ENV_FILE="$ENV_FILE.bootstrap"
+          {
+            printf '%s\n' 'APP_NAME="Rainbow Fashions Inventory"'
+            printf '%s\n' 'APP_ENV=production' 'DEBUG=false'
+            printf '%s\n' 'POSTGRES_DB=inventory_db' 'POSTGRES_USER=inventory_user'
+            printf 'POSTGRES_PASSWORD=%s\n' "$BOOTSTRAP_POSTGRES_PASSWORD"
+            printf 'DATABASE_URL=postgresql+psycopg://inventory_user:%s@postgres:5432/inventory_db\n' "$BOOTSTRAP_POSTGRES_PASSWORD"
+            printf 'JWT_SECRET_KEY=%s\n' "$BOOTSTRAP_JWT_SECRET"
+            printf '%s\n' 'JWT_ALGORITHM=HS256' 'ACCESS_TOKEN_EXPIRE_MINUTES=480'
+            printf '%s\n' 'CORS_ORIGINS=http://178.238.237.182,https://test.rainbow-fashions.in'
+            printf '%s\n' 'UPLOAD_DIR=app/uploads' 'INVOICE_UPLOAD_DIR=app/uploads/invoices' 'PRODUCT_UPLOAD_DIR=app/uploads/products' 'MAX_UPLOAD_SIZE_MB=15' 'LOG_LEVEL=INFO'
+            printf '%s\n' 'OCR_PROVIDER=local' 'DOCUMENT_AI_PROVIDER=mock' 'DOCUMENT_AI_FALLBACK_PROVIDER=mock' 'DOCUMENT_AI_TIMEOUT_SECONDS=90' 'DOCUMENT_AI_MAX_RETRIES=2' 'DOCUMENT_RETENTION_DAYS=365' 'FAILED_UPLOAD_RETENTION_DAYS=7'
+          } > "$BOOTSTRAP_ENV_FILE"
+          (
+            cd "$APP_DIR/current"
+            docker compose exec -T postgres sh -ec "psql -v ON_ERROR_STOP=1 -U inventory_user -d inventory_db -c \"ALTER ROLE inventory_user WITH PASSWORD '$BOOTSTRAP_POSTGRES_PASSWORD';\""
+          )
+          mv "$BOOTSTRAP_ENV_FILE" "$ENV_FILE"
+          chmod 600 "$ENV_FILE"
+          unset BOOTSTRAP_ENV_FILE BOOTSTRAP_POSTGRES_PASSWORD BOOTSTRAP_JWT_SECRET
+          echo 'Generated and stored a secure production backend.env on the deployment host.'
         fi
         unset PREVIOUS_ENV_FILE
       fi
