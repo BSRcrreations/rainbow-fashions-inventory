@@ -11,10 +11,12 @@ venv/
 .env
 .env.*
 !.env.example
+!backend/.env.docker.example
 
 backend/.env
 frontend/.env
 mobile/.env
+deployment/templates/backend.env.production
 
 # Node
 node_modules/

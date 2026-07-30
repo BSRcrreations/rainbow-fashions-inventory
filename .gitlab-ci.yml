@@ -10,7 +10,7 @@ workflow:
     # Production validation and deployment are intentionally driven only by
     # direct pushes to the deployment branch. Merge requests (including ones
     # that target main) must not create a competing pipeline.
-    - if: '$CI_COMMIT_BRANCH == "shop-inventory"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "shop-inventory"'
 
 variables:
   DEPLOY_BRANCH: "shop-inventory"
@@ -63,13 +63,15 @@ frontend_quality:
 docker_compose_build:
   stage: docker
   image: docker:27-cli
-  allow_failure: true
   before_script:
     - docker version
     - docker compose version
+    - cp backend/.env.docker.example backend/.env
   script:
-    - docker compose config
+    - docker compose config --quiet
     - docker compose build
+  after_script:
+    - rm -f backend/.env
 
 package_release:
   stage: package
@@ -117,7 +119,6 @@ deploy_phase_2_backup:
   environment:
     name: production
     url: $DEPLOY_URL
-  allow_failure: true
   script:
     - |
       set -e
@@ -127,7 +128,7 @@ deploy_phase_2_backup:
       if [ -d "$APP_DIR/current" ]; then
         cd "$APP_DIR/current"
         docker compose ps postgres >/dev/null 2>&1
-        docker compose exec -T postgres pg_dump -U inventory_user -d inventory_db > "$BACKUP_DIR/inventory_db_${CI_COMMIT_SHORT_SHA}_$(date +%Y%m%d_%H%M%S).sql"
+        docker compose exec -T postgres sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$BACKUP_DIR/postgres_${CI_COMMIT_SHORT_SHA}_$(date +%Y%m%d_%H%M%S).sql"
       else
         echo 'No current release found; skipping database backup.'
       fi
@@ -147,16 +148,37 @@ deploy_phase_3_activate:
       set -e
       APP_DIR="$DEPLOY_PATH"
       RELEASE_DIR="$APP_DIR/releases/$CI_COMMIT_SHORT_SHA"
+      ENV_FILE="$APP_DIR/shared/backend.env"
       test -d "$RELEASE_DIR"
+      test -s "$ENV_FILE" || { echo 'Missing or empty production backend.env.'; exit 1; }
+      set -a
+      . "$ENV_FILE"
+      set +a
+      [ "${APP_ENV:-}" = "production" ] || { echo 'APP_ENV must be production.'; exit 1; }
+      [ "${DEBUG:-}" = "false" ] || { echo 'DEBUG must be false.'; exit 1; }
+      [ -n "${POSTGRES_DB:-}" ] || { echo 'POSTGRES_DB is required.'; exit 1; }
+      [ -n "${POSTGRES_USER:-}" ] || { echo 'POSTGRES_USER is required.'; exit 1; }
+      [ -n "${POSTGRES_PASSWORD:-}" ] || { echo 'POSTGRES_PASSWORD is required.'; exit 1; }
+      [ -n "${DATABASE_URL:-}" ] || { echo 'DATABASE_URL is required.'; exit 1; }
+      [ -n "${JWT_SECRET_KEY:-}" ] || { echo 'JWT_SECRET_KEY is required.'; exit 1; }
+      [ -n "${CORS_ORIGINS:-}" ] || { echo 'CORS_ORIGINS is required.'; exit 1; }
+      [ "${#JWT_SECRET_KEY}" -ge 64 ] || { echo 'JWT_SECRET_KEY must be at least 64 characters.'; exit 1; }
+      if grep -Ev '^[[:space:]]*(#|$)' "$ENV_FILE" | grep -Eqi 'replace-this|change-me|example'; then
+        echo 'Production environment contains a placeholder value.'
+        exit 1
+      fi
+      [ "$POSTGRES_PASSWORD" != "inventory123" ] || { echo 'POSTGRES_PASSWORD uses a rejected placeholder.'; exit 1; }
+      EXPECTED_DATABASE_URL="postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      [ "$DATABASE_URL" = "$EXPECTED_DATABASE_URL" ] || { echo 'DATABASE_URL must match the PostgreSQL environment values.'; exit 1; }
+      unset EXPECTED_DATABASE_URL
       mkdir -p "$APP_DIR/shared"
       ln -sfn "$RELEASE_DIR" "$APP_DIR/current"
       cd "$APP_DIR/current"
-      if [ -f "$APP_DIR/shared/backend.env" ]; then
-        cp "$APP_DIR/shared/backend.env" backend/.env
-      fi
+      cp "$ENV_FILE" backend/.env
+      docker compose config --quiet
       docker compose build
       docker compose up -d postgres
-      if docker compose exec -T postgres psql -U inventory_user -d inventory_db -tAc "select 1 from information_schema.columns where table_name = 'products' and column_name = 'sku'" | grep -q 1 && ! docker compose exec -T postgres psql -U inventory_user -d inventory_db -tAc "select to_regclass('public.alembic_version')" | grep -q alembic_version; then
+      if docker compose exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select 1 from information_schema.columns where table_name = '\''products'\'' and column_name = '\''sku'\''"' | grep -q 1 && ! docker compose exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select to_regclass('\''public.alembic_version'\'')"' | grep -q alembic_version; then
         docker compose run --rm backend alembic stamp head
       fi
       docker compose run --rm backend alembic upgrade head
