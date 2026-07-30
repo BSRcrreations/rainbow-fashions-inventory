@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import asyncio
+from io import BytesIO
 from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
@@ -8,6 +10,7 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 from fastapi import HTTPException
+from PIL import Image
 from pydantic import ValidationError
 
 from app.schemas.brand import BrandCreate
@@ -26,6 +29,7 @@ from app.services.catalog_service import BrandService, CategoryService
 from app.services.purchase_service import PurchaseService
 from app.services.product_service import ProductService
 from app.services.sale_service import SaleService
+from app.services.file_service import FileService
 from app.services.stock_scan_service import StockScanService
 from app.models.brand import Brand
 from app.models.category import Category
@@ -69,6 +73,54 @@ class FakeCatalogRepo:
 
 
 class Stage1ValidationTests(unittest.TestCase):
+    @staticmethod
+    def _image_bytes(image_format: str) -> bytes:
+        output = BytesIO()
+        Image.new("RGB", (1, 1), color="teal").save(output, format=image_format)
+        return output.getvalue()
+
+    def test_brand_logo_validation_accepts_matching_png_bytes(self) -> None:
+        self.assertEqual(
+            FileService._validate_product_image("prisma.png", "image/png", self._image_bytes("PNG")),
+            ".png",
+        )
+
+    def test_brand_logo_validation_rejects_spoofed_mime_type(self) -> None:
+        with self.assertRaises(HTTPException) as context:
+            FileService._validate_product_image("prisma.png", "image/png", self._image_bytes("JPEG"))
+
+        self.assertEqual(context.exception.detail["code"], "CORRUPTED_FILE")
+
+    def test_brand_logo_validation_rejects_path_traversal_filename(self) -> None:
+        with self.assertRaises(HTTPException) as context:
+            FileService._validate_product_image("../../prisma.exe", "image/png", self._image_bytes("PNG"))
+
+        self.assertEqual(context.exception.detail["code"], "UNSUPPORTED_FILE_TYPE")
+
+    def test_brand_logo_validation_rejects_oversized_upload(self) -> None:
+        class OversizedImage:
+            filename = "prisma.png"
+            content_type = "image/png"
+
+            async def read(self) -> bytes:
+                return b"x" * (FileService(None).settings.max_product_image_size_bytes + 1)
+
+        with self.assertRaises(HTTPException) as context:
+            asyncio.run(FileService(None).save_product_image(OversizedImage(), None))
+
+        self.assertEqual(context.exception.detail["code"], "FILE_TOO_LARGE")
+
+    def test_brand_logo_permissions_allow_manager_and_owner_but_not_staff(self) -> None:
+        from app.api.deps import require_manager_or_owner
+        from app.models.enums import UserRole
+
+        self.assertEqual(require_manager_or_owner(SimpleNamespace(role=UserRole.OWNER)).role, UserRole.OWNER)
+        self.assertEqual(require_manager_or_owner(SimpleNamespace(role=UserRole.MANAGER)).role, UserRole.MANAGER)
+        with self.assertRaises(HTTPException) as context:
+            require_manager_or_owner(SimpleNamespace(role=UserRole.STAFF))
+
+        self.assertEqual(context.exception.status_code, 403)
+
     def test_scan_barcode_preserves_leading_zeros(self) -> None:
         request = StockScanRequest(barcode=" 0012345678905 ")
 
@@ -150,9 +202,12 @@ class Stage1ValidationTests(unittest.TestCase):
 
     def test_brand_logo_routes_are_registered(self) -> None:
         from app.main import app
+        from app.api.deps import require_manager_or_owner
 
-        paths = {route.path for route in app.routes}
-        self.assertIn("/api/v1/brands/{brand_id}/logo", paths)
+        logo_routes = [route for route in app.routes if route.path == "/api/v1/brands/{brand_id}/logo"]
+        self.assertEqual({method for route in logo_routes for method in route.methods}, {"POST", "DELETE"})
+        for route in logo_routes:
+            self.assertIn(require_manager_or_owner, {dependency.call for dependency in route.dependant.dependencies})
 
     def test_physical_count_difference_is_calculated_from_expected_quantity(self) -> None:
         self.assertEqual(StockScanService._difference(StockScanMode.PHYSICAL_COUNT, 10, 12), -2)

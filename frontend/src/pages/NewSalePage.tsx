@@ -48,12 +48,13 @@ function groupCatalog(products: SaleCatalogProduct[]) {
   return [...groups.values()];
 }
 
-function ProductVisual({ product }: { product: SaleCatalogProduct }) {
-  const [failedUrl, setFailedUrl] = useState("");
-  const imageUrl = product.brand_logo_url || product.product_image_url;
-  const isBrandLogo = Boolean(product.brand_logo_url);
+export function ProductVisual({ product }: { product: SaleCatalogProduct }) {
+  const [failedUrls, setFailedUrls] = useState<string[]>([]);
+  const imageCandidates = [product.brand_logo_url, product.product_image_url].flatMap((url) => url && !failedUrls.includes(url) ? [url] : []);
+  const imageUrl = imageCandidates[0];
+  const isBrandLogo = imageUrl === product.brand_logo_url;
   const initials = (product.brand_name || product.name).split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join("").toUpperCase();
-  if (imageUrl && imageUrl !== failedUrl) return <img loading="lazy" src={imageUrl} alt={isBrandLogo ? `${product.brand_name || product.name} logo` : product.name} className={`h-16 w-16 shrink-0 rounded-2xl border border-slate-100 bg-slate-50 p-1 ${isBrandLogo ? "object-contain" : "object-cover"}`} onError={() => setFailedUrl(imageUrl)} />;
+  if (imageUrl) return <img loading="lazy" src={imageUrl} alt={isBrandLogo ? `${product.brand_name || product.name} logo` : product.name} className={`h-16 w-16 shrink-0 rounded-2xl border border-slate-100 bg-slate-50 p-1 ${isBrandLogo ? "object-contain" : "object-cover"}`} onError={() => setFailedUrls((current) => [...current, imageUrl])} />;
   if (initials) return <div className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-teal-50 to-cyan-100 text-lg font-extrabold text-teal-800 ring-1 ring-teal-100">{initials}</div>;
   return <div className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-slate-100 text-slate-400"><PackageOpen size={26} /></div>;
 }
