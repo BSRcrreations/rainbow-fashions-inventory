@@ -5,9 +5,9 @@ from decimal import Decimal
 from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
-from app.models.enums import StockScanMode, StockScanQuantityMode, StockScanStatus
+from app.models.enums import PricingType, StockScanMode, StockScanQuantityMode, StockScanStatus
 from app.schemas.common import ORMBaseModel
 
 
@@ -136,6 +136,12 @@ class BarcodeProductOnboarding(BaseModel):
     hsn_sac: Optional[str] = Field(default=None, max_length=40)
     description: Optional[str] = Field(default=None, max_length=2000)
     image_url: Optional[str] = Field(default=None, max_length=500)
+    product_date: Optional[date] = None
+    pricing_type: PricingType = PricingType.OWN_PRICE
+    minimum_stock: int = Field(default=0, ge=0, le=100000)
+    alternate_barcode: Optional[str] = Field(default=None, max_length=80)
+    package_barcode: Optional[str] = Field(default=None, max_length=80)
+    package_barcode_quantity: int = Field(default=1, ge=1, le=100000)
     quantity: int = Field(default=1, ge=1, le=100000)
     package_quantity: int = Field(default=1, ge=1, le=100000)
     scan_unit: Literal["PIECE", "PACK"] = "PIECE"
@@ -146,13 +152,15 @@ class BarcodeProductOnboarding(BaseModel):
     selling_price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
     condition: str = Field(default="SELLABLE", min_length=2, max_length=40)
 
-    @field_validator("barcode")
+    @field_validator("barcode", "alternate_barcode", "package_barcode")
     @classmethod
-    def normalize_onboard_barcode(cls, value: str) -> str:
+    def normalize_onboard_barcode(cls, value: Optional[str], info: ValidationInfo) -> Optional[str]:
+        if value is None:
+            return value
         value = value.strip()
-        if not value:
+        if not value and info.field_name == "barcode":
             raise ValueError("Barcode is required")
-        return value
+        return value or None
 
     @field_validator("product_name", "product_code", "style_code", "model_number", "manufacturer_sku", "internal_sku", "size", "color", "hsn_sac", "description", "image_url", "inventory_unit", "condition", mode="before")
     @classmethod
@@ -163,6 +171,13 @@ class BarcodeProductOnboarding(BaseModel):
     def validate_onboarding(self) -> "BarcodeProductOnboarding":
         if self.package_quantity > 1 and self.scan_unit != "PACK":
             raise ValueError("Package quantities above one must use PACK as the scan unit")
+        if self.pricing_type == PricingType.MRP and self.mrp is None:
+            raise ValueError("MRP is required when pricing type is MRP")
+        if self.mrp is not None and self.selling_price > self.mrp:
+            raise ValueError("Selling price cannot be greater than MRP")
+        optional_barcodes = [value for value in (self.alternate_barcode, self.package_barcode) if value]
+        if len(set([self.barcode, *optional_barcodes])) != len([self.barcode, *optional_barcodes]):
+            raise ValueError("Each barcode must be unique")
         if self.action == "EXISTING_VARIANT" and not self.product_variant_id:
             raise ValueError("Select the existing variant to assign this barcode")
         if self.action == "NEW_VARIANT" and not self.existing_product_id:
