@@ -85,12 +85,13 @@ class SaleService:
         query = (
             self.db.query(ProductVariant)
             .join(Product)
+            .outerjoin(Brand, Product.brand_id == Brand.id)
             .options(joinedload(ProductVariant.product).joinedload(Product.category), joinedload(ProductVariant.product).joinedload(Product.brand))
             .filter(ProductVariant.store_id == store_id, ProductVariant.is_active.is_(True), Product.is_active.is_(True))
         )
         if search and search.strip():
             pattern = f"%{search.strip()}%"
-            query = query.filter(or_(Product.name.ilike(pattern), ProductVariant.internal_sku.ilike(pattern), ProductVariant.manufacturer_sku.ilike(pattern), ProductVariant.barcode.ilike(pattern), ProductVariant.size.ilike(pattern), ProductVariant.style_code.ilike(pattern)))
+            query = query.filter(or_(Product.name.ilike(pattern), Product.sku.ilike(pattern), ProductVariant.internal_sku.ilike(pattern), ProductVariant.manufacturer_sku.ilike(pattern), ProductVariant.barcode.ilike(pattern), ProductVariant.size.ilike(pattern), ProductVariant.color.ilike(pattern), ProductVariant.style_code.ilike(pattern), Brand.name.ilike(pattern)))
         grouped: dict[UUID, SaleCatalogProduct] = {}
         for variant in query.order_by(Product.name, ProductVariant.size, ProductVariant.mrp).all():
             product = variant.product

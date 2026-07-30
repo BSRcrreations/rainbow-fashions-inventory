@@ -22,6 +22,13 @@ interface EditorState {
   record?: CatalogRecord;
 }
 
+function BrandLogoPreview({ brand, size = "sm" }: { brand: Brand; size?: "sm" | "lg" }) {
+  const [failed, setFailed] = useState(false);
+  const dimensions = size === "lg" ? "h-12 w-12 rounded-lg text-sm" : "h-7 w-7 rounded-md text-[10px]";
+  if (brand.logo_url && !failed) return <img src={brand.logo_url} alt={`${brand.name} logo`} className={`${dimensions} border border-teal-100 bg-white object-contain p-0.5`} onError={() => setFailed(true)} />;
+  return <span className={`grid place-items-center bg-teal-50 font-bold text-teal-700 ${dimensions}`}>{brand.name.slice(0, 2).toUpperCase()}</span>;
+}
+
 export default function CategoriesPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -206,7 +213,7 @@ export default function CategoriesPage() {
                       <div className="divide-y divide-line rounded-md border border-line bg-white">
                         {category.brands.length ? category.brands.map((brand) => (
                           <div key={brand.id} className="flex items-center gap-2 px-3 py-2.5 text-sm">
-                            {brand.logo_url ? <img src={brand.logo_url} alt={`${brand.name} logo`} className="h-7 w-7 rounded-md border border-teal-100 bg-white object-contain p-0.5" /> : <span className="grid h-7 w-7 place-items-center rounded-md bg-teal-50 text-[10px] font-bold text-teal-700">{brand.name.slice(0, 2).toUpperCase()}</span>}
+                            <BrandLogoPreview brand={brand} />
                             <span className="min-w-0 flex-1 truncate">{brand.name}</span>
                             <Button type="button" variant="ghost" size="icon" onClick={() => openEditor("brand", category.id, brand)} title="Edit brand"><Edit3 size={14} /></Button>
                             <Button type="button" variant="ghost" size="icon" className="text-rose-700" onClick={() => setDeleteTarget({ type: "brand", record: brand })} title="Delete brand"><Trash2 size={14} /></Button>

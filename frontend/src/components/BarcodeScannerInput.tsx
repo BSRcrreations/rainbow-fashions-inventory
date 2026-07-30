@@ -9,6 +9,7 @@ interface BarcodeScannerInputProps {
   placeholder?: string;
   disabled?: boolean;
   autoFocus?: boolean;
+  compact?: boolean;
   onScan: (barcode: string, signal: AbortSignal) => Promise<void>;
   onStatusChange?: (status: BarcodeScanStatus, message?: string) => void;
 }
@@ -28,7 +29,7 @@ function beep(success: boolean) {
 
 /** Keyboard-wedge scanner input: Enter is authoritative and each newer scan aborts its stale lookup. */
 export default function BarcodeScannerInput({
-  label = "Barcode scanner", placeholder = "Scan a barcode and press Enter", disabled = false, autoFocus = false, onScan, onStatusChange,
+  label = "Barcode scanner", placeholder = "Scan a barcode and press Enter", disabled = false, autoFocus = false, compact = false, onScan, onStatusChange,
 }: BarcodeScannerInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const controllerRef = useRef<AbortController | null>(null);
@@ -75,8 +76,8 @@ export default function BarcodeScannerInput({
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) { if (event.key === "Enter") { event.preventDefault(); void submit(); } }
   const colour = status === "READY" ? "text-muted" : status === "LOOKING_UP" ? "text-primary-700" : status === "FOUND" ? "text-success" : "text-danger";
 
-  return <form onSubmit={onSubmit} className="rounded-xl border border-primary-200 bg-primary-50/60 p-3 shadow-sm" role="search">
-    <div className="flex items-center gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-primary-700 text-white"><ScanLine size={19} /></div><label className="min-w-0 flex-1"><span className="text-sm font-semibold text-foreground">{label}</span><input ref={inputRef} autoFocus={autoFocus} aria-label={label} className="mt-1 w-full border-0 bg-transparent p-0 text-sm outline-none placeholder:text-slate-400" placeholder={placeholder} value={value} disabled={disabled || status === "LOOKING_UP"} onChange={(event) => setValue(event.target.value)} onKeyDown={onKeyDown} autoComplete="off" /></label><Button type="submit" size="sm" variant="secondary" disabled={disabled || status === "LOOKING_UP"}>{status === "LOOKING_UP" ? "Looking up" : "Add"}</Button><button type="button" className="text-muted hover:text-foreground" title={soundEnabled ? "Turn scanner sound off" : "Turn scanner sound on"} aria-label={soundEnabled ? "Turn scanner sound off" : "Turn scanner sound on"} onClick={() => setSoundEnabled((current) => !current)}>{soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}</button></div>
-    <p className={`mt-2 text-xs font-semibold ${colour}`} aria-live="polite">{message}</p>
+  return <form onSubmit={onSubmit} className={`rounded-xl border border-primary-200 bg-primary-50/60 shadow-sm ${compact ? "p-2" : "p-3"}`} role="search">
+    <div className={`flex items-center gap-3 ${compact ? "min-h-10" : ""}`}><div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-primary-700 text-white"><ScanLine size={19} /></div><label className="min-w-0 flex-1">{compact ? <span className="sr-only">{label}</span> : <span className="text-sm font-semibold text-foreground">{label}</span>}<input ref={inputRef} autoFocus={autoFocus} aria-label={label} className={`${compact ? "w-full" : "mt-1 w-full"} border-0 bg-transparent p-0 text-sm outline-none placeholder:text-slate-400`} placeholder={placeholder} value={value} disabled={disabled || status === "LOOKING_UP"} onChange={(event) => setValue(event.target.value)} onKeyDown={onKeyDown} autoComplete="off" /></label><Button type="submit" size="sm" variant="secondary" disabled={disabled || status === "LOOKING_UP"}>{status === "LOOKING_UP" ? "Looking up" : "Add"}</Button><button type="button" className="text-muted hover:text-foreground" title={soundEnabled ? "Turn scanner sound off" : "Turn scanner sound on"} aria-label={soundEnabled ? "Turn scanner sound off" : "Turn scanner sound on"} onClick={() => setSoundEnabled((current) => !current)}>{soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}</button></div>
+    <p className={`${compact ? "mt-1 pl-13" : "mt-2"} text-xs font-semibold ${colour}`} aria-live="polite">{message}</p>
   </form>;
 }

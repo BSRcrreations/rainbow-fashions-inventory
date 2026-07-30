@@ -54,7 +54,7 @@ class StockScanService:
         store_id = self._store_id(current_user)
         mapping = self._barcode_mapping(normalized, store_id)
         if mapping:
-            variant = self.db.query(ProductVariant).options(joinedload(ProductVariant.product).joinedload(Product.category), joinedload(ProductVariant.product).joinedload(Product.brand)).filter(ProductVariant.id == mapping.product_variant_id).first()
+            variant = self.db.query(ProductVariant).options(joinedload(ProductVariant.product).joinedload(Product.category), joinedload(ProductVariant.product).joinedload(Product.brand)).filter(ProductVariant.id == mapping.product_variant_id, ProductVariant.store_id == store_id).first()
             if not variant or not variant.is_active or not variant.product.is_active:
                 raise bad_request("This product variant is inactive.", "VARIANT_INACTIVE")
             return self._variant_read(variant, mapping)

@@ -7,8 +7,10 @@ stages:
 
 workflow:
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH
+    # Production validation and deployment are intentionally driven only by
+    # direct pushes to the deployment branch. Merge requests (including ones
+    # that target main) must not create a competing pipeline.
+    - if: '$CI_COMMIT_BRANCH == "shop-inventory"'
 
 variables:
   DEPLOY_BRANCH: "shop-inventory"
