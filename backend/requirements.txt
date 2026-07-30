@@ -1,6 +1,7 @@
 alembic==1.13.2
 email-validator==2.2.0
 fastapi==0.115.0
+httpx==0.27.2
 bcrypt==4.0.1
 passlib[argon2,bcrypt]==1.7.4
 argon2-cffi==23.1.0

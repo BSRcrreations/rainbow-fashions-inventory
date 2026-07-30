@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Rainbow Fashions encrypted offsite backup upload
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=rainbow-offsite-backup.service
+
+[Install]
+WantedBy=timers.target
