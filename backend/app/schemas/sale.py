@@ -140,6 +140,11 @@ class SaleCatalogProduct(BaseModel):
     name: str
     category_name: Optional[str] = None
     brand_name: Optional[str] = None
+    brand_logo_url: Optional[str] = None
+    product_image_url: Optional[str] = None
+    variant_count: int = 0
+    total_stock: int = 0
+    minimum_stock: int = 0
     total_available_stock: int
     variants: list[SaleCatalogVariant] = Field(default_factory=list)
 

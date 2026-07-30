@@ -13,6 +13,7 @@ class BrandBase(BaseModel):
     category_id: UUID
     name: str = Field(min_length=2, max_length=120)
     description: Optional[str] = None
+    logo_url: Optional[str] = Field(default=None, max_length=500)
     is_active: bool = True
 
     @field_validator("name", mode="before")
@@ -31,6 +32,7 @@ class BrandUpdate(BaseModel):
     category_id: Optional[UUID] = None
     name: Optional[str] = Field(default=None, min_length=2, max_length=120)
     description: Optional[str] = None
+    logo_url: Optional[str] = Field(default=None, max_length=500)
     is_active: Optional[bool] = None
 
     @field_validator("name", mode="before")

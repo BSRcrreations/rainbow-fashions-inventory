@@ -186,6 +186,11 @@ class ProductRead(ProductBase, ORMBaseModel):
     category: Optional[CategoryRead] = None
     subcategory: Optional[SubCategoryRead] = None
     brand: Optional[BrandRead] = None
+    brand_name: Optional[str] = None
+    brand_logo_url: Optional[str] = None
+    category_name: Optional[str] = None
+    variant_count: int = 0
+    total_stock: int = 0
     variants: list[ProductVariantRead] = Field(default_factory=list)
 
 

@@ -65,3 +65,23 @@ class Product(Base):
     sale_items = relationship("SaleItem", back_populates="product", passive_deletes=True)
     variants = relationship("ProductVariant", back_populates="product", cascade="all, delete-orphan")
     store = relationship("Store", back_populates="products")
+
+    @property
+    def brand_name(self) -> Optional[str]:
+        return self.brand.name if self.brand else None
+
+    @property
+    def brand_logo_url(self) -> Optional[str]:
+        return self.brand.logo_url if self.brand else None
+
+    @property
+    def category_name(self) -> Optional[str]:
+        return self.category.name if self.category else None
+
+    @property
+    def variant_count(self) -> int:
+        return len(self.variants)
+
+    @property
+    def total_stock(self) -> int:
+        return sum(variant.current_stock for variant in self.variants)

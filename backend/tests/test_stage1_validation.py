@@ -119,6 +119,22 @@ class Stage1ValidationTests(unittest.TestCase):
         )
         self.assertEqual(payload.package_quantity * payload.quantity, 6)
 
+    def test_new_product_onboarding_accepts_quick_create_details(self) -> None:
+        payload = BarcodeProductOnboarding(
+            session_id=uuid4(), action="NEW_PRODUCT", barcode="RF-NEW-DETAILS", product_name="Scan Created Product",
+            category_id=uuid4(), subcategory_id=uuid4(), brand_id=uuid4(), purchase_cost=100, selling_price=150,
+            minimum_stock=4, alternate_barcode="RF-NEW-ALT", package_barcode="RF-NEW-PACK", package_barcode_quantity=6,
+        )
+        self.assertEqual(payload.minimum_stock, 4)
+        self.assertEqual(payload.package_barcode_quantity, 6)
+
+    def test_new_product_onboarding_requires_mrp_for_mrp_pricing(self) -> None:
+        with self.assertRaises(ValidationError):
+            BarcodeProductOnboarding(
+                session_id=uuid4(), action="NEW_PRODUCT", barcode="RF-MRP-REQUIRED", product_name="MRP Product",
+                category_id=uuid4(), brand_id=uuid4(), purchase_cost=100, selling_price=150, pricing_type="MRP",
+            )
+
     def test_label_suggestions_only_include_a_valid_visible_barcode(self) -> None:
         service = StockScanService.__new__(StockScanService)
         suggestions = service._label_suggestions("MRP Rs 549 Size XL 8906058070533")
@@ -131,6 +147,12 @@ class Stage1ValidationTests(unittest.TestCase):
         paths = {route.path for route in app.routes}
         self.assertIn("/api/v1/barcodes/resolve-image", paths)
         self.assertIn("/api/v1/barcodes/onboard-product", paths)
+
+    def test_brand_logo_routes_are_registered(self) -> None:
+        from app.main import app
+
+        paths = {route.path for route in app.routes}
+        self.assertIn("/api/v1/brands/{brand_id}/logo", paths)
 
     def test_physical_count_difference_is_calculated_from_expected_quantity(self) -> None:
         self.assertEqual(StockScanService._difference(StockScanMode.PHYSICAL_COUNT, 10, 12), -2)

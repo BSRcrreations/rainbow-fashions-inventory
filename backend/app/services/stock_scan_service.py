@@ -229,6 +229,7 @@ class StockScanService:
             )
             self.db.add(mapping)
             self.db.flush()
+            self._add_optional_barcode_mappings(payload, variant, store_id, current_user, request_id)
             if payload.package_quantity == 1:
                 variant.barcode = barcode
             variant.mrp = payload.mrp if payload.mrp is not None else variant.mrp
@@ -581,12 +582,12 @@ class StockScanService:
             color=payload.color or None,
             purchase_price=payload.purchase_cost,
             selling_price=payload.selling_price,
-            pricing_type=PricingType.MRP if payload.mrp is not None else PricingType.OWN_PRICE,
+            pricing_type=payload.pricing_type,
             mrp=payload.mrp,
             current_stock=0,
-            minimum_stock=0,
+            minimum_stock=payload.minimum_stock,
             barcode=None,
-            product_date=session.entry_date or date.today(),
+            product_date=payload.product_date or session.entry_date or date.today(),
             description=payload.description or None,
             hsn_sac=payload.hsn_sac or None,
             unit=payload.inventory_unit.title(),
@@ -595,6 +596,55 @@ class StockScanService:
             is_active=True,
             is_test_data=False,
         )
+
+    def _add_optional_barcode_mappings(
+        self,
+        payload: BarcodeProductOnboarding,
+        variant: ProductVariant,
+        store_id: UUID,
+        current_user: User,
+        request_id: Optional[str],
+    ) -> None:
+        extra_barcodes = (
+            (payload.alternate_barcode, "ALTERNATE", 1, "PIECE"),
+            (payload.package_barcode, "PACKAGE", payload.package_barcode_quantity, "PACK"),
+        )
+        for raw_barcode, barcode_type, package_quantity, scan_unit in extra_barcodes:
+            if not raw_barcode:
+                continue
+            barcode = raw_barcode.strip()
+            self._validate_barcode(barcode)
+            if self._barcode_mapping(barcode, store_id, lock=True):
+                raise conflict("This barcode is already assigned to another product variant.", "BARCODE_ALREADY_ASSIGNED")
+            self.db.add(ProductBarcode(
+                store_id=store_id,
+                product_id=variant.product_id,
+                product_variant_id=variant.id,
+                barcode=barcode,
+                barcode_type=barcode_type,
+                manufacturer_barcode=False,
+                package_quantity=package_quantity,
+                scan_unit=scan_unit,
+                inventory_unit=payload.inventory_unit.upper(),
+                base_unit_conversion=package_quantity,
+                sale_mode=payload.sale_mode,
+                mrp=payload.mrp if payload.mrp is not None else variant.mrp,
+                default_selling_price=payload.selling_price,
+                active=True,
+                verified=True,
+                verified_by=current_user.id,
+                verified_at=datetime.now(timezone.utc),
+            ))
+            self.db.add(ProductBarcodeAudit(
+                store_id=store_id,
+                barcode=barcode,
+                old_product_variant_id=None,
+                new_product_variant_id=variant.id,
+                action="ONBOARDED_OPTIONAL",
+                reason=barcode_type,
+                changed_by=current_user.id,
+                request_id=request_id,
+            ))
 
     @staticmethod
     def _create_variant(product: Product, payload: BarcodeProductOnboarding, barcode: str, store_id: UUID) -> ProductVariant:
