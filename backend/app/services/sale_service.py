@@ -94,9 +94,23 @@ class SaleService:
         grouped: dict[UUID, SaleCatalogProduct] = {}
         for variant in query.order_by(Product.name, ProductVariant.size, ProductVariant.mrp).all():
             product = variant.product
-            group = grouped.setdefault(product.id, SaleCatalogProduct(product_id=product.id, name=product.name, category_name=product.category.name if product.category else None, brand_name=product.brand.name if product.brand else None, total_available_stock=0))
+            group = grouped.setdefault(
+                product.id,
+                SaleCatalogProduct(
+                    product_id=product.id,
+                    name=product.name,
+                    category_name=product.category.name if product.category else None,
+                    brand_name=product.brand.name if product.brand else None,
+                    brand_logo_url=product.brand.logo_url if product.brand else None,
+                    product_image_url=product.image_url,
+                    minimum_stock=product.minimum_stock,
+                    total_available_stock=0,
+                ),
+            )
             group.variants.append(self._catalog_variant(variant))
             group.total_available_stock += variant.current_stock
+            group.total_stock += variant.current_stock
+            group.variant_count += 1
         return list(grouped.values())
 
     def variant_by_barcode(self, barcode: str, current_user: User) -> SaleCatalogVariant:

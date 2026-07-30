@@ -13,6 +13,8 @@ from app.repositories.catalog import BrandRepository, CategoryRepository, SubCat
 from app.schemas.brand import BrandCreate, BrandUpdate
 from app.schemas.category import CategoryCreate, CategoryUpdate
 from app.schemas.subcategory import SubCategoryCreate, SubCategoryUpdate
+from app.services.file_service import FileService
+from fastapi import UploadFile
 
 
 class CategoryService:
@@ -107,6 +109,27 @@ class BrandService:
             setattr(brand, key, value)
         self.db.commit()
         self.db.refresh(brand)
+        return brand
+
+    async def upload_logo(self, brand_id: UUID, file: UploadFile, current_user: User) -> Brand:
+        brand = self.get(brand_id, current_user)
+        uploaded = await FileService(self.db).save_product_image(file, current_user.id)
+        previous_logo_url = brand.logo_url
+        brand.logo_url = f"/uploads/products/{uploaded.stored_filename}"
+        self.db.commit()
+        self.db.refresh(brand)
+        if previous_logo_url and previous_logo_url != brand.logo_url:
+            FileService(self.db).delete_product_image_path(previous_logo_url)
+        return brand
+
+    def delete_logo(self, brand_id: UUID, current_user: User) -> Brand:
+        brand = self.get(brand_id, current_user)
+        previous_logo_url = brand.logo_url
+        brand.logo_url = None
+        self.db.commit()
+        self.db.refresh(brand)
+        if previous_logo_url:
+            FileService(self.db).delete_product_image_path(previous_logo_url)
         return brand
 
     def delete(self, brand_id: UUID, current_user: User) -> None:

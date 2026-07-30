@@ -148,6 +148,12 @@ class Stage1ValidationTests(unittest.TestCase):
         self.assertIn("/api/v1/barcodes/resolve-image", paths)
         self.assertIn("/api/v1/barcodes/onboard-product", paths)
 
+    def test_brand_logo_routes_are_registered(self) -> None:
+        from app.main import app
+
+        paths = {route.path for route in app.routes}
+        self.assertIn("/api/v1/brands/{brand_id}/logo", paths)
+
     def test_physical_count_difference_is_calculated_from_expected_quantity(self) -> None:
         self.assertEqual(StockScanService._difference(StockScanMode.PHYSICAL_COUNT, 10, 12), -2)
         self.assertEqual(StockScanService._difference(StockScanMode.PHYSICAL_COUNT, 14, 12), 2)
