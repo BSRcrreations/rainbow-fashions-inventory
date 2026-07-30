@@ -30,17 +30,11 @@ The deploy jobs create and use this layout on the server:
     backend.env
 ```
 
-`shared/backend.env` is optional, but production should use it for secrets and runtime settings. Example:
-
-```text
-APP_ENV=production
-DEBUG=false
-DATABASE_URL=postgresql+psycopg://inventory_user:inventory123@postgres:5432/inventory_db
-JWT_SECRET_KEY=<long-random-secret>
-CORS_ORIGINS=http://178.238.237.182
-OCR_PROVIDER=mock
-LOG_LEVEL=INFO
-```
+`shared/backend.env` is required for production secrets and runtime settings.
+Create it at `/opt/rainbow-fashions/shared/backend.env` from the safe template
+at `deployment/templates/backend.env.production.example`. Never commit the
+real file. See `deployment/templates/README.md` for the required secret
+generation commands, permissions, and validation rules.
 
 ## Deployment phases
 

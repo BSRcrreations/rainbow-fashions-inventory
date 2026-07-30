@@ -1,16 +1,15 @@
 services:
   postgres:
     image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: inventory_db
-      POSTGRES_USER: inventory_user
-      POSTGRES_PASSWORD: inventory123
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
       - ./database/seed.sql:/docker-entrypoint-initdb.d/002_seed.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U inventory_user -d inventory_db"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -18,11 +17,9 @@ services:
   backend:
     build:
       context: ./backend
+    restart: unless-stopped
     env_file:
-      - ./backend/.env.example
-    environment:
-      DATABASE_URL: postgresql+psycopg://inventory_user:inventory123@postgres:5432/inventory_db
-      CORS_ORIGINS: http://localhost,http://localhost:5173,http://178.238.237.182
+      - ./backend/.env
     depends_on:
       postgres:
         condition: service_healthy
@@ -30,14 +27,28 @@ services:
       - backend_uploads:/app/app/uploads
     expose:
       - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   frontend:
     build:
       context: ./frontend
+    restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "80:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 volumes:
   postgres_data:
