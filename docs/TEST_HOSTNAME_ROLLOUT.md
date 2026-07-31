@@ -51,8 +51,9 @@ external network.
 
 ## Configuration prepared in this repository
 
-1. Docker Compose binds the frontend container's port 80 only to
-   `127.0.0.1:8080`. It is no longer publicly exposed directly.
+1. The checked host Nginx configuration is ready for a future switch to
+   `127.0.0.1:8080`. Keep the current Docker port mapping on public `:80`
+   until the host Nginx and TLS steps below are complete.
 2. The frontend Nginx proxy now forwards `/uploads/` to the backend so product,
    brand, and invoice uploads remain reachable through the hostname.
 3. `deployment/nginx/test.rainbow-fashions.in.conf` is the final host-level
