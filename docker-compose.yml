@@ -28,7 +28,7 @@ services:
     expose:
       - "8000"
     healthcheck:
-      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health/ready', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -42,9 +42,11 @@ services:
       backend:
         condition: service_healthy
     ports:
+      # Keep the application reachable until host Nginx and TLS are installed.
+      # Switch to 127.0.0.1:8080:80 only as the final hostname-rollout step.
       - "80:80"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/health"]
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/health/ready"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.staticfiles import StaticFiles
@@ -15,6 +16,7 @@ from app.api.routes import auth, brands, categories, dashboard, products, purcha
 from app.core.config import get_settings
 from app.core.exceptions import error_payload
 from app.core.logging import configure_logging
+from app.database.session import engine
 
 
 settings = get_settings()
@@ -103,3 +105,16 @@ app.include_router(security.router, prefix=settings.api_v1_prefix)
 @app.get("/health", tags=["System"])
 def health() -> dict[str, str]:
     return {"status": "ok", "app": settings.app_name}
+
+
+@app.get("/health/ready", tags=["System"])
+def readiness():
+    """Report readiness only when the database accepts a lightweight query."""
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception:  # Database drivers can raise implementation-specific errors.
+        logger.warning("Database readiness check failed.")
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
+
+    return {"status": "ready"}

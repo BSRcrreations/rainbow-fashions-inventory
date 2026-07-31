@@ -17,6 +17,7 @@ backend/.env
 frontend/.env
 mobile/.env
 deployment/templates/backend.env.production
+deployment/templates/backup-offsite.env
 
 # Node
 node_modules/
