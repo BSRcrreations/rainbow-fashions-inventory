@@ -6,14 +6,22 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Header, Request, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_manager_or_owner
+from app.api.deps import get_current_user, require_manager_or_owner, require_owner
 from app.database.session import get_db
 from app.models.enums import StockMovementType
 from app.models.user import User
-from app.schemas.stock import StockAdjustmentCreate, StockHistoryRead
+from app.schemas.stock import (
+    StockAdjustmentCreate,
+    StockCorrectionCreate,
+    StockHistoryRead,
+    StockResetConfirmRequest,
+    StockResetPreviewRequest,
+    StockResetPreviewResponse,
+    StockResetResponse,
+)
 from app.services.stock_service import StockService
 
 
@@ -70,3 +78,29 @@ def stock_history(
 @router.post("/adjustments", response_model=StockHistoryRead, status_code=status.HTTP_201_CREATED)
 def adjust_stock(payload: StockAdjustmentCreate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
     return StockService(db).adjust(payload, current_user)
+
+
+@router.post("/reset-preview", response_model=StockResetPreviewResponse)
+def reset_stock_preview(
+    payload: StockResetPreviewRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+):
+    return StockService(db).reset_preview(payload, current_user, request.state.request_id)
+
+
+@router.post("/reset", response_model=StockResetResponse)
+def reset_existing_stock(
+    payload: StockResetConfirmRequest,
+    request: Request,
+    idempotency_key: str = Header(default="", alias="Idempotency-Key"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+):
+    return StockService(db).reset_existing_stock(payload, current_user, idempotency_key, request.state.request_id)
+
+
+@router.post("/transactions/{transaction_id}/correct", response_model=StockHistoryRead, status_code=status.HTTP_201_CREATED)
+def correct_stock_transaction(transaction_id: UUID, payload: StockCorrectionCreate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+    return StockService(db).correct_transaction(transaction_id, payload, current_user)

@@ -8,10 +8,11 @@ from typing import Literal, Optional
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+from fastapi import HTTPException, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app.core.exceptions import bad_request, conflict, not_found
+from app.core.exceptions import bad_request, conflict, error_payload, not_found
 from app.models.brand import Brand
 from app.models.category import Category
 from app.models.enums import SaleStatus, StockMovementType
@@ -24,6 +25,8 @@ from app.models.stock_history import StockHistory
 from app.models.user import User
 from app.repositories.sale import SaleRepository
 from app.schemas.sale import SaleCatalogProduct, SaleCatalogVariant, SaleCreate, SaleListResponse, SaleReturnCreate, SaleUpdate, SaleVoidRequest, SalesDashboardResponse, SalesMetric
+from app.services.discount_calculator import money
+from app.services.sale_discount import SaleDiscountError, calculate_sale_discount
 
 
 BUSINESS_TIMEZONE = ZoneInfo("Asia/Kolkata")
@@ -34,15 +37,17 @@ class SaleService:
         self.db = db
         self.repo = SaleRepository(db)
 
-    def create(self, payload: SaleCreate, current_user: User) -> Sale:
+    def create(self, payload: SaleCreate, current_user: User, request_id: str | None = None) -> Sale:
         if all(item.product_variant_id is not None for item in payload.items):
-            return self._create_variant_sale(payload, current_user)
+            return self._create_variant_sale(payload, current_user, request_id)
         store_id = self._store_id(current_user)
         invoice_number = payload.invoice_number or self._generate_invoice_number()
         if self.repo.get_by_invoice(invoice_number, store_id):
             raise conflict("Invoice number already exists")
         prepared = self._prepare_items(payload.items, store_id)
-        subtotal, cost_amount, total_amount = self._totals(prepared, payload.discount)
+        subtotal, cost_amount, _ = self._totals(prepared, Decimal("0"))
+        discount_amount = self._checkout_discount(subtotal, payload.discount_type, payload.discount_value, request_id)
+        total_amount = money(subtotal - discount_amount)
         sale = Sale(
             store_id=store_id,
             invoice_number=invoice_number,
@@ -50,7 +55,10 @@ class SaleService:
             payment_mode=payload.payment_mode,
             cashier_id=current_user.id,
             subtotal=subtotal,
-            discount=payload.discount,
+            discount=discount_amount,
+            discount_type=payload.discount_type,
+            discount_value=money(payload.discount_value),
+            discount_amount=discount_amount,
             total_amount=total_amount,
             cost_amount=cost_amount,
             profit_amount=total_amount - cost_amount,
@@ -142,7 +150,7 @@ class SaleService:
             raise not_found("Product variant for this barcode")
         return self._catalog_variant(variant)
 
-    def _create_variant_sale(self, payload: SaleCreate, current_user: User) -> Sale:
+    def _create_variant_sale(self, payload: SaleCreate, current_user: User, request_id: str | None = None) -> Sale:
         store_id = self._store_id(current_user)
         invoice_number = payload.invoice_number or self._generate_invoice_number()
         if self.repo.get_by_invoice(invoice_number, store_id):
@@ -190,12 +198,11 @@ class SaleService:
                 allocations.append((None, remaining, variant.average_cost))
             cost = sum((unit_cost * quantity for _, quantity, unit_cost in allocations), Decimal("0"))
             prepared.append((variant.product, variant, request.quantity, price, price * request.quantity, cost, allocations))
-        subtotal = sum((line_total for _, _, _, _, line_total, _, _ in prepared), Decimal("0"))
-        if payload.discount > subtotal:
-            raise bad_request("Discount cannot exceed subtotal")
-        total = subtotal - payload.discount
+        subtotal = money(sum((line_total for _, _, _, _, line_total, _, _ in prepared), Decimal("0")))
+        discount_amount = self._checkout_discount(subtotal, payload.discount_type, payload.discount_value, request_id)
+        total = money(subtotal - discount_amount)
         cost_amount = sum((cost for _, _, _, _, _, cost, _ in prepared), Decimal("0"))
-        sale = Sale(store_id=store_id, invoice_number=invoice_number, customer_name=payload.customer_name, payment_mode=payload.payment_mode, cashier_id=current_user.id, subtotal=subtotal, discount=payload.discount, total_amount=total, cost_amount=cost_amount, profit_amount=total - cost_amount, sale_date=payload.sale_date or datetime.now(timezone.utc))
+        sale = Sale(store_id=store_id, invoice_number=invoice_number, customer_name=payload.customer_name, payment_mode=payload.payment_mode, cashier_id=current_user.id, subtotal=subtotal, discount=discount_amount, discount_type=payload.discount_type, discount_value=money(payload.discount_value), discount_amount=discount_amount, total_amount=total, cost_amount=cost_amount, profit_amount=total - cost_amount, sale_date=payload.sale_date or datetime.now(timezone.utc))
         self.db.add(sale)
         self.db.flush()
         for product, variant, quantity, price, line_total, cost, allocations in prepared:
@@ -212,7 +219,7 @@ class SaleService:
                 before_variant_stock = variant.current_stock
             inventory.current_stock -= quantity
             product.current_stock = max(0, product.current_stock - quantity)
-        self.db.add(SaleAudit(sale_id=sale.id, action="COMPLETED", reason=None, performed_by=current_user.id, before_data=None, after_data={"variant_sale": True, "total_amount": str(total)}))
+        self.db.add(SaleAudit(sale_id=sale.id, action="COMPLETED", reason=None, performed_by=current_user.id, before_data=None, after_data={"variant_sale": True, "discount_type": payload.discount_type, "discount_value": str(payload.discount_value), "discount_amount": str(discount_amount), "total_amount": str(total)}))
         self.db.commit()
         return self.get(sale.id, current_user)
 
@@ -257,6 +264,7 @@ class SaleService:
         sale.customer_name = payload.customer_name
         sale.payment_mode = payload.payment_mode
         sale.subtotal, sale.discount, sale.total_amount, sale.cost_amount = subtotal, payload.discount, total_amount, cost_amount
+        sale.discount_type, sale.discount_value, sale.discount_amount = "FIXED_AMOUNT", money(payload.discount), money(payload.discount)
         sale.profit_amount = total_amount - cost_amount
         sale.status, sale.version, sale.edit_reason, sale.edited_by, sale.edited_at = SaleStatus.EDITED, sale.version + 1, payload.edit_reason, current_user.id, datetime.now(timezone.utc)
         self.db.add(SaleAudit(sale_id=sale.id, action="EDITED", reason=payload.edit_reason, performed_by=current_user.id, before_data=before, after_data={"total_amount": str(total_amount), "version": sale.version}))
@@ -656,11 +664,21 @@ class SaleService:
         return prepared
 
     def _totals(self, prepared: list[tuple[Product, ProductInventory, int, Decimal, Decimal]], discount: Decimal) -> tuple[Decimal, Decimal, Decimal]:
-        subtotal = sum((line_total for _, _, _, _, line_total in prepared), Decimal("0"))
+        subtotal = money(sum((line_total for _, _, _, _, line_total in prepared), Decimal("0")))
         if discount > subtotal:
             raise bad_request("Discount cannot exceed subtotal")
         cost = sum((product.purchase_price * quantity for product, _, quantity, _, _ in prepared), Decimal("0"))
-        return subtotal, cost, subtotal - discount
+        return subtotal, cost, money(subtotal - discount)
+
+    @staticmethod
+    def _checkout_discount(subtotal: Decimal, discount_type: str, discount_value: Decimal, request_id: str | None) -> Decimal:
+        try:
+            # Persist exactly the value used for the calculation at currency
+            # precision, rather than calculating from a value the database
+            # would later round differently.
+            return calculate_sale_discount(subtotal, discount_type, money(discount_value))
+        except SaleDiscountError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_payload(exc.message, exc.code, request_id=request_id)) from exc
 
     def _adjust_stock(
         self,
@@ -760,6 +778,9 @@ class SaleService:
             "payment_mode": sale.payment_mode,
             "subtotal": str(sale.subtotal),
             "discount": str(sale.discount),
+            "discount_type": sale.discount_type,
+            "discount_value": str(sale.discount_value),
+            "discount_amount": str(sale.discount_amount),
             "total_amount": str(sale.total_amount),
             "items": [{"product_id": str(item.product_id), "quantity": item.quantity, "unit_price": str(item.unit_price)} for item in sale.items],
         }

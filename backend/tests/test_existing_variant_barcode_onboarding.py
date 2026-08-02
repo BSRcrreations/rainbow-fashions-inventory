@@ -188,6 +188,12 @@ def test_scanning_a_confirmed_session_is_locked_with_the_same_clear_message():
     assert error.value.status_code == 409
 
 
+def test_confirmed_session_guard_uses_a_stable_error_code_for_all_mutations():
+    source = inspect.getsource(StockScanService._editable_session)
+
+    assert '"STOCK_SESSION_CONFIRMED"' in source
+
+
 def test_existing_variant_payload_does_not_require_optional_metadata():
     payload = existing_payload(size=None, color=None, style_code=None, category_id=None, brand_id=None)
 

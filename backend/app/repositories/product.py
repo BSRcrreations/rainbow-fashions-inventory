@@ -86,7 +86,15 @@ class ProductRepository(BaseRepository[Product]):
                     Product.name.ilike(pattern),
                     Product.color.ilike(pattern),
                     Product.size.ilike(pattern),
-                    Product.variants.any(or_(ProductVariant.color.ilike(pattern), ProductVariant.size.ilike(pattern))),
+                    Product.variants.any(
+                        or_(
+                            ProductVariant.color.ilike(pattern),
+                            ProductVariant.size.ilike(pattern),
+                            ProductVariant.barcode.ilike(pattern),
+                            ProductVariant.internal_sku.ilike(pattern),
+                            ProductVariant.manufacturer_sku.ilike(pattern),
+                        )
+                    ),
                     Product.barcode.ilike(pattern),
                     Brand.name.ilike(pattern),
                     Category.name.ilike(pattern),

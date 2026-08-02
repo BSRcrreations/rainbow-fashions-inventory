@@ -3,7 +3,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TYPE user_role AS ENUM ('OWNER', 'MANAGER', 'STAFF');
 CREATE TYPE pricing_type AS ENUM ('MRP', 'OWN_PRICE');
 CREATE TYPE purchase_status AS ENUM ('DRAFT', 'REVIEWED', 'CONFIRMED', 'CANCELLED');
-CREATE TYPE stock_movement_type AS ENUM ('PURCHASE', 'SALE', 'CUSTOMER_RETURN', 'SUPPLIER_RETURN', 'DAMAGE', 'MANUAL_ADJUSTMENT');
+CREATE TYPE stock_movement_type AS ENUM ('PURCHASE', 'SALE', 'CUSTOMER_RETURN', 'SUPPLIER_RETURN', 'DAMAGE', 'MANUAL_ADJUSTMENT', 'SALE_EDIT_RETURN', 'SALE_EDIT_DECREASE', 'SALE_VOID', 'PURCHASE_VOID', 'OPENING_STOCK', 'STOCK_RESET_OUT', 'STOCK_COUNT_IN', 'STOCK_COUNT_OUT');
 CREATE TYPE upload_file_type AS ENUM ('INVOICE_IMAGE', 'INVOICE_PDF', 'PRODUCT_IMAGE');
 CREATE TYPE document_job_status AS ENUM ('UPLOADED', 'QUEUED', 'PREPROCESSING', 'OCR_RUNNING', 'AI_EXTRACTION', 'PRODUCT_MATCHING', 'VALIDATING', 'REVIEW_REQUIRED', 'COMPLETED', 'FAILED');
 
@@ -388,6 +388,7 @@ CREATE TABLE stock_history (
     before_stock INTEGER NOT NULL,
     after_stock INTEGER NOT NULL,
     reference VARCHAR(180),
+    request_id VARCHAR(120),
     purchase_id UUID REFERENCES purchases(id) ON DELETE SET NULL,
     purchase_item_id UUID REFERENCES purchase_items(id) ON DELETE SET NULL,
     sale_id UUID REFERENCES sales(id) ON DELETE SET NULL,
@@ -398,6 +399,22 @@ CREATE TABLE stock_history (
     CONSTRAINT ck_stock_history_qty_positive CHECK (qty > 0),
     CONSTRAINT ck_stock_history_before_stock_non_negative CHECK (before_stock >= 0),
     CONSTRAINT ck_stock_history_after_stock_non_negative CHECK (after_stock >= 0)
+);
+
+CREATE TABLE stock_audit_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_type VARCHAR(80) NOT NULL,
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE RESTRICT,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    user_role VARCHAR(32),
+    product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+    product_variant_id UUID REFERENCES product_variants(id) ON DELETE SET NULL,
+    previous_quantity INTEGER,
+    adjustment_quantity INTEGER,
+    resulting_quantity INTEGER,
+    request_id VARCHAR(120) NOT NULL,
+    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX ix_users_store_id ON users(store_id);
@@ -532,8 +549,16 @@ CREATE INDEX ix_stock_history_product_id ON stock_history(product_id);
 CREATE INDEX ix_stock_history_store_id ON stock_history(store_id);
 CREATE INDEX ix_stock_history_movement_type ON stock_history(movement_type);
 CREATE INDEX ix_stock_history_movement_date ON stock_history(movement_date);
+CREATE INDEX ix_stock_history_request_id ON stock_history(request_id);
 CREATE INDEX ix_stock_history_product_variant_id ON stock_history(product_variant_id);
 CREATE INDEX ix_stock_history_purchase_cost_lot_id ON stock_history(purchase_cost_lot_id);
+CREATE INDEX ix_stock_audit_events_event_type ON stock_audit_events(event_type);
+CREATE INDEX ix_stock_audit_events_store_id ON stock_audit_events(store_id);
+CREATE INDEX ix_stock_audit_events_user_id ON stock_audit_events(user_id);
+CREATE INDEX ix_stock_audit_events_product_id ON stock_audit_events(product_id);
+CREATE INDEX ix_stock_audit_events_product_variant_id ON stock_audit_events(product_variant_id);
+CREATE INDEX ix_stock_audit_events_request_id ON stock_audit_events(request_id);
+CREATE INDEX ix_stock_audit_events_created_at ON stock_audit_events(created_at);
 CREATE INDEX ix_sales_sale_date ON sales(sale_date);
 CREATE INDEX ix_sales_invoice_number ON sales(invoice_number);
 CREATE INDEX ix_sales_customer_name ON sales(customer_name);

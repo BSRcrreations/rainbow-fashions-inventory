@@ -1,39 +1,82 @@
-import { FormEvent, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, ClipboardPenLine } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ClipboardPenLine, Search } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import BarcodeScannerInput from "../components/BarcodeScannerInput";
 import ErrorState from "../components/ErrorState";
 import PageHeader from "../components/PageHeader";
 import { useToast } from "../components/ToastProvider";
 import { Button } from "../components/ui/button";
-import type { Product, ProductVariantBarcode, StockHistory, StockMovementType } from "../types";
+import type { Product, ProductVariant, ProductVariantBarcode, StockHistory } from "../types";
+import { money } from "../utils/format";
 
-type AdjustmentReason = Extract<StockMovementType, "CUSTOMER_RETURN" | "SUPPLIER_RETURN" | "DAMAGE" | "MANUAL_ADJUSTMENT">;
+type AdjustmentType = "ADD_STOCK" | "REMOVE_STOCK" | "SET_COUNTED_QUANTITY";
+
+interface VariantRow {
+  product: Product;
+  variant: ProductVariant;
+}
+
+function detail(row: VariantRow | null) {
+  if (!row) return "";
+  return [row.product.category?.name, row.product.brand?.name, row.variant.size || "Standard", row.variant.color].filter(Boolean).join(" / ");
+}
 
 export default function StockAdjustmentPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const [productId, setProductId] = useState("");
-  const [reason, setReason] = useState<AdjustmentReason>("MANUAL_ADJUSTMENT");
-  const [direction, setDirection] = useState<"INCREASE" | "DECREASE">("INCREASE");
+  const [searchParams] = useSearchParams();
+  const [variantId, setVariantId] = useState(searchParams.get("variant_id") ?? "");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [brandFilter, setBrandFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [adjustmentType, setAdjustmentType] = useState<AdjustmentType>("ADD_STOCK");
   const [quantity, setQuantity] = useState("1");
   const [reference, setReference] = useState("");
   const [error, setError] = useState("");
-  const [scannedVariant, setScannedVariant] = useState<ProductVariantBarcode | null>(null);
   const productsQuery = useQuery({ queryKey: ["adjustment-products"], queryFn: () => api.get<Product[]>("/products?limit=500&is_active=true") });
-  const products = productsQuery.data ?? [];
-  const product = products.find((item) => item.id === productId);
-  const resultingStock = useMemo(() => product ? product.current_stock + (direction === "INCREASE" ? Number(quantity || 0) : -Number(quantity || 0)) : null, [direction, product, quantity]);
+  const products = useMemo(() => productsQuery.data ?? [], [productsQuery.data]);
+  const variants = useMemo<VariantRow[]>(() => products.flatMap((product) => (product.variants ?? []).map((variant) => ({ product, variant }))), [products]);
+  const selected = variants.find((row) => row.variant.id === variantId) ?? null;
+  const categories = useMemo(() => Array.from(new Map(products.map((product) => product.category).filter(Boolean).map((category) => [category!.id, category!])).values()).sort((a, b) => a.name.localeCompare(b.name)), [products]);
+  const brands = useMemo(() => Array.from(new Map(products.filter((product) => !categoryFilter || product.category_id === categoryFilter).map((product) => product.brand).filter(Boolean).map((brand) => [brand!.id, brand!])).values()).sort((a, b) => a.name.localeCompare(b.name)), [categoryFilter, products]);
+  const filteredVariants = useMemo(() => {
+    const value = search.trim().toLowerCase();
+    return variants.filter((row) => {
+      if (categoryFilter && row.product.category_id !== categoryFilter) return false;
+      if (brandFilter && row.product.brand_id !== brandFilter) return false;
+      if (!value) return true;
+      return [row.product.name, row.product.category?.name, row.product.brand?.name, row.variant.size, row.variant.color, row.variant.barcode, row.variant.internal_sku].some((field) => field?.toLowerCase().includes(value));
+    });
+  }, [brandFilter, categoryFilter, search, variants]);
+  const qty = Number(quantity || 0);
+  const delta = selected ? adjustmentType === "ADD_STOCK" ? qty : adjustmentType === "REMOVE_STOCK" ? -qty : qty - selected.variant.current_stock : 0;
+  const resultingStock = selected ? selected.variant.current_stock + delta : null;
 
-  function changeReason(value: AdjustmentReason) { setReason(value); if (value === "CUSTOMER_RETURN") setDirection("INCREASE"); if (value === "SUPPLIER_RETURN" || value === "DAMAGE") setDirection("DECREASE"); }
   async function scanAdjustment(barcode: string, signal: AbortSignal) {
     const variant = await api.get<ProductVariantBarcode>(`/product-variants/by-barcode/${encodeURIComponent(barcode)}`, { signal });
-    setProductId(variant.product_id); setScannedVariant(variant); setQuantity(String(variant.package_quantity)); setError("");
-    toast.success(`${variant.product_name} selected${variant.package_quantity > 1 ? ` (${variant.package_quantity} base pieces)` : ""}`);
+    setVariantId(variant.variant_id); setQuantity(String(variant.package_quantity)); setError("");
+    toast.success(`${variant.product_name} ${variant.size || "Standard"} selected`);
   }
-  const mutation = useMutation({ mutationFn: () => { const qty = Number(quantity); if (!productId) throw new Error("Select a product"); if (!Number.isInteger(qty) || qty <= 0) throw new Error("Quantity must be a positive whole number"); if (!reference.trim()) throw new Error("Reference is required for audit history"); if (resultingStock !== null && resultingStock < 0) throw new Error("Stock cannot become negative"); return api.post<StockHistory>("/stock/adjustments", { product_id: productId, reason, direction, qty, reference: reference.trim() }); }, onSuccess: () => { toast.success("Stock movement recorded"); setProductId(""); setQuantity("1"); setReference(""); setError(""); void queryClient.invalidateQueries({ queryKey: ["inventory-products"] }); void queryClient.invalidateQueries({ queryKey: ["adjustment-products"] }); void queryClient.invalidateQueries({ queryKey: ["stock-history"] }); void queryClient.invalidateQueries({ queryKey: ["products"] }); void queryClient.invalidateQueries({ queryKey: ["sales-dashboard"] }); }, onError: (cause) => { const message = cause instanceof Error ? cause.message : "Unable to adjust stock"; setError(message); toast.error(message); } });
-  function submit(event: FormEvent) { event.preventDefault(); mutation.mutate(); }
 
-  return <><PageHeader title="Stock Adjustment" subtitle="Record returns, damage, supplier returns, and manual corrections" /><div className="grid gap-6 xl:grid-cols-[minmax(0,720px)_minmax(280px,1fr)]"><form onSubmit={submit} className="space-y-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><BarcodeScannerInput label="Scan adjustment product" placeholder="Scan an exact barcode to select its variant" onScan={scanAdjustment} /><label className="field-label">Product<span>*</span><select className="field-input" value={productId} onChange={(event) => { setProductId(event.target.value); setScannedVariant(null); }}><option value="">Select product</option>{products.map((item) => <option key={item.id} value={item.id}>{item.name} / {item.size} / {item.color} / {item.current_stock} in stock</option>)}</select></label>{scannedVariant ? <div className="rounded-lg bg-primary-50 p-3 text-sm text-primary-900"><strong>{scannedVariant.product_name}</strong><div>{[scannedVariant.size, scannedVariant.color, scannedVariant.style_code].filter(Boolean).join(" · ") || "Standard"} · {scannedVariant.barcode}{scannedVariant.package_quantity > 1 ? ` · Pack of ${scannedVariant.package_quantity}` : ""}</div></div> : null}<label className="field-label">Reason<span>*</span><select className="field-input" value={reason} onChange={(event) => changeReason(event.target.value as AdjustmentReason)}><option value="CUSTOMER_RETURN">Customer Return</option><option value="SUPPLIER_RETURN">Supplier Return</option><option value="DAMAGE">Damage</option><option value="MANUAL_ADJUSTMENT">Manual Adjustment</option></select></label><div><div className="mb-2 text-sm font-semibold text-slate-700">Direction</div><div className="grid grid-cols-2 gap-3"><button type="button" disabled={reason !== "MANUAL_ADJUSTMENT" && direction !== "INCREASE"} onClick={() => setDirection("INCREASE")} className={`flex h-12 items-center justify-center gap-2 rounded-lg border font-semibold ${direction === "INCREASE" ? "border-emerald-600 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-500"}`}><ArrowUp size={18} /> Increase</button><button type="button" disabled={reason !== "MANUAL_ADJUSTMENT" && direction !== "DECREASE"} onClick={() => setDirection("DECREASE")} className={`flex h-12 items-center justify-center gap-2 rounded-lg border font-semibold ${direction === "DECREASE" ? "border-red-500 bg-red-50 text-red-700" : "border-slate-200 text-slate-500"}`}><ArrowDown size={18} /> Decrease</button></div></div><label className="field-label">Quantity<span>*</span><input className="field-input" type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label className="field-label">Reference<span>*</span><input className="field-input" placeholder={reason === "CUSTOMER_RETURN" ? "Sales invoice number" : reason === "SUPPLIER_RETURN" ? "Purchase or return number" : reason === "DAMAGE" ? "Damage report number" : "Correction reference"} value={reference} onChange={(event) => setReference(event.target.value)} /></label>{error ? <ErrorState message={error} /> : null}<div className="flex justify-end border-t border-slate-100 pt-5"><Button type="submit" disabled={mutation.isPending}><ClipboardPenLine size={17} /> {mutation.isPending ? "Recording" : "Record Movement"}</Button></div></form><aside className="h-fit rounded-lg border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-lg font-semibold">Stock Preview</h2>{product ? <div className="mt-4 space-y-3"><div><div className="font-semibold">{product.name}</div><div className="text-sm text-slate-500">{product.size} · {product.color}</div></div><div className="grid grid-cols-2 gap-3"><div className="rounded-lg bg-slate-50 p-4"><div className="text-xs text-slate-500">Current</div><div className="mt-1 text-2xl font-bold">{product.current_stock}</div></div><div className={`rounded-lg p-4 ${resultingStock !== null && resultingStock < 0 ? "bg-red-50" : "bg-teal-50"}`}><div className="text-xs text-slate-500">After</div><div className={`mt-1 text-2xl font-bold ${resultingStock !== null && resultingStock < 0 ? "text-red-700" : "text-teal-800"}`}>{resultingStock}</div></div></div>{resultingStock !== null && resultingStock < 0 ? <div className="flex gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700"><AlertTriangle size={17} className="shrink-0" /> This adjustment would make stock negative.</div> : null}</div> : <p className="mt-3 text-sm text-slate-500">Select a product to preview the resulting stock level.</p>}</aside></div></>;
+  const mutation = useMutation({
+    mutationFn: () => {
+      if (!selected) throw new Error("Select an exact product variant");
+      if (!Number.isInteger(qty) || qty < 0 || (adjustmentType !== "SET_COUNTED_QUANTITY" && qty <= 0)) throw new Error("Quantity must be a valid whole number");
+      if (!reference.trim()) throw new Error("Adjustment reason is required for audit history");
+      if (resultingStock !== null && resultingStock < 0) throw new Error("Stock cannot become negative");
+      const direction = delta >= 0 ? "INCREASE" : "DECREASE";
+      const adjustedQty = adjustmentType === "SET_COUNTED_QUANTITY" ? qty : Math.abs(delta);
+      return api.post<StockHistory>("/stock/adjustments", { product_id: selected.product.id, product_variant_id: selected.variant.id, adjustment_type: adjustmentType, reason: "MANUAL_ADJUSTMENT", direction, qty: adjustedQty, reference: reference.trim() });
+    },
+    onSuccess: () => {
+      toast.success("Variant stock movement recorded");
+      setVariantId(""); setQuantity("1"); setReference(""); setError("");
+      for (const key of ["inventory-products", "adjustment-products", "stock-history", "products", "pos-variant-catalog", "sales-dashboard"]) void queryClient.invalidateQueries({ queryKey: [key] });
+    },
+    onError: (cause) => { const message = cause instanceof Error ? cause.message : "Unable to adjust stock"; setError(message); toast.error(message); },
+  });
+
+  return <><PageHeader title="Stock Adjustment" subtitle="Owner-controlled corrections by exact size, colour, barcode, and SKU" /><div className="grid gap-6 xl:grid-cols-[minmax(0,760px)_minmax(280px,1fr)]"><section className="space-y-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><BarcodeScannerInput label="Scan adjustment barcode" placeholder="Scan an exact variant barcode" onScan={scanAdjustment} /><div className="grid gap-3 sm:grid-cols-2"><label className="field-label">Category<select className="field-input mt-1" value={categoryFilter} onChange={(event) => { setCategoryFilter(event.target.value); setBrandFilter(""); }}><option value="">All categories</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label><label className="field-label">Brand<select className="field-input mt-1" value={brandFilter} onChange={(event) => setBrandFilter(event.target.value)}><option value="">All brands</option>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label></div><label className="field-label">Search variants<div className="field-input mt-1 flex items-center gap-2"><Search size={16} className="text-slate-400" /><input className="min-w-0 flex-1 border-0 bg-transparent outline-none" placeholder="Product, size, colour, SKU, barcode" value={search} onChange={(event) => setSearch(event.target.value)} /></div></label><label className="field-label">Exact variant<span>*</span><select className="field-input" value={variantId} onChange={(event) => setVariantId(event.target.value)}><option value="">Select exact variant</option>{filteredVariants.map((row) => <option key={row.variant.id} value={row.variant.id}>{row.product.name} / {detail(row)} / {row.variant.barcode} / {row.variant.current_stock} in stock</option>)}</select></label>{selected ? <div className="rounded-lg bg-primary-50 p-3 text-sm text-primary-900"><strong>{selected.product.name}</strong><div>{detail(selected)}</div><div>Barcode: {selected.variant.barcode} · SKU: {selected.variant.internal_sku}</div><div>MRP: {selected.variant.mrp ? money(selected.variant.mrp) : "-"} · Selling: {money(selected.variant.selling_price)}</div></div> : null}<div><div className="mb-2 text-sm font-semibold text-slate-700">Adjustment type</div><div className="grid gap-3 sm:grid-cols-3"><button type="button" onClick={() => setAdjustmentType("ADD_STOCK")} className={`flex h-12 items-center justify-center gap-2 rounded-lg border font-semibold ${adjustmentType === "ADD_STOCK" ? "border-emerald-600 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-500"}`}><ArrowUp size={18} /> Add</button><button type="button" onClick={() => setAdjustmentType("REMOVE_STOCK")} className={`flex h-12 items-center justify-center gap-2 rounded-lg border font-semibold ${adjustmentType === "REMOVE_STOCK" ? "border-red-500 bg-red-50 text-red-700" : "border-slate-200 text-slate-500"}`}><ArrowDown size={18} /> Remove</button><button type="button" onClick={() => setAdjustmentType("SET_COUNTED_QUANTITY")} className={`h-12 rounded-lg border font-semibold ${adjustmentType === "SET_COUNTED_QUANTITY" ? "border-teal-600 bg-teal-50 text-teal-800" : "border-slate-200 text-slate-500"}`}>Set counted</button></div></div><label className="field-label">{adjustmentType === "SET_COUNTED_QUANTITY" ? "Counted quantity" : "Quantity"}<span>*</span><input className="field-input" type="number" min={adjustmentType === "SET_COUNTED_QUANTITY" ? 0 : 1} step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label className="field-label">Adjustment reason<span>*</span><input className="field-input" placeholder="Physical count, shelf correction, damaged item, owner correction" value={reference} onChange={(event) => setReference(event.target.value)} /></label>{error ? <ErrorState message={error} /> : null}<div className="flex justify-end border-t border-slate-100 pt-5"><Button type="button" disabled={mutation.isPending} onClick={() => mutation.mutate()}><ClipboardPenLine size={17} /> {mutation.isPending ? "Recording" : "Record Movement"}</Button></div></section><aside className="h-fit rounded-lg border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-lg font-semibold">Stock Preview</h2>{selected ? <div className="mt-4 space-y-3"><div><div className="font-semibold">{selected.product.name}</div><div className="text-sm text-slate-500">{detail(selected)}</div></div><div className="grid grid-cols-3 gap-3"><div className="rounded-lg bg-slate-50 p-4"><div className="text-xs text-slate-500">Current</div><div className="mt-1 text-2xl font-bold">{selected.variant.current_stock}</div></div><div className="rounded-lg bg-slate-50 p-4"><div className="text-xs text-slate-500">Change</div><div className={`mt-1 text-2xl font-bold ${delta < 0 ? "text-red-700" : "text-emerald-700"}`}>{delta > 0 ? "+" : ""}{delta}</div></div><div className={`rounded-lg p-4 ${resultingStock !== null && resultingStock < 0 ? "bg-red-50" : "bg-teal-50"}`}><div className="text-xs text-slate-500">After</div><div className={`mt-1 text-2xl font-bold ${resultingStock !== null && resultingStock < 0 ? "text-red-700" : "text-teal-800"}`}>{resultingStock}</div></div></div>{resultingStock !== null && resultingStock < 0 ? <div className="flex gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700"><AlertTriangle size={17} className="shrink-0" /> This adjustment would make stock negative.</div> : null}</div> : <p className="mt-3 text-sm text-slate-500">Select or scan an exact variant to preview the resulting stock level.</p>}</aside></div></>;
 }

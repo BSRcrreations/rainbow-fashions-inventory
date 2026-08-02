@@ -99,8 +99,8 @@ def list_sales(
 
 
 @router.post("", response_model=SaleRead, status_code=status.HTTP_201_CREATED)
-def create_sale(payload: SaleCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return SaleService(db).create(payload, current_user)
+def create_sale(payload: SaleCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return SaleService(db).create(payload, current_user, request.state.request_id)
 
 
 @router.get("/{sale_id}", response_model=SaleRead)

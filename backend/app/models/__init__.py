@@ -9,6 +9,7 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.purchase_audit import PurchaseAudit
 from app.models.stock_history import StockHistory
+from app.models.stock_audit_event import StockAuditEvent
 from app.models.stock_scan import StockScanSession, StockScanSessionItem
 from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit
 from app.models.store import Store
@@ -36,6 +37,7 @@ __all__ = [
     "PurchaseItem",
     "PurchaseAudit",
     "StockHistory",
+    "StockAuditEvent",
     "StockScanSession",
     "StockScanSessionItem",
     "ProductBarcode",

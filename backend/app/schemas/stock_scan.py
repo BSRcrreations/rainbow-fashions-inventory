@@ -82,6 +82,24 @@ class BarcodeAssignment(BaseModel):
         return barcode
 
 
+class BarcodeTransferRequest(BaseModel):
+    target_variant_id: UUID
+    confirm_transfer: bool = False
+
+
+class BatchBarcodeRequest(BaseModel):
+    product_variant_id: UUID
+    barcodes: list[str] = Field(min_length=1, max_length=500)
+
+    @field_validator("barcodes")
+    @classmethod
+    def normalize_batch_barcodes(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("Each barcode is required")
+        return normalized
+
+
 class BarcodeOnboarding(BaseModel):
     product_variant_id: UUID
     barcode: str = Field(min_length=1, max_length=80)

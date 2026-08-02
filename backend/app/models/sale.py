@@ -26,6 +26,10 @@ class Sale(Base):
     cashier_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     discount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    # `discount` remains the legacy calculated amount used by older reports.
+    discount_type: Mapped[str] = mapped_column(String(20), nullable=False, default="PERCENTAGE")
+    discount_value: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     cost_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     profit_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
@@ -46,6 +50,10 @@ class Sale(Base):
     items = relationship("SaleItem", back_populates="sale", cascade="all, delete-orphan")
     audits = relationship("SaleAudit", back_populates="sale", cascade="all, delete-orphan")
     returns = relationship("SaleReturn", back_populates="sale", cascade="all, delete-orphan")
+
+    @property
+    def grand_total(self) -> Decimal:
+        return self.total_amount
 
 
 class SaleItem(Base):

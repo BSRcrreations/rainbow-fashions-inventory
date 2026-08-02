@@ -2,14 +2,17 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_manager_or_owner
+from app.api.deps import get_current_user, require_manager_or_owner, require_owner
 from app.database.session import get_db
 from app.models.user import User
 from app.schemas.stock_scan import (
     BarcodeAssignment,
+    BatchBarcodeRequest,
+    BarcodeTransferRequest,
     BarcodeImageResolutionRead,
     BarcodeOnboarding,
     BarcodeProductOnboarding,
@@ -22,6 +25,7 @@ from app.schemas.stock_scan import (
     StockScanSessionUpdate,
     StockScanValidationRead,
 )
+from app.schemas.stock import StockHistoryRead
 from app.services.stock_scan_service import StockScanService
 
 
@@ -50,6 +54,20 @@ def add_variant_barcode(variant_id: UUID, payload: BarcodeOnboarding, db: Sessio
 @barcodes_router.post("/onboard", response_model=ProductVariantBarcodeRead)
 def onboard_barcode(payload: BarcodeOnboarding, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> ProductVariantBarcodeRead:
     return StockScanService(db).onboard_barcode(payload, current_user)
+
+
+@barcodes_router.delete("/{barcode_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_barcode(barcode_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
+    StockScanService(db).remove_barcode(barcode_id, current_user, request.state.request_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@barcodes_router.post("/{barcode_id}/transfer", response_model=ProductVariantBarcodeRead)
+def transfer_barcode(barcode_id: UUID, payload: BarcodeTransferRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> ProductVariantBarcodeRead:
+    if not payload.confirm_transfer:
+        from app.core.exceptions import bad_request
+        raise bad_request("Confirm the barcode transfer before continuing", "BARCODE_TRANSFER_CONFIRMATION_REQUIRED")
+    return StockScanService(db).transfer_barcode(barcode_id, payload.target_variant_id, current_user, request.state.request_id)
 
 
 @barcodes_router.post("/resolve-image", response_model=BarcodeImageResolutionRead)
@@ -91,6 +109,17 @@ def scan_barcode(session_id: UUID, payload: StockScanRequest, db: Session = Depe
     return StockScanService(db).scan(session_id, payload, current_user)
 
 
+@router.post("/sessions/{session_id}/batch-barcodes", response_model=StockScanSessionRead)
+def batch_barcodes(session_id: UUID, payload: BatchBarcodeRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
+    try:
+        return StockScanService(db).batch_barcodes(session_id, payload, current_user, request.state.request_id)
+    except HTTPException as exc:
+        detail = exc.detail
+        if exc.status_code == status.HTTP_409_CONFLICT and isinstance(detail, dict) and detail.get("code") == "BARCODE_VARIANT_CONFLICT":
+            return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"error": detail})
+        raise
+
+
 @router.patch("/sessions/{session_id}/items/{item_id}", response_model=StockScanSessionRead)
 def update_scan_item(session_id: UUID, item_id: UUID, payload: StockScanItemUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
     return StockScanService(db).update_item(session_id, item_id, payload, current_user)
@@ -102,6 +131,17 @@ def delete_scan_item(session_id: UUID, item_id: UUID, db: Session = Depends(get_
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_scan_session(session_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
+    StockScanService(db).delete_session(session_id, current_user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/sessions/{session_id}/items/{item_id}/correction-target", response_model=StockHistoryRead)
+def scan_item_correction_target(session_id: UUID, item_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockHistoryRead:
+    return StockScanService(db).correction_target(session_id, item_id, current_user)
+
+
 @router.post("/sessions/{session_id}/validate", response_model=StockScanValidationRead)
 def validate_session(session_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanValidationRead:
     valid, messages, session = StockScanService(db).validate(session_id, current_user)
@@ -109,8 +149,8 @@ def validate_session(session_id: UUID, db: Session = Depends(get_db), current_us
 
 
 @router.post("/sessions/{session_id}/confirm", response_model=StockScanSessionRead)
-def confirm_session(session_id: UUID, payload: StockScanConfirmRequest, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
-    return StockScanService(db).confirm(session_id, payload, current_user)
+def confirm_session(session_id: UUID, payload: StockScanConfirmRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
+    return StockScanService(db).confirm(session_id, payload, current_user, request.state.request_id)
 
 
 @router.post("/sessions/{session_id}/cancel", response_model=StockScanSessionRead)

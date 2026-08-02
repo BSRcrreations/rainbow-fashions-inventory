@@ -1,7 +1,7 @@
 export type UserRole = "OWNER" | "MANAGER" | "STAFF";
 export type PricingType = "MRP" | "OWN_PRICE";
 export type PurchaseStatus = "DRAFT" | "REVIEWED" | "CONFIRMED" | "CANCELLED" | "VOIDED";
-export type StockMovementType = "PURCHASE" | "SALE" | "CUSTOMER_RETURN" | "SUPPLIER_RETURN" | "DAMAGE" | "MANUAL_ADJUSTMENT" | "SALE_EDIT_RETURN" | "SALE_EDIT_DECREASE" | "SALE_VOID" | "PURCHASE_VOID" | "OPENING_STOCK" | "STOCK_COUNT_IN" | "STOCK_COUNT_OUT";
+export type StockMovementType = "PURCHASE" | "SALE" | "CUSTOMER_RETURN" | "SUPPLIER_RETURN" | "DAMAGE" | "MANUAL_ADJUSTMENT" | "SALE_EDIT_RETURN" | "SALE_EDIT_DECREASE" | "SALE_VOID" | "PURCHASE_VOID" | "OPENING_STOCK" | "STOCK_RESET_OUT" | "STOCK_COUNT_IN" | "STOCK_COUNT_OUT";
 export type StockScanMode = "PURCHASE_RECEIVING" | "OPENING_STOCK" | "PHYSICAL_COUNT" | "STOCK_ADJUSTMENT" | "STOCK_TRANSFER";
 export type StockScanStatus = "DRAFT" | "IN_PROGRESS" | "REVIEW_REQUIRED" | "CONFIRMED" | "CANCELLED";
 export type StockScanQuantityMode = "INCREMENT" | "QUANTITY_ENTRY";
@@ -258,7 +258,11 @@ export interface Sale {
   payment_mode: string;
   subtotal: string;
   discount: string;
+  discount_type: "PERCENTAGE" | "FIXED_AMOUNT";
+  discount_value: string;
+  discount_amount: string;
   total_amount: string;
+  grand_total: string;
   cost_amount: string;
   profit_amount: string;
   status: SaleStatus;
@@ -330,6 +334,40 @@ export interface PaginatedProducts {
     total_records: number;
     total_pages: number;
   };
+}
+
+export type StockResetScope = "SELECTED_VARIANTS" | "PRODUCT" | "CATEGORY" | "BRAND" | "ALL_CURRENT_STOCK" | "ALL_OPENING_STOCK";
+
+export interface StockResetPreviewItem {
+  variant_id: string;
+  product_id: string;
+  product: string;
+  brand?: string | null;
+  category?: string | null;
+  size?: string | null;
+  color?: string | null;
+  barcode: string;
+  sku: string;
+  current_stock: number;
+  reset_quantity: number;
+  resulting_stock: number;
+  unit_cost: string;
+  inventory_value: string;
+}
+
+export interface StockResetPreviewResponse {
+  variants: StockResetPreviewItem[];
+  total_products: number;
+  total_variants: number;
+  total_pieces: number;
+  total_inventory_value: string;
+  request_id: string;
+  classification_warning?: string | null;
+}
+
+export interface StockResetResponse extends StockResetPreviewResponse {
+  stock_history_ids: string[];
+  already_completed: boolean;
 }
 
 export interface PurchaseItem {
@@ -446,11 +484,17 @@ export interface PurchaseDetail extends Purchase {
 export interface StockHistory {
   id: string;
   product_id: string;
+  product_variant_id?: string | null;
+  store_id?: string | null;
   movement_type: StockMovementType;
   qty: number;
   before_stock: number;
   after_stock: number;
   reference?: string | null;
+  request_id?: string | null;
+  correction_of_id?: string | null;
+  correction_reason?: string | null;
+  correction_notes?: string | null;
   movement_date: string;
   created_by?: string | null;
   product?: Pick<Product, "id" | "name" | "size" | "color" | "sku"> | null;
