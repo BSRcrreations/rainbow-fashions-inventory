@@ -320,7 +320,9 @@ database_import_production:
     name: production-database-import
   when: manual
   manual_confirmation: "Import the staged database after the verified backup and rollback plan have been reviewed."
-  allow_failure: false
+  # An import remains an explicit, protected manual action. It must not block
+  # ordinary application deployments when no import is requested.
+  allow_failure: true
   before_script:
     - apk add --no-cache bash openssh-client
     - chmod +x scripts/database/*.sh
