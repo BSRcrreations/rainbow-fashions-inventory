@@ -181,7 +181,7 @@ class StockScanService:
             if not session:
                 raise not_found("Stock scan session")
             if session.status == StockScanStatus.CONFIRMED:
-                raise conflict("This stock-entry session has already been confirmed.", "SESSION_ALREADY_CONFIRMED")
+                raise conflict("This stock session is confirmed and cannot be changed.", "SESSION_ALREADY_CONFIRMED")
             if session.status == StockScanStatus.CANCELLED:
                 raise bad_request("This stock-entry session has been cancelled")
             if session.mode == StockScanMode.PURCHASE_RECEIVING and payload.action != "EXISTING_VARIANT":
@@ -189,13 +189,68 @@ class StockScanService:
 
             barcode = payload.barcode.strip()
             self._validate_barcode(barcode)
-            duplicate = self._barcode_mapping(barcode, store_id, lock=True)
+            if payload.action == "EXISTING_VARIANT":
+                variant = self._variant_for_store(payload.product_variant_id, store_id, lock=True)
+                mapping = self._barcode_mapping(barcode, store_id, lock=True, include_inactive=True)
+                if mapping and mapping.product_variant_id != variant.id:
+                    raise conflict("This barcode is already assigned to another product variant.", "BARCODE_ALREADY_ASSIGNED")
+                if not mapping:
+                    mapping = ProductBarcode(
+                        store_id=store_id,
+                        product_id=variant.product_id,
+                        product_variant_id=variant.id,
+                        barcode=barcode,
+                        barcode_type=self._barcode_type(barcode, "AUTO"),
+                        manufacturer_barcode=True,
+                        package_quantity=1,
+                        scan_unit="PIECE",
+                        inventory_unit="PIECE",
+                        base_unit_conversion=1,
+                        sale_mode="PIECE_ONLY",
+                        mrp=variant.mrp,
+                        default_selling_price=variant.selling_price,
+                        active=True,
+                        verified=True,
+                        verified_by=current_user.id,
+                        verified_at=datetime.now(timezone.utc),
+                    )
+                    self.db.add(mapping)
+                    self.db.flush()
+                    self.db.add(ProductBarcodeAudit(
+                        store_id=store_id,
+                        barcode=barcode,
+                        old_product_variant_id=None,
+                        new_product_variant_id=variant.id,
+                        action="ASSIGNED",
+                        reason="EXISTING_VARIANT",
+                        changed_by=current_user.id,
+                        request_id=request_id,
+                    ))
+                elif not mapping.active:
+                    mapping.active = True
+
+                self._add_mapping_to_session(
+                    session,
+                    mapping,
+                    variant,
+                    payload.quantity,
+                    variant.last_purchase_cost,
+                    "SELLABLE",
+                )
+                self.db.commit()
+                return self.get_session(session.id, current_user)
+
+            duplicate = self._barcode_mapping(barcode, store_id, lock=True, include_inactive=True)
             if duplicate:
                 raise conflict("This barcode is already assigned to another product variant.", "BARCODE_ALREADY_ASSIGNED")
 
-            if payload.action == "EXISTING_VARIANT":
-                variant = self._variant_for_store(payload.product_variant_id, store_id, lock=True)
-            elif payload.action == "NEW_VARIANT":
+            # The schema requires these values for new variants/products. Keep the
+            # assertion here so the existing-variant branch can intentionally omit
+            # all price and product metadata.
+            assert payload.purchase_cost is not None
+            assert payload.selling_price is not None
+
+            if payload.action == "NEW_VARIANT":
                 product = self._product_for_store(payload.existing_product_id, store_id, lock=True)
                 variant = self._create_variant(product, payload, barcode, store_id)
                 self.db.add(variant)
@@ -536,7 +591,17 @@ class StockScanService:
     def _variant_for_store(self, variant_id: Optional[UUID], store_id: UUID, lock: bool = False) -> ProductVariant:
         if not variant_id:
             raise bad_request("Select an existing variant")
-        query = self.db.query(ProductVariant).options(joinedload(ProductVariant.product)).filter(ProductVariant.id == variant_id, ProductVariant.store_id == store_id)
+        query = (
+            self.db.query(ProductVariant)
+            .join(Product, Product.id == ProductVariant.product_id)
+            .options(joinedload(ProductVariant.product))
+            .filter(
+                ProductVariant.id == variant_id,
+                ProductVariant.store_id == store_id,
+                ProductVariant.is_active.is_(True),
+                Product.is_active.is_(True),
+            )
+        )
         variant = query.with_for_update().first() if lock else query.first()
         if not variant:
             raise not_found("Product variant")
@@ -784,7 +849,7 @@ class StockScanService:
     def _editable_session(self, session_id: UUID, current_user: User) -> StockScanSession:
         session = self.get_session(session_id, current_user)
         if session.status == StockScanStatus.CONFIRMED:
-            raise conflict("This scan session has already been confirmed.")
+            raise conflict("This stock session is confirmed and cannot be changed.", "SESSION_ALREADY_CONFIRMED")
         if session.status == StockScanStatus.CANCELLED:
             raise bad_request("This scan session has been cancelled")
         return session
@@ -805,12 +870,13 @@ class StockScanService:
             .first()
         )
 
-    def _barcode_mapping(self, barcode: str, store_id: UUID, lock: bool = False) -> Optional[ProductBarcode]:
+    def _barcode_mapping(self, barcode: str, store_id: UUID, lock: bool = False, include_inactive: bool = False) -> Optional[ProductBarcode]:
         query = self.db.query(ProductBarcode).filter(
             ProductBarcode.store_id == store_id,
             func.lower(ProductBarcode.barcode) == barcode.strip().lower(),
-            ProductBarcode.active.is_(True),
         )
+        if not include_inactive:
+            query = query.filter(ProductBarcode.active.is_(True))
         return query.with_for_update().first() if lock else query.first()
 
     @staticmethod
