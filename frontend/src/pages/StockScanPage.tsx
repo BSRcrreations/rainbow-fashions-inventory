@@ -13,7 +13,7 @@ import { Button } from "../components/ui/button";
 import BarcodeOnboardingDialog from "../components/BarcodeOnboardingDialog";
 import BatchBarcodeDialog from "../components/BatchBarcodeDialog";
 import { useAuth } from "../hooks/useAuth";
-import type { Purchase, StockHistory, StockScanMode, StockScanQuantityMode, StockScanSession } from "../types";
+import type { CategoryHierarchy, Purchase, StockHistory, StockScanMode, StockScanQuantityMode, StockScanSession } from "../types";
 import { money } from "../utils/format";
 
 const modes: Array<{ value: StockScanMode; label: string; description: string }> = [
@@ -41,6 +41,8 @@ export default function StockScanPage() {
   const [barcode, setBarcode] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [quantityMode, setQuantityMode] = useState<StockScanQuantityMode>("INCREMENT");
+  const [defaultCategoryId, setDefaultCategoryId] = useState<string | null>(null);
+  const [defaultBrandId, setDefaultBrandId] = useState<string | null>(null);
   const [purchaseId, setPurchaseId] = useState("");
   const [error, setError] = useState("");
   const [latestScan, setLatestScan] = useState("");
@@ -66,7 +68,7 @@ export default function StockScanPage() {
   const session = sessionQuery.data;
 
   const createMutation = useMutation({
-    mutationFn: (nextMode: StockScanMode) => api.post<StockScanSession>("/stock-scan/sessions", { mode: nextMode, quantity_mode: quantityMode, purchase_id: nextMode === "PURCHASE_RECEIVING" ? purchaseId : null, location_name: "Main store" }),
+    mutationFn: (nextMode: StockScanMode) => api.post<StockScanSession>("/stock-scan/sessions", { mode: nextMode, quantity_mode: quantityMode, purchase_id: nextMode === "PURCHASE_RECEIVING" ? purchaseId : null, default_category_id: (defaultCategoryId ?? "") || null, default_brand_id: (defaultBrandId ?? "") || null, location_name: "Main store" }),
     onSuccess: (created) => {
       localStorage.setItem(sessionKey(created.mode), created.id);
       setSessionId(created.id);
@@ -83,7 +85,6 @@ export default function StockScanPage() {
     }
   }, [createMutation, mode, purchaseId, sessionId]);
   useEffect(() => { scannerRef.current?.focus(); }, [sessionId]);
-
   const scanMutation = useMutation({
     mutationFn: ({ value, count }: { value: string; count: number }) => api.post<StockScanSession>(`/stock-scan/sessions/${sessionId}/scan`, { barcode: value, quantity: count }),
     onSuccess: (next) => {
@@ -140,6 +141,12 @@ export default function StockScanPage() {
     queryFn: () => api.get<Purchase[]>("/purchases"),
     enabled: mode === "PURCHASE_RECEIVING" && !sessionId,
   });
+  const hierarchyQuery = useQuery({ queryKey: ["category-hierarchy"], queryFn: () => api.get<CategoryHierarchy[]>("/categories/hierarchy") });
+  const categories = hierarchyQuery.data ?? [];
+  const activeCategoryId = defaultCategoryId ?? session?.default_category_id ?? "";
+  const activeBrandId = defaultBrandId ?? session?.default_brand_id ?? "";
+  const selectedCategory = categories.find((category) => category.id === activeCategoryId);
+  const brands = selectedCategory?.brands.filter((brand) => brand.is_active) ?? [];
 
   const totals = useMemo(() => {
     const items = session?.items ?? [];
@@ -162,6 +169,13 @@ export default function StockScanPage() {
     requestedSessionMode.current = stored ? nextMode : null;
     setSessionId(stored ?? "");
   }
+  function updateSessionDefaults(nextCategoryId: string, nextBrandId: string) {
+    setDefaultCategoryId(nextCategoryId);
+    setDefaultBrandId(nextBrandId);
+    if (sessionId && !sessionLocked) {
+      void api.patch<StockScanSession>(`/stock-scan/sessions/${sessionId}`, { default_category_id: nextCategoryId || null, default_brand_id: nextBrandId || null }).then((next) => queryClient.setQueryData(["stock-scan-session", next.id], next)).catch((cause: unknown) => toast.error(cause instanceof Error ? cause.message : "Unable to update category defaults"));
+    }
+  }
   function submitScan(value = barcode) {
     const normalized = value.trim();
     if (!normalized || !sessionId || sessionLocked || scanMutation.isPending) return;
@@ -181,6 +195,7 @@ export default function StockScanPage() {
     <div className="space-y-6">
       {sessionLocked ? <section className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3"><div className="font-semibold text-primary-950">This stock session is confirmed and cannot be edited.</div><p className="mt-1 text-sm text-primary-900">Use Stock Correction to fix a quantity mistake. The original transaction will remain in the audit history.</p></section> : null}
       <section className="ds-surface p-3 sm:p-4"><div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">{modes.map((entry) => <button key={entry.value} type="button" onClick={() => changeMode(entry.value)} className={`rounded-xl border p-3 text-left transition ${mode === entry.value ? "border-primary-500 bg-primary-50 text-primary-800 shadow-sm" : "border-border bg-surface hover:border-primary-300 hover:bg-surface-subtle"}`}><div className="text-sm font-semibold">{entry.label}</div><div className="mt-1 text-xs text-muted">{entry.description}</div></button>)}</div></section>
+      <section className="ds-surface grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end"><label className="field-label">Step 1 - Select category<select className="field-input mt-1" value={activeCategoryId} onChange={(event) => updateSessionDefaults(event.target.value, "")}><option value="">All categories</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label><label className="field-label">Step 2 - Select brand<select className="field-input mt-1" disabled={!activeCategoryId} value={activeBrandId} onChange={(event) => updateSessionDefaults(activeCategoryId, event.target.value)}><option value="">{activeCategoryId ? "All brands" : "Select category first"}</option>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label><Button type="button" variant="secondary" onClick={startNewSession}>New session</Button></section>
       {mode === "PURCHASE_RECEIVING" && !sessionId ? <section className="ds-surface flex flex-col gap-3 p-4 sm:flex-row sm:items-end"><label className="field-label flex-1">Purchase to receive<select className="field-input" value={purchaseId} onChange={(event) => setPurchaseId(event.target.value)}><option value="">Select an unconfirmed purchase</option>{(purchasesQuery.data ?? []).filter((purchase) => purchase.status !== "CONFIRMED" && purchase.status !== "CANCELLED" && purchase.status !== "VOIDED").map((purchase) => <option key={purchase.id} value={purchase.id}>{purchase.invoice_number || purchase.purchase_reference || purchase.id} · {purchase.supplier_name || "Supplier pending"}</option>)}</select></label><p className="max-w-md text-sm text-muted">Scanning updates accepted receipt quantities only. Purchase confirmation remains the single action that enters supplier stock.</p></section> : null}
       {mode === "STOCK_TRANSFER" ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Transfers are visible here, but cannot be confirmed until location-level inventory is configured. This prevents stock from being moved without a traceable source balance.</div> : null}
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">

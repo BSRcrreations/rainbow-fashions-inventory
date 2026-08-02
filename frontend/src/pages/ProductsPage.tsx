@@ -1,6 +1,7 @@
-import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Barcode, ChevronLeft, ChevronRight, Download, Edit3, FileDown, FileUp, Filter, ImagePlus, PackageOpen, Plus, RefreshCw, Search, Trash2, Wand2, X } from "lucide-react";
+import { Barcode, ChevronDown, ChevronLeft, ChevronRight, Download, Edit3, FileDown, FileUp, Filter, ImagePlus, PackageOpen, Plus, RefreshCw, Search, Trash2, Wand2, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { ApiError, api } from "../api/client";
 import BarcodeScannerInput from "../components/BarcodeScannerInput";
 import BarcodeLabelDialog from "../components/BarcodeLabelDialog";
@@ -145,6 +146,7 @@ function downloadBlob(blob: Blob, filename: string) {
 
 export default function ProductsPage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -169,8 +171,7 @@ export default function ProductsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [bulkQty, setBulkQty] = useState("1");
-  const [bulkDirection, setBulkDirection] = useState<"INCREASE" | "DECREASE">("INCREASE");
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteCheck, setDeleteCheck] = useState<BulkDeleteCheck | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
@@ -589,25 +590,35 @@ export default function ProductsPage() {
     }
   }
 
-  async function runBulkStockUpdate() {
-    const product_ids = Array.from(selectedIds);
-    if (!product_ids.length) return;
-    try {
-      await api.post("/products/bulk/stock", { product_ids, direction: bulkDirection, qty: Number(bulkQty), reference: "Bulk update from products page" });
-      toast.success("Bulk operation completed");
-      setSelectedIds(new Set());
-      invalidateProducts();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Bulk operation failed");
-    }
-  }
-
   function toggleSelected(id: string) {
     setSelectedIds((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
+    });
+  }
+
+  function toggleExpanded(id: string) {
+    setExpandedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function printVariantLabel(product: Product, variant: Product["variants"][number]) {
+    setPrintTarget({
+      ...product,
+      sku: variant.internal_sku,
+      barcode: variant.barcode,
+      size: variant.size,
+      color: variant.color,
+      mrp: variant.mrp,
+      selling_price: variant.selling_price,
+      purchase_price: variant.average_cost || variant.last_purchase_cost || product.purchase_price,
+      current_stock: variant.current_stock,
     });
   }
 
@@ -808,7 +819,7 @@ export default function ProductsPage() {
           {editing?.image_url ? <Button type="button" variant="secondary" size="sm" onClick={() => deleteImageMutation.mutate(editing.id)} disabled={deleteImageMutation.isPending}>Delete image</Button> : null}
         </div>
         {error ? <div className="sm:col-span-2"><ErrorState message={error} /></div> : null}
-        <div className="flex flex-col-reverse gap-2 border-t border-line pt-4 sm:col-span-2 sm:flex-row sm:justify-end">
+        <div className="sticky bottom-[-1.25rem] z-10 -mx-4 flex flex-col-reverse gap-2 border-t border-line bg-surface/95 px-4 py-3 shadow-[0_-8px_16px_-16px_rgb(15_23_42/0.45)] backdrop-blur sm:col-span-2 sm:-mx-6 sm:flex-row sm:justify-end sm:px-6">
           <Button type="button" variant="secondary" onClick={cancelEdit} disabled={saveMutation.isPending}>Cancel</Button>
           <Button type="submit" disabled={saveMutation.isPending}>
             <Plus size={16} /> {saveMutation.isPending ? "Saving" : editing ? "Update product" : "Add product"}
@@ -824,12 +835,6 @@ export default function ProductsPage() {
         <div className="mb-4 grid gap-2 rounded-md border border-teal-200 bg-teal-50 p-3 md:grid-cols-[auto_1fr] md:items-center">
           <div className="text-sm font-semibold text-teal-900">{selectedCount} product{selectedCount === 1 ? "" : "s"} selected</div>
           <div className="flex flex-wrap gap-2">
-            <select className="focus-ring h-9 rounded-md border border-line bg-white px-2 text-sm" value={bulkDirection} onChange={(event) => setBulkDirection(event.target.value as "INCREASE" | "DECREASE")}>
-              <option value="INCREASE">Increase</option>
-              <option value="DECREASE">Decrease</option>
-            </select>
-            <input className="focus-ring h-9 w-20 rounded-md border border-line px-2 text-sm" type="number" min="1" value={bulkQty} onChange={(event) => setBulkQty(event.target.value)} />
-            <Button type="button" size="sm" variant="secondary" onClick={() => void runBulkStockUpdate()}>Update stock</Button>
             <Button type="button" size="sm" variant="secondary" onClick={() => void exportProducts("csv", true)}>Export selected</Button>
             <Button type="button" size="sm" variant="secondary" onClick={() => void deactivateSelected()}>Deactivate</Button>
             <Button type="button" size="sm" variant="secondary" onClick={() => setSelectedIds(new Set())}>Clear selection</Button>
@@ -889,46 +894,52 @@ export default function ProductsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
-              {products.map((product) => (
-                <tr key={product.id} className={selectedIds.has(product.id) ? "bg-teal-50/40" : ""}>
-                  <td className="px-4 py-3"><input type="checkbox" checked={selectedIds.has(product.id)} onChange={() => toggleSelected(product.id)} /></td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      {product.image_url ? <img loading="lazy" src={imageSrc(product.image_url)} alt="" className="h-11 w-11 rounded object-cover" /> : <div className="grid h-11 w-11 place-items-center rounded bg-slate-100 text-slate-400"><PackageOpen size={18} /></div>}
-                      <div className="min-w-0">
-                        <div className="truncate font-medium text-slate-900"><HighlightText text={product.name} query={debouncedSearch} /></div>
-                        <div className="truncate text-slate-500"><HighlightText text={product.category?.name} query={debouncedSearch} /> / <HighlightText text={product.subcategory?.name} query={debouncedSearch} /> / <HighlightText text={product.brand?.name} query={debouncedSearch} /></div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div><HighlightText text={product.sku || "-"} query={debouncedSearch} /></div>
-                    <div className="text-slate-500"><HighlightText text={product.barcode || "-"} query={debouncedSearch} /></div>
-                  </td>
-                  <td className="px-4 py-3">
-                    {product.variants.length ? <div className="space-y-1 text-xs">{product.variants.slice(0, 4).map((variant) => <div key={variant.id} className="flex min-w-52 items-center justify-between gap-2"><span className="truncate text-slate-700">{[variant.size, variant.color, variant.style_code].filter(Boolean).join(" / ") || "Standard"}</span><span className="whitespace-nowrap text-slate-500">{money(variant.selling_price)} · {variant.current_stock}</span></div>)}{product.variants.length > 4 ? <div className="text-slate-500">+{product.variants.length - 4} more variants</div> : null}</div> : <span className="text-slate-500">No sellable variant</span>}
-                  </td>
-                  <td className="px-4 py-3">{money(product.selling_price)}</td>
-                  <td className="px-4 py-3">{money(product.purchase_price)}</td>
-                  <td className="px-4 py-3">
-                    <span className={product.current_stock === 0 ? "font-semibold text-rose-700" : product.current_stock <= product.minimum_stock ? "font-semibold text-amber-700" : "text-slate-700"}>
-                      {product.current_stock}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded px-2 py-1 text-xs font-medium ${product.is_active ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-600"}`}>
-                      {product.is_active ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button type="button" variant="secondary" size="icon" onClick={() => beginEdit(product)} title="Edit product"><Edit3 size={16} /></Button>
-                      <Button type="button" variant="ghost" size="icon" onClick={() => setPrintTarget(product)} title="Print barcode"><Barcode size={16} /></Button>
-                      {canPermanentlyDelete ? <Button type="button" variant="ghost" size="icon" className="text-rose-700 hover:bg-rose-50" onClick={() => void openPermanentDelete([product.id])} title="Permanently delete product"><Trash2 size={17} /></Button> : null}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {products.map((product) => {
+                const totalStock = product.variants.reduce((sum, variant) => sum + variant.current_stock, 0);
+                const expanded = expandedIds.has(product.id);
+                return (
+                  <Fragment key={product.id}>
+                    <tr className={selectedIds.has(product.id) ? "bg-teal-50/40" : ""}>
+                      <td className="px-4 py-3"><input type="checkbox" checked={selectedIds.has(product.id)} onChange={() => toggleSelected(product.id)} /></td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <button type="button" className="grid h-8 w-8 shrink-0 place-items-center rounded border border-line hover:bg-slate-50" onClick={() => toggleExpanded(product.id)} aria-label={`${expanded ? "Collapse" : "Expand"} ${product.name}`}>{expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</button>
+                          {product.image_url ? <img loading="lazy" src={imageSrc(product.image_url)} alt="" className="h-11 w-11 rounded object-cover" /> : <div className="grid h-11 w-11 place-items-center rounded bg-slate-100 text-slate-400"><PackageOpen size={18} /></div>}
+                          <div className="min-w-0">
+                            <div className="truncate font-medium text-slate-900"><HighlightText text={product.name} query={debouncedSearch} /></div>
+                            <div className="truncate text-slate-500"><HighlightText text={product.category?.name} query={debouncedSearch} /> / <HighlightText text={product.subcategory?.name} query={debouncedSearch} /> / <HighlightText text={product.brand?.name} query={debouncedSearch} /></div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div><HighlightText text={product.sku || "-"} query={debouncedSearch} /></div>
+                        <div className="text-slate-500"><HighlightText text={product.barcode || "-"} query={debouncedSearch} /></div>
+                      </td>
+                      <td className="px-4 py-3">{product.variants.length ? `${product.variants.length} variant${product.variants.length === 1 ? "" : "s"}` : <span className="text-slate-500">No sellable variant</span>}</td>
+                      <td className="px-4 py-3">{money(product.selling_price)}</td>
+                      <td className="px-4 py-3">{money(product.purchase_price)}</td>
+                      <td className="px-4 py-3">
+                        <span className={totalStock === 0 ? "font-semibold text-rose-700" : totalStock <= product.minimum_stock ? "font-semibold text-amber-700" : "text-slate-700"}>
+                          {totalStock}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`rounded px-2 py-1 text-xs font-medium ${product.is_active ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-600"}`}>
+                          {product.is_active ? "Active" : "Inactive"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button type="button" variant="secondary" size="icon" onClick={() => beginEdit(product)} title="Edit product"><Edit3 size={16} /></Button>
+                          <Button type="button" variant="ghost" size="icon" onClick={() => setPrintTarget(product)} title="Print base barcode"><Barcode size={16} /></Button>
+                          {canPermanentlyDelete ? <Button type="button" variant="ghost" size="icon" className="text-rose-700 hover:bg-rose-50" onClick={() => void openPermanentDelete([product.id])} title="Permanently delete product"><Trash2 size={17} /></Button> : null}
+                        </div>
+                      </td>
+                    </tr>
+                    {expanded ? <tr className="bg-slate-50/60"><td className="px-4 py-4" colSpan={9}><div className="overflow-x-auto rounded-md border border-line bg-white"><table className="min-w-[920px] w-full text-left text-xs"><thead className="bg-slate-50 uppercase text-slate-500"><tr><th className="px-3 py-2">Size</th><th className="px-3 py-2">Colour</th><th className="px-3 py-2">Barcode</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2 text-right">MRP</th><th className="px-3 py-2 text-right">Selling</th><th className="px-3 py-2 text-right">Cost</th><th className="px-3 py-2 text-right">Stock</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Actions</th></tr></thead><tbody className="divide-y divide-line">{product.variants.map((variant) => <tr key={variant.id}><td className="px-3 py-2 font-semibold">{variant.size || "Standard"}</td><td className="px-3 py-2">{variant.color || "-"}</td><td className="px-3 py-2 font-mono">{variant.barcode}</td><td className="px-3 py-2 font-mono">{variant.internal_sku}</td><td className="px-3 py-2 text-right">{variant.mrp ? money(variant.mrp) : "-"}</td><td className="px-3 py-2 text-right font-semibold">{money(variant.selling_price)}</td><td className="px-3 py-2 text-right">{money(variant.average_cost || variant.last_purchase_cost)}</td><td className="px-3 py-2 text-right font-bold">{variant.current_stock}</td><td className="px-3 py-2"><span className={`rounded px-2 py-1 font-medium ${variant.is_active ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-600"}`}>{variant.is_active ? "Active" : "Inactive"}</span></td><td className="px-3 py-2"><div className="flex gap-1"><Button type="button" variant="secondary" size="sm" onClick={() => navigate(`/stock-adjustment?variant_id=${variant.id}`)}>Stock</Button><Button type="button" variant="ghost" size="icon" title="Print variant barcode" onClick={() => printVariantLabel(product, variant)}><Barcode size={15} /></Button></div></td></tr>)}</tbody></table></div></td></tr> : null}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
           </div>

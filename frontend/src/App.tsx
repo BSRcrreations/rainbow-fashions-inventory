@@ -34,6 +34,7 @@ export default function App() {
           <Route path="/stock" element={<StockPage />} />
           <Route path="/stock/scan" element={<StockScanPage />} />
           <Route path="/stock/adjustment" element={<StockAdjustmentPage />} />
+          <Route path="/stock-adjustment" element={<StockAdjustmentPage />} />
           <Route path="/stock-adjustments" element={<StockAdjustmentPage />} />
           <Route path="/settings/security" element={<SecuritySettingsPage />} />
         </Route>

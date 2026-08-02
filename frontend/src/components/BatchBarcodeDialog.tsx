@@ -50,6 +50,6 @@ export default function BatchBarcodeDialog({ open, session, onClose, onSaved }: 
       {error ? <ErrorState message={error} /> : null}
       {selectedItems.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="text-xs uppercase text-muted"><tr><th className="py-2">Product / variant</th><th>Barcode</th><th>Quantity</th><th>Status</th><th>Action</th></tr></thead><tbody>{selectedItems.map((item) => <tr key={item.id} className="border-t border-border"><td className="py-2"><div className="font-medium">{item.product_name}</div><div className="text-xs text-muted">{item.brand_name} · {[item.size, item.color, item.style_code].filter(Boolean).join(" / ")}</div></td><td className="font-mono">{item.barcode}</td><td className="font-semibold">{item.scanned_quantity}</td><td className="text-success">Staged</td><td><Button type="button" size="sm" variant="secondary" disabled={remove.isPending} onClick={() => remove.mutate(item.id)}>Remove row</Button></td></tr>)}</tbody></table></div> : null}
     </section>}
-    <div className="mt-5 flex justify-end"><Button type="button" variant="secondary" onClick={onClose}>{selection ? "Finish batch" : "Cancel"}</Button></div>
+    <div className="sticky bottom-[-1.25rem] z-10 -mx-4 mt-5 flex justify-end border-t border-border bg-surface/95 px-4 py-3 shadow-[0_-8px_16px_-16px_rgb(15_23_42/0.45)] backdrop-blur sm:-mx-6 sm:px-6"><Button type="button" variant="secondary" onClick={onClose}>{selection ? "Finish batch" : "Cancel"}</Button></div>
   </Dialog>;
 }

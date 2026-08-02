@@ -107,11 +107,11 @@ aside .bg-primary-700 > .border-t > button {
   }
 
   .ds-dialog-backdrop {
-    @apply fixed inset-0 z-40 overscroll-contain bg-slate-950/45 backdrop-blur-sm;
+    @apply fixed inset-0 z-[60] overscroll-contain bg-slate-950/45 backdrop-blur-sm;
   }
 
   .ds-dialog {
-    @apply rounded-lg border border-border bg-surface shadow-xl;
+    @apply rounded-xl border border-border bg-surface shadow-2xl shadow-slate-950/20;
   }
 
   .field-label {

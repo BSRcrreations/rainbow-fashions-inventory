@@ -28,6 +28,7 @@ class StockHistory(Base):
     before_stock: Mapped[int] = mapped_column(Integer, nullable=False)
     after_stock: Mapped[int] = mapped_column(Integer, nullable=False)
     reference: Mapped[Optional[str]] = mapped_column(String(180))
+    request_id: Mapped[Optional[str]] = mapped_column(String(120), index=True)
     purchase_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("purchases.id", ondelete="SET NULL"))
     purchase_item_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("purchase_items.id", ondelete="SET NULL"))
     sale_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("sales.id", ondelete="SET NULL"), index=True)

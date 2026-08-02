@@ -23,6 +23,7 @@ from app.models.product_inventory import ProductInventory
 from app.models.product_variant import InventoryCostLot, ProductVariant
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.models.stock_audit_event import StockAuditEvent
 from app.models.stock_history import StockHistory
 from app.models.stock_scan import StockScanSession, StockScanSessionItem
 from app.models.subcategory import SubCategory
@@ -481,7 +482,7 @@ class StockScanService:
             raise not_found("Confirmed stock transaction")
         return movement
 
-    def confirm(self, session_id: UUID, payload: StockScanConfirmRequest, current_user: User) -> StockScanSession:
+    def confirm(self, session_id: UUID, payload: StockScanConfirmRequest, current_user: User, request_id: Optional[str] = None) -> StockScanSession:
         store_id = self._store_id(current_user)
         session = (
             self.db.query(StockScanSession)
@@ -515,7 +516,7 @@ class StockScanService:
             for line in session.items:
                 delta, movement_type = self._movement_for_line(session, line)
                 if delta:
-                    self._apply_variant_delta(line, delta, movement_type, reference, current_user)
+                    self._apply_variant_delta(line, delta, movement_type, reference, current_user, request_id or reference)
 
         session.status = StockScanStatus.CONFIRMED
         session.confirmed_by = current_user.id
@@ -548,7 +549,7 @@ class StockScanService:
             return difference, StockMovementType.MANUAL_ADJUSTMENT
         raise bad_request("This scan mode cannot create inventory movements")
 
-    def _apply_variant_delta(self, line: StockScanSessionItem, delta: int, movement_type: StockMovementType, reference: str, current_user: User) -> None:
+    def _apply_variant_delta(self, line: StockScanSessionItem, delta: int, movement_type: StockMovementType, reference: str, current_user: User, request_id: str) -> None:
         variant = (
             self.db.query(ProductVariant)
             .options(joinedload(ProductVariant.product))
@@ -604,6 +605,20 @@ class StockScanService:
             after_stock=after,
             reference=reference,
             created_by=current_user.id,
+            request_id=request_id,
+        ))
+        self.db.add(StockAuditEvent(
+            event_type="OPENING_STOCK_CONFIRMED" if movement_type == StockMovementType.OPENING_STOCK else "BARCODE_STOCK_ADDED",
+            store_id=variant.store_id,
+            user_id=current_user.id,
+            user_role=current_user.role.value,
+            product_id=product.id,
+            product_variant_id=variant.id,
+            previous_quantity=before,
+            adjustment_quantity=delta,
+            resulting_quantity=after,
+            request_id=request_id,
+            metadata_json={"barcode": line.barcode, "session_id": str(line.session_id), "movement_type": movement_type.value},
         ))
 
     def _consume_cost_lots(self, variant_id: UUID, quantity: int) -> None:

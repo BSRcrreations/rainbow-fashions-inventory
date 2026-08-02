@@ -1,5 +1,6 @@
-import { AlertTriangle } from "lucide-react";
 import type { ReactNode } from "react";
+import { AlertTriangle } from "lucide-react";
+import Dialog from "./Dialog";
 import { Button } from "./ui/button";
 
 interface ConfirmDialogProps {
@@ -25,20 +26,17 @@ export default function ConfirmDialog({
 }: ConfirmDialogProps) {
   if (!open) return null;
   return (
-    <div className="ds-dialog-backdrop grid place-items-center overflow-y-auto p-4">
-      <div className="ds-dialog max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto break-words p-5">
-        <div className="mb-4 flex items-start gap-3">
+    <Dialog open={open} title={title} description={description} onClose={onCancel} maxWidth="md">
+      <div className="space-y-5">
+        <div className="flex items-start gap-3 rounded-xl border border-amber-100 bg-amber-50/60 p-3">
           <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-red-50 text-error">
             <AlertTriangle size={18} />
           </div>
-          <div>
-            <h2 className="text-base font-semibold text-foreground">{title}</h2>
-            <p className="mt-1 text-sm text-muted">{description}</p>
-          </div>
+          <p className="text-sm text-slate-700">Please review the details before continuing.</p>
         </div>
-        {children ? <div className="mb-4">{children}</div> : null}
+        {children}
         <div className="flex justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={onCancel} disabled={loading}>
+          <Button type="button" variant="secondary" data-dialog-initial-focus onClick={onCancel} disabled={loading}>
             Cancel
           </Button>
           <Button type="button" variant="destructive" onClick={onConfirm} disabled={loading}>
@@ -46,6 +44,6 @@ export default function ConfirmDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

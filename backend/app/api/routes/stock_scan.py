@@ -149,8 +149,8 @@ def validate_session(session_id: UUID, db: Session = Depends(get_db), current_us
 
 
 @router.post("/sessions/{session_id}/confirm", response_model=StockScanSessionRead)
-def confirm_session(session_id: UUID, payload: StockScanConfirmRequest, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
-    return StockScanService(db).confirm(session_id, payload, current_user)
+def confirm_session(session_id: UUID, payload: StockScanConfirmRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
+    return StockScanService(db).confirm(session_id, payload, current_user, request.state.request_id)
 
 
 @router.post("/sessions/{session_id}/cancel", response_model=StockScanSessionRead)
