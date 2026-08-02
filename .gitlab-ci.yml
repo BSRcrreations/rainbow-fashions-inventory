@@ -251,6 +251,10 @@ deploy_phase_4_verify:
 diagnose_barcode_assignment_production:
   extends: .deploy_local
   stage: verify
+  # This read-only job does not consume build artifacts. Schedule it
+  # independently so an unrelated optional manual deployment job cannot cause
+  # the diagnostic to be skipped.
+  needs: []
   image: docker:27-cli
   environment:
     name: production-diagnostics
