@@ -708,7 +708,9 @@ class StockScanService:
                 Product.is_active.is_(True),
             )
         )
-        variant = query.with_for_update().first() if lock else query.first()
+        # joinedload(ProductVariant.product) uses an outer join. PostgreSQL
+        # cannot lock that nullable joined side, so lock only the variant row.
+        variant = query.with_for_update(of=ProductVariant).first() if lock else query.first()
         if not variant:
             raise not_found("Product variant")
         return variant

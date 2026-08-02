@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.models.product_barcode import ProductBarcode
+from app.models.product_variant import ProductVariant
 from app.schemas.stock_scan import BatchBarcodeRequest
 from app.services.stock_scan_service import StockScanService
 
@@ -71,3 +72,15 @@ def test_batch_rejects_a_barcode_owned_by_another_variant_and_rolls_back():
 
     db.rollback.assert_called_once()
     db.commit.assert_not_called()
+
+
+def test_existing_variant_lock_targets_only_the_variant_row():
+    db = MagicMock()
+    service = StockScanService(db)
+    variant_id, store_id = uuid4(), uuid4()
+    locked_query = db.query.return_value.join.return_value.options.return_value.filter.return_value
+    locked_query.with_for_update.return_value.first.return_value = SimpleNamespace(id=variant_id)
+
+    service._variant_for_store(variant_id, store_id, lock=True)
+
+    locked_query.with_for_update.assert_called_once_with(of=ProductVariant)
