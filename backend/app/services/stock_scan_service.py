@@ -74,6 +74,29 @@ class StockScanService:
     def assign_barcode(self, variant_id: UUID, payload: BarcodeAssignment, current_user: User) -> ProductVariantBarcodeRead:
         return self.onboard_barcode(BarcodeOnboarding(product_variant_id=variant_id, barcode=payload.barcode), current_user)
 
+    def remove_barcode(self, barcode_id: UUID, current_user: User, request_id: Optional[str] = None) -> None:
+        store_id = self._store_id(current_user)
+        mapping = self.db.query(ProductBarcode).filter(ProductBarcode.id == barcode_id, ProductBarcode.store_id == store_id).with_for_update().first()
+        if not mapping:
+            raise not_found("Barcode assignment")
+        mapping.active = False
+        self.db.add(ProductBarcodeAudit(store_id=store_id, barcode=mapping.barcode, old_product_variant_id=mapping.product_variant_id, new_product_variant_id=mapping.product_variant_id, action="REMOVED", reason="BARCODE_ONLY", changed_by=current_user.id, request_id=request_id))
+        self.db.commit()
+
+    def transfer_barcode(self, barcode_id: UUID, target_variant_id: UUID, current_user: User, request_id: Optional[str] = None) -> ProductVariantBarcodeRead:
+        store_id = self._store_id(current_user)
+        mapping = self.db.query(ProductBarcode).filter(ProductBarcode.id == barcode_id, ProductBarcode.store_id == store_id).with_for_update().first()
+        if not mapping:
+            raise not_found("Barcode assignment")
+        target = self._variant_for_store(target_variant_id, store_id, lock=True)
+        old_variant_id = mapping.product_variant_id
+        mapping.product_variant_id = target.id
+        mapping.product_id = target.product_id
+        mapping.active = True
+        self.db.add(ProductBarcodeAudit(store_id=store_id, barcode=mapping.barcode, old_product_variant_id=old_variant_id, new_product_variant_id=target.id, action="TRANSFERRED", reason="OWNER_CONFIRMED", changed_by=current_user.id, request_id=request_id))
+        self.db.commit()
+        return self._variant_read(target, mapping)
+
     def onboard_barcode(self, payload: BarcodeOnboarding, current_user: User, request_id: Optional[str] = None) -> ProductVariantBarcodeRead:
         store_id = self._store_id(current_user)
         barcode = payload.barcode.strip()
@@ -181,7 +204,7 @@ class StockScanService:
             if not session:
                 raise not_found("Stock scan session")
             if session.status == StockScanStatus.CONFIRMED:
-                raise conflict("This stock session is confirmed and cannot be changed.", "SESSION_ALREADY_CONFIRMED")
+                raise conflict("This stock session is confirmed and cannot be changed.", "STOCK_SESSION_CONFIRMED")
             if session.status == StockScanStatus.CANCELLED:
                 raise bad_request("This stock-entry session has been cancelled")
             if session.mode == StockScanMode.PURCHASE_RECEIVING and payload.action != "EXISTING_VARIANT":
@@ -388,6 +411,35 @@ class StockScanService:
         session.status = StockScanStatus.CANCELLED
         self.db.commit()
         return self.get_session(session.id, current_user)
+
+    def delete_session(self, session_id: UUID, current_user: User) -> None:
+        """Draft scan rows have no confirmed inventory effect and may be discarded."""
+        session = self._editable_session(session_id, current_user)
+        self.db.delete(session)
+        self.db.commit()
+
+    def correction_target(self, session_id: UUID, item_id: UUID, current_user: User) -> StockHistory:
+        """Locate the immutable movement created for a confirmed scan row."""
+        session = self.get_session(session_id, current_user)
+        if session.status != StockScanStatus.CONFIRMED:
+            raise bad_request("Only confirmed stock sessions can be corrected")
+        item = next((candidate for candidate in session.items if candidate.id == item_id), None)
+        if not item:
+            raise not_found("Stock scan item")
+        reference = session.reference or f"SCAN-{session.id}"
+        movement = (
+            self.db.query(StockHistory)
+            .filter(
+                StockHistory.store_id == session.store_id,
+                StockHistory.product_variant_id == item.product_variant_id,
+                StockHistory.reference == reference,
+            )
+            .order_by(StockHistory.created_at.desc())
+            .first()
+        )
+        if not movement:
+            raise not_found("Confirmed stock transaction")
+        return movement
 
     def confirm(self, session_id: UUID, payload: StockScanConfirmRequest, current_user: User) -> StockScanSession:
         store_id = self._store_id(current_user)
@@ -849,7 +901,7 @@ class StockScanService:
     def _editable_session(self, session_id: UUID, current_user: User) -> StockScanSession:
         session = self.get_session(session_id, current_user)
         if session.status == StockScanStatus.CONFIRMED:
-            raise conflict("This stock session is confirmed and cannot be changed.", "SESSION_ALREADY_CONFIRMED")
+            raise conflict("This stock session is confirmed and cannot be changed.", "STOCK_SESSION_CONFIRMED")
         if session.status == StockScanStatus.CANCELLED:
             raise bad_request("This scan session has been cancelled")
         return session

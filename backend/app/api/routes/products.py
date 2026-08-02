@@ -181,7 +181,22 @@ def get_product(product_id: UUID, db: Session = Depends(get_db), _: User = Depen
 def update_product(product_id: UUID, payload: ProductUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
     if payload.is_test_data is True and current_user.role != UserRole.OWNER:
         raise forbidden("Only an owner can mark a product as test data")
-    return ProductService(db).update(product_id, payload)
+    return ProductService(db).update(product_id, payload, current_user.store_id)
+
+
+@router.post("/{product_id}/archive", response_model=ProductRead)
+def archive_product(product_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+    return ProductService(db).archive(product_id, current_user, request.state.request_id)
+
+
+@router.post("/{product_id}/restore", response_model=ProductRead)
+def restore_product(product_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+    return ProductService(db).restore(product_id, current_user, request.state.request_id)
+
+
+@router.get("/{product_id}/deletion-check")
+def product_deletion_check(product_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_owner)):
+    return ProductDeletionService(db).check([product_id], current_user, request.state.request_id)
 
 
 @router.post("/{product_id}/image", response_model=ProductRead)

@@ -451,6 +451,9 @@ export interface StockHistory {
   before_stock: number;
   after_stock: number;
   reference?: string | null;
+  correction_of_id?: string | null;
+  correction_reason?: string | null;
+  correction_notes?: string | null;
   movement_date: string;
   created_by?: string | null;
   product?: Pick<Product, "id" | "name" | "size" | "color" | "sku"> | null;

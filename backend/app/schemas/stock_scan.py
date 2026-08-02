@@ -82,6 +82,11 @@ class BarcodeAssignment(BaseModel):
         return barcode
 
 
+class BarcodeTransferRequest(BaseModel):
+    target_variant_id: UUID
+    confirm_transfer: bool = False
+
+
 class BarcodeOnboarding(BaseModel):
     product_variant_id: UUID
     barcode: str = Field(min_length=1, max_length=80)

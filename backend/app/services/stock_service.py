@@ -6,14 +6,15 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import bad_request, not_found
+from app.core.exceptions import bad_request, conflict, not_found
 from app.models.enums import StockMovementType
 from app.models.product import Product
 from app.models.product_inventory import ProductInventory
+from app.models.product_variant import ProductVariant
 from app.models.stock_history import StockHistory
 from app.models.user import User
 from app.repositories.stock import StockHistoryRepository
-from app.schemas.stock import StockAdjustmentCreate
+from app.schemas.stock import StockAdjustmentCreate, StockCorrectionCreate
 
 
 class StockService:
@@ -66,6 +67,60 @@ class StockService:
             after_stock=after_stock,
             reference=payload.reference,
             created_by=current_user.id,
+        )
+        self.db.add(movement)
+        self.db.commit()
+        self.db.refresh(movement)
+        return movement
+
+    def correct_transaction(self, transaction_id: UUID, payload: StockCorrectionCreate, current_user: User) -> StockHistory:
+        """Append a correction; the original movement is immutable evidence."""
+        store_id = current_user.store_id
+        if not store_id:
+            raise bad_request("Current user is not assigned to a store")
+        original = (
+            self.db.query(StockHistory)
+            .filter(StockHistory.id == transaction_id, StockHistory.store_id == store_id)
+            .with_for_update()
+            .first()
+        )
+        if not original:
+            raise not_found("Stock transaction")
+        if original.correction_of_id:
+            raise conflict("A correction transaction cannot be corrected again. Correct the original transaction instead.")
+        delta = payload.correct_quantity - original.after_stock
+        if delta == 0:
+            raise bad_request("The corrected quantity matches the original record; no correction is needed")
+        product = self.db.query(Product).filter(Product.id == original.product_id, Product.store_id == store_id).with_for_update().first()
+        if not product:
+            raise not_found("Product")
+        before_stock, after_stock = product.current_stock, product.current_stock + delta
+        if after_stock < 0:
+            raise bad_request("This correction would make current stock negative")
+        product.current_stock = after_stock
+        if original.product_variant_id:
+            variant = self.db.query(ProductVariant).filter(ProductVariant.id == original.product_variant_id, ProductVariant.store_id == store_id).with_for_update().first()
+            if not variant:
+                raise not_found("Product variant")
+            variant_after = variant.current_stock + delta
+            if variant_after < 0:
+                raise bad_request("This correction would make variant stock negative")
+            variant.current_stock = variant_after
+        inventory = self._get_or_create_inventory(product.id, store_id)
+        inventory.current_stock = after_stock
+        movement = StockHistory(
+            product_id=product.id,
+            product_variant_id=original.product_variant_id,
+            store_id=store_id,
+            movement_type=StockMovementType.MANUAL_ADJUSTMENT,
+            qty=abs(delta),
+            before_stock=before_stock,
+            after_stock=after_stock,
+            reference=payload.reference or f"CORRECTION-{original.id}",
+            created_by=current_user.id,
+            correction_of_id=original.id,
+            correction_reason=payload.reason,
+            correction_notes=(payload.notes or "").strip() or None,
         )
         self.db.add(movement)
         self.db.commit()

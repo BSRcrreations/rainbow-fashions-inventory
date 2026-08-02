@@ -19,6 +19,7 @@ from app.models.category import Category
 from app.models.product import Product
 from app.models.product_variant import ProductVariant
 from app.models.product_inventory import ProductInventory
+from app.models.product_deletion_audit import ProductDeletionAudit
 from app.models.stock_history import StockHistory
 from app.models.subcategory import SubCategory
 from app.models.user import User
@@ -152,9 +153,13 @@ class ProductService:
         self.db.commit()
         return self.get(product.id)
 
-    def update(self, product_id: UUID, payload: ProductUpdate) -> Product:
+    def update(self, product_id: UUID, payload: ProductUpdate, store_id: UUID | None = None) -> Product:
         product = self.get(product_id)
+        if store_id is not None and product.store_id != store_id:
+            raise not_found("Product")
         data = payload.model_dump(exclude_unset=True)
+        if "current_stock" in data:
+            raise bad_request("Current stock cannot be edited directly. Use Stock Adjustment.")
         colors = data.pop("colors", None)
         sizes = data.pop("sizes", None)
         next_category_id = data.get("category_id", product.category_id)
@@ -189,6 +194,29 @@ class ProductService:
 
     def delete(self, product_id: UUID) -> None:
         raise bad_request("Use the owner-only typed permanent-delete workflow")
+
+    def archive(self, product_id: UUID, current_user: User, request_id: str) -> Product:
+        product = self.db.query(Product).filter(Product.id == product_id, Product.store_id == current_user.store_id).with_for_update().first()
+        if not product:
+            raise not_found("Product")
+        before = {"is_active": product.is_active, "variant_active": [variant.is_active for variant in product.variants]}
+        product.is_active = False
+        for variant in product.variants:
+            variant.is_active = False
+        self.db.add(ProductDeletionAudit(store_id=current_user.store_id, product_id=product.id, event_type="PRODUCT_ARCHIVED", delete_mode="ARCHIVE", reason=None, request_id=request_id, product_snapshot={"name": product.name, "before": before}, deleted_record_counts={}, performed_by=current_user.id, performed_by_role=current_user.role.value))
+        self.db.commit()
+        return self.get(product.id)
+
+    def restore(self, product_id: UUID, current_user: User, request_id: str) -> Product:
+        product = self.db.query(Product).filter(Product.id == product_id, Product.store_id == current_user.store_id).with_for_update().first()
+        if not product:
+            raise not_found("Product")
+        product.is_active = True
+        for variant in product.variants:
+            variant.is_active = True
+        self.db.add(ProductDeletionAudit(store_id=current_user.store_id, product_id=product.id, event_type="PRODUCT_RESTORED", delete_mode="RESTORE", reason=None, request_id=request_id, product_snapshot={"name": product.name}, deleted_record_counts={}, performed_by=current_user.id, performed_by_role=current_user.role.value))
+        self.db.commit()
+        return self.get(product.id)
 
     async def upload_image(self, product_id: UUID, file: UploadFile, uploaded_by: UUID | None) -> Product:
         product = self.get(product_id)
