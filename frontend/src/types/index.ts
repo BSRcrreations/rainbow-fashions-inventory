@@ -258,7 +258,11 @@ export interface Sale {
   payment_mode: string;
   subtotal: string;
   discount: string;
+  discount_type: "PERCENTAGE" | "FIXED_AMOUNT";
+  discount_value: string;
+  discount_amount: string;
   total_amount: string;
+  grand_total: string;
   cost_amount: string;
   profit_amount: string;
   status: SaleStatus;

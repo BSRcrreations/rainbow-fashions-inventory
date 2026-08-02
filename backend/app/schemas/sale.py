@@ -43,7 +43,8 @@ class SaleCreate(BaseModel):
     invoice_number: Optional[str] = Field(default=None, max_length=120)
     customer_name: Optional[str] = Field(default=None, max_length=180)
     payment_mode: PaymentMode
-    discount: Decimal = Field(default=Decimal("0"), ge=0)
+    discount_type: str = "PERCENTAGE"
+    discount_value: Decimal = Field(default=Decimal("0"))
     sale_date: Optional[datetime] = None
     items: list[SaleItemCreate] = Field(min_length=1)
 
@@ -161,7 +162,11 @@ class SaleRead(ORMBaseModel):
     payment_mode: str
     subtotal: Decimal
     discount: Decimal
+    discount_type: str
+    discount_value: Decimal
+    discount_amount: Decimal
     total_amount: Decimal
+    grand_total: Decimal
     cost_amount: Decimal
     profit_amount: Decimal
     status: SaleStatus
