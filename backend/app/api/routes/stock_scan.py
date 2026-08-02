@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_manager_or_owner, require_owner
@@ -110,7 +111,13 @@ def scan_barcode(session_id: UUID, payload: StockScanRequest, db: Session = Depe
 
 @router.post("/sessions/{session_id}/batch-barcodes", response_model=StockScanSessionRead)
 def batch_barcodes(session_id: UUID, payload: BatchBarcodeRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
-    return StockScanService(db).batch_barcodes(session_id, payload, current_user, request.state.request_id)
+    try:
+        return StockScanService(db).batch_barcodes(session_id, payload, current_user, request.state.request_id)
+    except HTTPException as exc:
+        detail = exc.detail
+        if exc.status_code == status.HTTP_409_CONFLICT and isinstance(detail, dict) and detail.get("code") == "BARCODE_VARIANT_CONFLICT":
+            return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"error": detail})
+        raise
 
 
 @router.patch("/sessions/{session_id}/items/{item_id}", response_model=StockScanSessionRead)

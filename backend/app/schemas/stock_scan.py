@@ -97,9 +97,6 @@ class BatchBarcodeRequest(BaseModel):
         normalized = [value.strip() for value in values]
         if any(not value for value in normalized):
             raise ValueError("Each barcode is required")
-        duplicates = {value.casefold() for value in normalized if sum(candidate.casefold() == value.casefold() for candidate in normalized) > 1}
-        if duplicates:
-            raise ValueError("Duplicate barcodes are not allowed in one batch")
         return normalized
 
 

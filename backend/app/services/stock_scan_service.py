@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.ai.base import OCRProcessingError
 from app.ai.factory import get_ocr_service
-from app.core.exceptions import bad_request, conflict, not_found
+from app.core.exceptions import bad_request, conflict, error_payload, not_found
+from fastapi import HTTPException, status
 from app.models.brand import Brand
 from app.models.category import Category
 from app.models.enums import PricingType, PurchaseStatus, StockMovementType, StockScanMode, StockScanStatus, UserRole
@@ -133,7 +134,7 @@ class StockScanService:
         return self._variant_read(variant, mapping)
 
     def batch_barcodes(self, session_id: UUID, payload: BatchBarcodeRequest, current_user: User, request_id: Optional[str] = None) -> StockScanSession:
-        """Atomically stage one individual barcode mapping and draft piece per scan."""
+        """Stage every scan against one persistent barcode mapping and one draft row."""
         store_id = self._store_id(current_user)
         try:
             session = self._editable_session(session_id, current_user)
@@ -142,14 +143,11 @@ class StockScanService:
                 self._validate_barcode(barcode)
                 mapping = self._barcode_mapping(barcode, store_id, lock=True, include_inactive=True)
                 if mapping and mapping.product_variant_id != variant.id:
-                    raise conflict("This barcode belongs to another product variant.", "BARCODE_ASSIGNED_TO_OTHER_VARIANT")
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={**error_payload("This barcode is assigned to another product variant.", "BARCODE_VARIANT_CONFLICT", request_id=request_id), "retryable": False},
+                    )
                 if mapping:
-                    existing_item = self.db.query(StockScanSessionItem).filter(
-                        StockScanSessionItem.session_id == session.id,
-                        StockScanSessionItem.product_barcode_id == mapping.id,
-                    ).first()
-                    if existing_item:
-                        raise conflict("This barcode was already scanned.", "BATCH_BARCODE_ALREADY_SCANNED")
                     if not mapping.active:
                         mapping.active = True
                 else:
@@ -437,21 +435,9 @@ class StockScanService:
         item = self.db.query(StockScanSessionItem).filter(StockScanSessionItem.id == item_id, StockScanSessionItem.session_id == session.id).first()
         if not item:
             raise not_found("Stock scan item")
-        if item.product_barcode_id:
-            mapping = self.db.query(ProductBarcode).filter(ProductBarcode.id == item.product_barcode_id, ProductBarcode.store_id == session.store_id).with_for_update().first()
-            created_by_batch = mapping and self.db.query(ProductBarcodeAudit).filter(
-                ProductBarcodeAudit.barcode == mapping.barcode,
-                ProductBarcodeAudit.store_id == session.store_id,
-                ProductBarcodeAudit.action == "BATCH_ASSIGNED",
-                ProductBarcodeAudit.reason == f"STOCK_SESSION:{session.id}",
-            ).first()
-            other_draft_use = self.db.query(StockScanSessionItem).filter(
-                StockScanSessionItem.product_barcode_id == item.product_barcode_id,
-                StockScanSessionItem.id != item.id,
-            ).first()
-            if mapping and created_by_batch and not other_draft_use:
-                self.db.delete(mapping)
-                self.db.add(ProductBarcodeAudit(store_id=session.store_id, barcode=mapping.barcode, old_product_variant_id=mapping.product_variant_id, new_product_variant_id=mapping.product_variant_id, action="BATCH_REMOVED", reason=f"STOCK_SESSION:{session.id}", changed_by=current_user.id))
+        # A manufacturer barcode is a durable mapping to its exact variant, not
+        # a per-piece record owned by this draft. Removing a draft row must not
+        # delete the mapping needed by the next stock-entry session.
         self.db.delete(item)
         self.db.commit()
 
@@ -506,7 +492,9 @@ class StockScanService:
         if not session:
             raise not_found("Stock scan session")
         if session.status == StockScanStatus.CONFIRMED:
-            raise conflict("This scan session has already been confirmed.")
+            # Retried confirmation requests must be safe: the original
+            # transaction has already applied the staged quantity exactly once.
+            return self.get_session(session.id, current_user)
         if session.status == StockScanStatus.CANCELLED:
             raise bad_request("Cancelled scan sessions cannot be confirmed")
         session = self.get_session(session.id, current_user)
