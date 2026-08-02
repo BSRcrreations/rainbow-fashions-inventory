@@ -245,6 +245,64 @@ deploy_phase_4_verify:
   rules:
     - if: $CI_COMMIT_BRANCH == $DEPLOY_BRANCH
 
+# Temporary, read-only production diagnostic. The protected environment must be
+# configured in GitLab before this job is run; it is intentionally never started
+# by the pipeline itself.
+diagnose_barcode_assignment_production:
+  extends: .deploy_local
+  stage: verify
+  image: docker:27-cli
+  environment:
+    name: production-diagnostics
+  when: manual
+  manual_confirmation: "Run read-only production diagnostics for barcode 8906058070526?"
+  allow_failure: true
+  script:
+    - |
+      set -eu
+      APP_DIR="/opt/rainbow-fashions/current"
+      test -d "$APP_DIR"
+      test -f "$APP_DIR/docker-compose.yml"
+      cd "$APP_DIR"
+      mkdir -p production-diagnostics
+
+      docker compose ps
+      docker compose config --services
+
+      docker compose logs --since=60m --no-color backend > /tmp/rainbow-backend-barcode-diagnostic.log
+      grep -E -A30 -B15 '8906058070526|sale_mode|UndefinedColumn|ProgrammingError|IntegrityError|Traceback|product_barcodes|product_barcode_audits|stock_scan_session_items' /tmp/rainbow-backend-barcode-diagnostic.log > /tmp/rainbow-backend-barcode-error.txt || true
+      docker compose logs --tail=300 --no-color backend > /tmp/rainbow-backend-tail.txt
+
+      docker compose exec -T backend alembic current > /tmp/rainbow-alembic-current.txt 2>&1 || true
+      docker compose exec -T backend alembic heads > /tmp/rainbow-alembic-heads.txt 2>&1 || true
+      docker compose exec -T backend alembic history -r -10:head > /tmp/rainbow-alembic-history.txt 2>&1 || true
+
+      docker compose exec -T postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -c "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = '\''public'\'' AND table_name = '\''product_barcodes'\'' ORDER BY ordinal_position;"' > /tmp/rainbow-product-barcodes-columns.txt 2>&1
+      docker compose exec -T postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -c "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = '\''public'\'' AND table_name = '\''product_barcode_audits'\'' ORDER BY ordinal_position;"' > /tmp/rainbow-product-barcode-audits-columns.txt 2>&1
+      docker compose exec -T postgres sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -c "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = '\''public'\'' AND table_name = '\''stock_scan_session_items'\'' ORDER BY ordinal_position;"' > /tmp/rainbow-stock-scan-columns.txt 2>&1
+      docker compose exec -T postgres sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = '\''public'\'' AND table_name = '\''product_barcodes'\'' AND column_name = '\''sale_mode'\'');"' > /tmp/rainbow-sale-mode-exists.txt 2>&1
+      docker compose exec -T postgres sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -c "SELECT version_num FROM alembic_version;"' > /tmp/rainbow-database-alembic-version.txt 2>&1
+
+      git -C "$APP_DIR" rev-parse HEAD > /tmp/rainbow-deployed-commit.txt 2>&1 || true
+      git -C "$APP_DIR" status --short > /tmp/rainbow-deployed-status.txt 2>&1 || true
+      cp /tmp/rainbow-backend-barcode-error.txt /tmp/rainbow-backend-tail.txt /tmp/rainbow-alembic-current.txt /tmp/rainbow-alembic-heads.txt /tmp/rainbow-alembic-history.txt /tmp/rainbow-product-barcodes-columns.txt /tmp/rainbow-product-barcode-audits-columns.txt /tmp/rainbow-stock-scan-columns.txt /tmp/rainbow-sale-mode-exists.txt /tmp/rainbow-database-alembic-version.txt /tmp/rainbow-deployed-commit.txt /tmp/rainbow-deployed-status.txt production-diagnostics/
+
+      echo "Docker services: $(docker compose ps --services | tr '\n' ' ')"
+      echo "Alembic current: $(head -n 1 /tmp/rainbow-alembic-current.txt)"
+      echo "Alembic head: $(head -n 1 /tmp/rainbow-alembic-heads.txt)"
+      echo "sale_mode exists: $(tr -d '[:space:]' < /tmp/rainbow-sale-mode-exists.txt)"
+      if grep -q 'Traceback' /tmp/rainbow-backend-barcode-error.txt; then echo 'Traceback found: yes'; else echo 'Traceback found: no'; fi
+      echo "Diagnostic artifact: production-diagnostics/"
+  artifacts:
+    when: always
+    expire_in: 1 day
+    paths:
+      - production-diagnostics/
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+    - when: never
+
 # This job is deliberately manual. Protect the production-database-import
 # environment and configure DATABASE_MIGRATION_ENV_FILE as a protected File
 # variable in GitLab before enabling it. No database dump is stored as a CI
