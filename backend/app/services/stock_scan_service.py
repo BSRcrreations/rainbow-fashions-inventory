@@ -29,6 +29,7 @@ from app.models.supplier import Supplier
 from app.models.user import User
 from app.schemas.stock_scan import (
     BarcodeAssignment,
+    BatchBarcodeRequest,
     BarcodeImageResolutionRead,
     BarcodeOnboarding,
     BarcodeProductOnboarding,
@@ -130,6 +131,44 @@ class StockScanService:
         self.db.commit()
         self.db.refresh(variant)
         return self._variant_read(variant, mapping)
+
+    def batch_barcodes(self, session_id: UUID, payload: BatchBarcodeRequest, current_user: User, request_id: Optional[str] = None) -> StockScanSession:
+        """Atomically stage one individual barcode mapping and draft piece per scan."""
+        store_id = self._store_id(current_user)
+        try:
+            session = self._editable_session(session_id, current_user)
+            variant = self._variant_for_store(payload.product_variant_id, store_id, lock=True)
+            for barcode in payload.barcodes:
+                self._validate_barcode(barcode)
+                mapping = self._barcode_mapping(barcode, store_id, lock=True, include_inactive=True)
+                if mapping and mapping.product_variant_id != variant.id:
+                    raise conflict("This barcode belongs to another product variant.", "BARCODE_ASSIGNED_TO_OTHER_VARIANT")
+                if mapping:
+                    existing_item = self.db.query(StockScanSessionItem).filter(
+                        StockScanSessionItem.session_id == session.id,
+                        StockScanSessionItem.product_barcode_id == mapping.id,
+                    ).first()
+                    if existing_item:
+                        raise conflict("This barcode was already scanned.", "BATCH_BARCODE_ALREADY_SCANNED")
+                    if not mapping.active:
+                        mapping.active = True
+                else:
+                    mapping = ProductBarcode(
+                        store_id=store_id, product_id=variant.product_id, product_variant_id=variant.id,
+                        barcode=barcode, barcode_type=self._barcode_type(barcode, "AUTO"), manufacturer_barcode=True,
+                        package_quantity=1, scan_unit="PIECE", inventory_unit="PIECE", base_unit_conversion=1,
+                        sale_mode="PIECE_ONLY", mrp=variant.mrp, default_selling_price=variant.selling_price,
+                        active=True, verified=True, verified_by=current_user.id, verified_at=datetime.now(timezone.utc),
+                    )
+                    self.db.add(mapping)
+                    self.db.flush()
+                    self.db.add(ProductBarcodeAudit(store_id=store_id, barcode=barcode, old_product_variant_id=None, new_product_variant_id=variant.id, action="BATCH_ASSIGNED", reason=f"STOCK_SESSION:{session.id}", changed_by=current_user.id, request_id=request_id))
+                self._add_mapping_to_session(session, mapping, variant, 1, variant.last_purchase_cost, "SELLABLE")
+            self.db.commit()
+            return self.get_session(session.id, current_user)
+        except Exception:
+            self.db.rollback()
+            raise
 
     def create_session(self, payload: StockScanSessionCreate, current_user: User) -> StockScanSession:
         store_id = self._store_id(current_user)
@@ -398,6 +437,21 @@ class StockScanService:
         item = self.db.query(StockScanSessionItem).filter(StockScanSessionItem.id == item_id, StockScanSessionItem.session_id == session.id).first()
         if not item:
             raise not_found("Stock scan item")
+        if item.product_barcode_id:
+            mapping = self.db.query(ProductBarcode).filter(ProductBarcode.id == item.product_barcode_id, ProductBarcode.store_id == session.store_id).with_for_update().first()
+            created_by_batch = mapping and self.db.query(ProductBarcodeAudit).filter(
+                ProductBarcodeAudit.barcode == mapping.barcode,
+                ProductBarcodeAudit.store_id == session.store_id,
+                ProductBarcodeAudit.action == "BATCH_ASSIGNED",
+                ProductBarcodeAudit.reason == f"STOCK_SESSION:{session.id}",
+            ).first()
+            other_draft_use = self.db.query(StockScanSessionItem).filter(
+                StockScanSessionItem.product_barcode_id == item.product_barcode_id,
+                StockScanSessionItem.id != item.id,
+            ).first()
+            if mapping and created_by_batch and not other_draft_use:
+                self.db.delete(mapping)
+                self.db.add(ProductBarcodeAudit(store_id=session.store_id, barcode=mapping.barcode, old_product_variant_id=mapping.product_variant_id, new_product_variant_id=mapping.product_variant_id, action="BATCH_REMOVED", reason=f"STOCK_SESSION:{session.id}", changed_by=current_user.id))
         self.db.delete(item)
         self.db.commit()
 

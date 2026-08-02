@@ -10,6 +10,7 @@ from app.database.session import get_db
 from app.models.user import User
 from app.schemas.stock_scan import (
     BarcodeAssignment,
+    BatchBarcodeRequest,
     BarcodeTransferRequest,
     BarcodeImageResolutionRead,
     BarcodeOnboarding,
@@ -105,6 +106,11 @@ def update_session(session_id: UUID, payload: StockScanSessionUpdate, db: Sessio
 @router.post("/sessions/{session_id}/scan", response_model=StockScanSessionRead)
 def scan_barcode(session_id: UUID, payload: StockScanRequest, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
     return StockScanService(db).scan(session_id, payload, current_user)
+
+
+@router.post("/sessions/{session_id}/batch-barcodes", response_model=StockScanSessionRead)
+def batch_barcodes(session_id: UUID, payload: BatchBarcodeRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
+    return StockScanService(db).batch_barcodes(session_id, payload, current_user, request.state.request_id)
 
 
 @router.patch("/sessions/{session_id}/items/{item_id}", response_model=StockScanSessionRead)
