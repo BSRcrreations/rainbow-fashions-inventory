@@ -147,9 +147,9 @@ class BarcodeProductOnboarding(BaseModel):
     scan_unit: Literal["PIECE", "PACK"] = "PIECE"
     inventory_unit: str = Field(default="PIECE", min_length=1, max_length=24)
     sale_mode: Literal["PACK_ONLY", "PIECE_ONLY", "BOTH"] = "PIECE_ONLY"
-    purchase_cost: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    purchase_cost: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     mrp: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
-    selling_price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    selling_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     condition: str = Field(default="SELLABLE", min_length=2, max_length=40)
 
     @field_validator("barcode", "alternate_barcode", "package_barcode")
@@ -169,11 +169,16 @@ class BarcodeProductOnboarding(BaseModel):
 
     @model_validator(mode="after")
     def validate_onboarding(self) -> "BarcodeProductOnboarding":
+        creates_variant = self.action in {"NEW_VARIANT", "NEW_PRODUCT"}
         if self.package_quantity > 1 and self.scan_unit != "PACK":
             raise ValueError("Package quantities above one must use PACK as the scan unit")
-        if self.pricing_type == PricingType.MRP and self.mrp is None:
+        if creates_variant and self.purchase_cost is None:
+            raise ValueError("Purchase cost is required when creating a variant")
+        if creates_variant and self.selling_price is None:
+            raise ValueError("Selling price is required when creating a variant")
+        if creates_variant and self.pricing_type == PricingType.MRP and self.mrp is None:
             raise ValueError("MRP is required when pricing type is MRP")
-        if self.mrp is not None and self.selling_price > self.mrp:
+        if self.mrp is not None and self.selling_price is not None and self.selling_price > self.mrp:
             raise ValueError("Selling price cannot be greater than MRP")
         optional_barcodes = [value for value in (self.alternate_barcode, self.package_barcode) if value]
         if len(set([self.barcode, *optional_barcodes])) != len([self.barcode, *optional_barcodes]):
