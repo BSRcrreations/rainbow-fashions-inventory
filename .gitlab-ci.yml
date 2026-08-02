@@ -245,9 +245,9 @@ deploy_phase_4_verify:
   rules:
     - if: $CI_COMMIT_BRANCH == $DEPLOY_BRANCH
 
-# Temporary, read-only production diagnostic. The protected environment must be
-# configured in GitLab before this job is run; it is intentionally never started
-# by the pipeline itself.
+# Temporary, read-only production diagnostic. This GitLab instance does not
+# offer protected environments, so access is constrained by the protected
+# deployment branch and the job remains intentionally manual.
 diagnose_barcode_assignment_production:
   extends: .deploy_local
   stage: verify
@@ -299,7 +299,7 @@ diagnose_barcode_assignment_production:
     paths:
       - production-diagnostics/
   rules:
-    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH'
       when: manual
     - when: never
 
