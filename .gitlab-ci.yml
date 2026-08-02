@@ -245,6 +245,26 @@ deploy_phase_4_verify:
   rules:
     - if: $CI_COMMIT_BRANCH == $DEPLOY_BRANCH
 
+# This is deliberately manual and is the only supported way to clear the
+# production business database. It keeps user accounts, store configuration,
+# and migration state, but clears all operational records and uploaded files.
+database_reset_production:
+  extends: .deploy_local
+  image: docker:27-cli
+  stage: verify
+  needs:
+    - deploy_phase_4_verify
+  resource_group: rainbow-fashions-production
+  environment:
+    name: production
+    url: $DEPLOY_URL
+  when: manual
+  manual_confirmation: "IRREVERSIBLE: back up then clear all production products, stock, purchases, sales, barcodes, documents, customers, suppliers, and uploads. Keep only users and stores?"
+  allow_failure: false
+  script:
+    - chmod +x scripts/database/clear_production_data.sh
+    - DEPLOY_PATH="$DEPLOY_PATH" scripts/database/clear_production_data.sh --confirm-clear-production-data
+
 # Temporary, read-only production diagnostic. This GitLab instance does not
 # offer protected environments, so access is constrained by the protected
 # deployment branch and the job remains intentionally manual.
