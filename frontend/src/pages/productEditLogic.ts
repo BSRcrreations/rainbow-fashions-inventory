@@ -1,4 +1,5 @@
 import type { PricingType, Product } from "../types";
+import { friendlyFieldError, normalizeBarcode, normalizeDecimal, normalizeOptionalUuid } from "../utils/apiPayload";
 
 export interface ProductEditFormState {
   category_id: string;
@@ -44,16 +45,16 @@ export function productPayload(form: ProductEditFormState, editing?: Product | n
   const sizes = normalizedValues(form.sizes, form.has_sizes);
   const colors = normalizedValues(form.colors, form.has_colors);
   const payload = {
-    category_id: form.category_id,
-    subcategory_id: form.subcategory_id,
-    brand_id: form.brand_id,
+    category_id: normalizeOptionalUuid(form.category_id),
+    subcategory_id: normalizeOptionalUuid(form.subcategory_id),
+    brand_id: normalizeOptionalUuid(form.brand_id),
     sku: form.sku.trim() || null,
     name: form.name.trim(),
-    purchase_price: Number(form.purchase_price),
-    selling_price: Number(form.selling_price),
-    mrp: form.mrp ? Number(form.mrp) : null,
+    purchase_price: normalizeDecimal(form.purchase_price),
+    selling_price: normalizeDecimal(form.selling_price),
+    mrp: normalizeDecimal(form.mrp),
     minimum_stock: Number(form.minimum_stock),
-    barcode: form.barcode.trim() || null,
+    barcode: normalizeBarcode(form.barcode),
     product_date: form.product_date,
     description: form.description.trim() || null,
     hsn_sac: form.hsn_sac.trim() || null,
@@ -79,8 +80,8 @@ export function productUpdateErrorMessage(code?: string, fallback?: string) {
     PRODUCT_ALREADY_EXISTS: "A product with this name and brand already exists.",
     BARCODE_ALREADY_ASSIGNED: "This barcode is already assigned to another variant.",
     VARIANT_ALREADY_EXISTS: "This size and colour variant already exists.",
-    STOCK_FIELDS_READ_ONLY: "Current stock cannot be edited directly. Use Stock Adjustment.",
+    STOCK_FIELDS_READ_ONLY: "Current stock is transaction-controlled and cannot be edited as a product field. Open Stock Adjustment to correct stock.",
     PRODUCT_UPDATE_FAILED: "The product could not be updated.",
   };
-  return code && messages[code] ? messages[code] : fallback || "The product could not be updated.";
+  return code && messages[code] ? messages[code] : friendlyFieldError(fallback || "The product could not be updated.");
 }

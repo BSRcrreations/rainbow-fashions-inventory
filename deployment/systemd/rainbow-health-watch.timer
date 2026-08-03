@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Rainbow Fashions availability watchdog every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=rainbow-health-watch.service
+
+[Install]
+WantedBy=timers.target

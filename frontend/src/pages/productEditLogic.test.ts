@@ -30,5 +30,21 @@ describe("product edit payload", () => {
   it("uses actionable structured update errors", () => {
     expect(productUpdateErrorMessage("PRODUCT_ALREADY_EXISTS")).toBe("A product with this name and brand already exists.");
     expect(productUpdateErrorMessage("BARCODE_ALREADY_ASSIGNED")).toBe("This barcode is already assigned to another variant.");
+    expect(productUpdateErrorMessage("STOCK_FIELDS_READ_ONLY")).toContain("transaction-controlled");
+    expect(productUpdateErrorMessage(undefined, "category_id: Input should be a valid UUID")).toBe("Select a category.");
+  });
+
+  it("normalizes optional IDs, barcodes, and decimal fields before submitting", () => {
+    const payload = productPayload({ ...form, category_id: " ", subcategory_id: "", brand_id: "brand-1", barcode: "  000123  ", mrp: "" });
+
+    expect(payload).toMatchObject({
+      category_id: null,
+      subcategory_id: null,
+      brand_id: "brand-1",
+      barcode: "000123",
+      mrp: null,
+      purchase_price: 220,
+      selling_price: 395,
+    });
   });
 });

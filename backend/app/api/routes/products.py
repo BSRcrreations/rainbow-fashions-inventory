@@ -28,6 +28,7 @@ from app.schemas.product import (
     ProductImportSummary,
     ProductListResponse,
     ProductRead,
+    ProductUpdateAuditRead,
     ProductUpdate,
 )
 from app.services.product_service import ProductService
@@ -179,10 +180,15 @@ def get_product(product_id: UUID, db: Session = Depends(get_db), _: User = Depen
 
 @router.put("/{product_id}", response_model=ProductRead)
 @router.patch("/{product_id}", response_model=ProductRead)
-def update_product(product_id: UUID, payload: ProductUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+def update_product(product_id: UUID, payload: ProductUpdate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
     if payload.is_test_data is True and current_user.role != UserRole.OWNER:
         raise forbidden("Only an owner can mark a product as test data")
-    return ProductService(db).update(product_id, payload, current_user.store_id)
+    return ProductService(db).update(product_id, payload, current_user.store_id, current_user, request.state.request_id)
+
+
+@router.get("/{product_id}/audit", response_model=list[ProductUpdateAuditRead])
+def list_product_update_audits(product_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+    return ProductService(db).list_update_audits(product_id, current_user)
 
 
 @router.post("/{product_id}/archive", response_model=ProductRead)
@@ -204,15 +210,16 @@ def product_deletion_check(product_id: UUID, request: Request, db: Session = Dep
 async def upload_product_image(
     product_id: UUID,
     file: UploadFile = File(...),
+    request: Request = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_manager_or_owner),
 ):
-    return await ProductService(db).upload_image(product_id, file, current_user.id)
+    return await ProductService(db).upload_image(product_id, file, current_user.id, current_user, request.state.request_id)
 
 
 @router.delete("/{product_id}/image", response_model=ProductRead)
-def delete_product_image(product_id: UUID, db: Session = Depends(get_db), _: User = Depends(require_manager_or_owner)):
-    return ProductService(db).delete_image(product_id)
+def delete_product_image(product_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+    return ProductService(db).delete_image(product_id, current_user, request.state.request_id)
 
 
 @router.post("/bulk-delete-check")

@@ -135,6 +135,10 @@ export default function StockPage() {
   return (
     <>
       <PageHeader title="Inventory" subtitle="Variant-level stock, corrections, and owner reset controls" actions={<div className="flex flex-wrap gap-2">{canReset ? <Button type="button" variant="destructive" onClick={openReset}><RotateCcw size={16} /> Reset Existing Stock</Button> : null}<Button type="button" variant="secondary" onClick={() => void exportCsv()} disabled={exporting}><Download size={16} /> {exporting ? "Exporting" : "Export CSV"}</Button></div>} />
+      <section className="mb-6 rounded-lg border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-950">
+        <div className="font-semibold">Current stock is transaction-controlled.</div>
+        <p className="mt-1">Use Stock Adjustment to correct current physical stock. Confirmed records are locked; create a correction transaction to fix a mistake while preserving audit history.</p>
+      </section>
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Physical Stock" value={`${totalStock.toLocaleString("en-IN")} Units`} tone="teal" icon={Boxes} /><StatCard label="Inventory Value" value={money(inventoryValue)} tone="slate" icon={IndianRupee} /><StatCard label="Low Variants" value={lowStock} tone="amber" icon={AlertTriangle} /><StatCard label="Out of Stock" value={outOfStock} tone="rose" icon={PackageX} /></div>
 
       <section className="mb-6 overflow-hidden rounded-lg border border-slate-200 bg-white">

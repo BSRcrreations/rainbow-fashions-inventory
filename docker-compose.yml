@@ -10,9 +10,10 @@ services:
       - ./database/seed.sql:/docker-entrypoint-initdb.d/002_seed.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
-      interval: 10s
+      interval: 15s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
 
   backend:
     build:
@@ -32,10 +33,10 @@ services:
       - "8000"
     healthcheck:
       test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health/ready', timeout=5).read()"]
-      interval: 10s
+      interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 15s
+      retries: 10
+      start_period: 30s
 
   frontend:
     build:
@@ -45,15 +46,13 @@ services:
       backend:
         condition: service_healthy
     ports:
-      # Keep the application reachable until host Nginx and TLS are installed.
-      # Switch to 127.0.0.1:8080:80 only as the final hostname-rollout step.
-      - "80:80"
+      - "127.0.0.1:8080:80"
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/health/ready"]
-      interval: 10s
+      interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 10s
+      retries: 10
+      start_period: 30s
 
 volumes:
   postgres_data:

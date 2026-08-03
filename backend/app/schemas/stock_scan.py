@@ -6,6 +6,7 @@ from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 
 from app.models.enums import PricingType, StockScanMode, StockScanQuantityMode, StockScanStatus
 from app.schemas.common import ORMBaseModel
@@ -285,16 +286,16 @@ class BarcodeProductOnboarding(BaseModel):
         if len(set([self.barcode, *optional_barcodes])) != len([self.barcode, *optional_barcodes]):
             raise ValueError("Each barcode must be unique")
         if self.action == "EXISTING_VARIANT" and not self.product_variant_id:
-            raise ValueError("Select the existing variant to assign this barcode")
+            raise PydanticCustomError("EXISTING_VARIANT_REQUIRED", "Select the exact existing variant")
         if self.action == "NEW_VARIANT" and not self.existing_product_id:
-            raise ValueError("Select the product for the new variant")
+            raise PydanticCustomError("EXISTING_PRODUCT_REQUIRED", "Select the existing product")
         if self.action == "NEW_PRODUCT":
             if not self.product_name:
-                raise ValueError("Enter a product name")
+                raise PydanticCustomError("PRODUCT_REQUIRED", "Enter a product name")
             if not self.category_id:
-                raise ValueError("Select a category")
+                raise PydanticCustomError("CATEGORY_REQUIRED", "Select a category")
             if not self.brand_id:
-                raise ValueError("Select a brand or choose Unbranded")
+                raise PydanticCustomError("BRAND_REQUIRED", "Select a brand or choose Unbranded")
         return self
 
 

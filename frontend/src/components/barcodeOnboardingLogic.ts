@@ -40,7 +40,8 @@ export type BarcodeOnboardingField =
   | "purchase_cost"
   | "selling_price"
   | "mrp"
-  | "package_quantity";
+  | "package_quantity"
+  | "quantity";
 
 export interface BarcodeOnboardingValidation {
   message: string;
@@ -129,8 +130,8 @@ export interface NewProductBarcodePayload {
   image_url: string | null;
 }
 
-export function optionalUuid(value: string): string | null {
-  const normalized = value.trim();
+export function optionalUuid(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
   return normalized ? normalized : null;
 }
 
@@ -205,14 +206,16 @@ export function newProductBarcodePayload(
 ): NewProductBarcodePayload {
   const categoryId = optionalUuid(form.category_id);
   const brandId = optionalUuid(form.brand_id);
+  if (!categoryId) throw new Error("Select a category");
+  if (!brandId) throw new Error("Select a brand");
   return {
     session_id: sessionId,
     action: "NEW_PRODUCT",
     barcode,
     product_name: form.product_name.trim(),
-    category_id: categoryId ?? "",
+    category_id: categoryId,
     subcategory_id: optionalUuid(form.subcategory_id),
-    brand_id: brandId ?? "",
+    brand_id: brandId,
     product_code: optionalText(form.product_code),
     product_date: optionalText(form.product_date),
     minimum_stock: nonNegativeInt(form.minimum_stock),
@@ -228,6 +231,11 @@ export function validateBarcodeOnboarding(
   selectedProductId: string,
   selectedVariantId: string,
 ): BarcodeOnboardingValidation | null {
+  const quantity = Number(form.quantity);
+  if (!Number.isInteger(quantity) || quantity < 1) {
+    return { message: "Enter a quantity of at least 1", field: "quantity" };
+  }
+
   if (action === "EXISTING_VARIANT") {
     return selectedVariantId ? null : { message: "Select the exact existing variant", field: "selected_variant" };
   }
@@ -263,7 +271,11 @@ export function validateBarcodeOnboarding(
   if (mrp !== null && sellingPrice > mrp) {
     return { message: "Selling price cannot be greater than MRP", field: "selling_price" };
   }
-  if (positiveInt(form.package_quantity) > 1 && form.scan_unit !== "PACK") {
+  const packageQuantity = Number(form.package_quantity);
+  if (!Number.isInteger(packageQuantity) || packageQuantity < 1) {
+    return { message: "Enter pieces per scan", field: "package_quantity" };
+  }
+  if (packageQuantity > 1 && form.scan_unit !== "PACK") {
     return { message: "Package quantities above one must use Pack as the scan unit", field: "package_quantity" };
   }
 

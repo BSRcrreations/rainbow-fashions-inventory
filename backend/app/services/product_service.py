@@ -20,6 +20,7 @@ from app.models.product import Product
 from app.models.product_variant import ProductVariant
 from app.models.product_inventory import ProductInventory
 from app.models.product_deletion_audit import ProductDeletionAudit
+from app.models.product_update_audit import ProductUpdateAudit
 from app.models.stock_history import StockHistory
 from app.models.subcategory import SubCategory
 from app.models.user import User
@@ -153,7 +154,14 @@ class ProductService:
         self.db.commit()
         return self.get(product.id)
 
-    def update(self, product_id: UUID, payload: ProductUpdate, store_id: UUID | None = None) -> Product:
+    def update(
+        self,
+        product_id: UUID,
+        payload: ProductUpdate,
+        store_id: UUID | None = None,
+        current_user: User | None = None,
+        request_id: str | None = None,
+    ) -> Product:
         product = self.get(product_id)
         if store_id is not None and product.store_id != store_id:
             raise not_found("Product")
@@ -176,6 +184,11 @@ class ProductService:
             raise conflict("SKU already exists")
         if data.get("barcode") and self.repo.get_by_barcode(data["barcode"], exclude_id=product_id):
             raise conflict("This barcode is already assigned to another variant.", "BARCODE_ALREADY_ASSIGNED")
+        before_values = {key: self._audit_value(getattr(product, key)) for key in data}
+        if colors is not None:
+            before_values["colors"] = self._current_variant_values(product)[0]
+        if sizes is not None:
+            before_values["sizes"] = self._current_variant_values(product)[1]
         for key, value in data.items():
             setattr(product, key, value)
         if colors is not None or sizes is not None:
@@ -189,8 +202,58 @@ class ProductService:
             legacy_colors = [product.color] if product.color else []
             legacy_sizes = [product.size] if product.size else []
             self._sync_variants(product, legacy_colors, legacy_sizes)
+        after_values = {key: self._audit_value(getattr(product, key)) for key in data}
+        if colors is not None:
+            after_values["colors"] = self._current_variant_values(product)[0]
+        if sizes is not None:
+            after_values["sizes"] = self._current_variant_values(product)[1]
+        if current_user is not None and before_values != after_values:
+            self._record_update_audit(product, current_user, request_id, "PRODUCT_UPDATE", before_values, after_values)
         self.db.commit()
         return self.get(product.id)
+
+    def list_update_audits(self, product_id: UUID, current_user: User) -> list[ProductUpdateAudit]:
+        product = self.db.query(Product).filter(Product.id == product_id, Product.store_id == current_user.store_id).first()
+        if not product:
+            raise not_found("Product")
+        return (
+            self.db.query(ProductUpdateAudit)
+            .filter(ProductUpdateAudit.product_id == product_id, ProductUpdateAudit.store_id == current_user.store_id)
+            .order_by(ProductUpdateAudit.created_at.desc())
+            .all()
+        )
+
+    def _record_update_audit(
+        self,
+        product: Product,
+        current_user: User,
+        request_id: str | None,
+        change_source: str,
+        before_values: dict,
+        after_values: dict,
+    ) -> None:
+        self.db.add(
+            ProductUpdateAudit(
+                store_id=product.store_id,
+                product_id=product.id,
+                changed_by=current_user.id,
+                changed_by_role=current_user.role.value,
+                request_id=request_id or str(uuid4()),
+                change_source=change_source,
+                before_values=before_values,
+                after_values=after_values,
+            )
+        )
+
+    @staticmethod
+    def _audit_value(value):
+        if isinstance(value, (UUID, Decimal, date)):
+            return str(value)
+        if isinstance(value, list):
+            return [ProductService._audit_value(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): ProductService._audit_value(item) for key, item in value.items()}
+        return value
 
     def delete(self, product_id: UUID) -> None:
         raise bad_request("Use the owner-only typed permanent-delete workflow")
@@ -218,19 +281,25 @@ class ProductService:
         self.db.commit()
         return self.get(product.id)
 
-    async def upload_image(self, product_id: UUID, file: UploadFile, uploaded_by: UUID | None) -> Product:
+    async def upload_image(self, product_id: UUID, file: UploadFile, uploaded_by: UUID | None, current_user: User | None = None, request_id: str | None = None) -> Product:
         product = self.get(product_id)
         file_service = FileService(self.db)
         uploaded_file = await file_service.save_product_image(file, uploaded_by)
+        previous_image = product.image_url
         file_service.delete_product_image_path(product.image_url)
         product.image_url = f"/uploads/products/{uploaded_file.stored_filename}"
+        if current_user is not None:
+            self._record_update_audit(product, current_user, request_id, "PRODUCT_IMAGE_UPLOAD", {"image_url": previous_image}, {"image_url": product.image_url})
         self.db.commit()
         return self.get(product.id)
 
-    def delete_image(self, product_id: UUID) -> Product:
+    def delete_image(self, product_id: UUID, current_user: User | None = None, request_id: str | None = None) -> Product:
         product = self.get(product_id)
+        previous_image = product.image_url
         FileService(self.db).delete_product_image_path(product.image_url)
         product.image_url = None
+        if current_user is not None and previous_image is not None:
+            self._record_update_audit(product, current_user, request_id, "PRODUCT_IMAGE_DELETE", {"image_url": previous_image}, {"image_url": None})
         self.db.commit()
         return self.get(product.id)
 

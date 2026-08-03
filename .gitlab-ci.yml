@@ -15,7 +15,9 @@ workflow:
 variables:
   DEPLOY_BRANCH: "shop-inventory"
   DEPLOY_PATH: "/opt/rainbow-fashions"
-  DEPLOY_URL: "http://178.238.237.182"
+  DEPLOY_URL: "https://test.rainbow-fashions.in"
+  LOCAL_DEPLOY_URL: "http://127.0.0.1:8080"
+  PUBLIC_DEPLOY_URL: "https://test.rainbow-fashions.in"
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
 
 default:
@@ -60,6 +62,25 @@ frontend_quality:
     paths:
       - frontend/dist/
 
+verify_domain_preflight:
+  stage: validate
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache bash bind-tools curl python3 whois
+    - chmod +x deployment/scripts/diagnose_domain.sh
+  script:
+    - REPORT_FILE="$CI_PROJECT_DIR/domain-diagnostics/domain-preflight.txt" deployment/scripts/diagnose_domain.sh
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - domain-diagnostics/
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH && $CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH'
+      when: manual
+    - when: never
+
 docker_compose_build:
   stage: docker
   image: docker:27-cli
@@ -79,6 +100,7 @@ package_release:
   needs:
     - backend_tests
     - frontend_quality
+    - docker_compose_build
   script:
     - apk add --no-cache tar
     - tar -czf /tmp/rainbow-fashions-${CI_COMMIT_SHORT_SHA}.tar.gz --exclude=.git --exclude=frontend/node_modules --exclude=frontend/dist --exclude=backend/.env --exclude=backend/app/uploads .
@@ -149,50 +171,9 @@ deploy_phase_3_activate:
       APP_DIR="$DEPLOY_PATH"
       RELEASE_DIR="$APP_DIR/releases/$CI_COMMIT_SHORT_SHA"
       ENV_FILE="$APP_DIR/shared/backend.env"
+      apk add --no-cache bash curl openssl
       test -d "$RELEASE_DIR"
-      # The first hardened deployment may follow releases that kept their
-      # runtime environment inside the active release. Move that existing
-      # secret file to the persistent shared location once. If this is a
-      # legacy deployment with no secret file, create secrets only on the
-      # production host and rotate the existing local PostgreSQL role to the
-      # new generated password. Secrets are never committed or printed.
-      if [ ! -s "$ENV_FILE" ]; then
-        PREVIOUS_ENV_FILE="$APP_DIR/current/backend/.env"
-        if [ -s "$PREVIOUS_ENV_FILE" ]; then
-          mkdir -p "$APP_DIR/shared"
-          cp "$PREVIOUS_ENV_FILE" "$ENV_FILE"
-          chmod 600 "$ENV_FILE"
-          echo 'Bootstrapped shared production backend.env from the active release.'
-        else
-          test -d "$APP_DIR/current" || { echo 'No active release is available for secure environment bootstrap.'; exit 1; }
-          mkdir -p "$APP_DIR/shared"
-          umask 077
-          BOOTSTRAP_POSTGRES_PASSWORD="$(od -An -N48 -tx1 /dev/urandom | tr -d ' \n')"
-          BOOTSTRAP_JWT_SECRET="$(od -An -N64 -tx1 /dev/urandom | tr -d ' \n')"
-          BOOTSTRAP_ENV_FILE="$ENV_FILE.bootstrap"
-          {
-            printf '%s\n' 'APP_NAME="Rainbow Fashions Inventory"'
-            printf '%s\n' 'APP_ENV=production' 'DEBUG=false'
-            printf '%s\n' 'POSTGRES_DB=inventory_db' 'POSTGRES_USER=inventory_user'
-            printf 'POSTGRES_PASSWORD=%s\n' "$BOOTSTRAP_POSTGRES_PASSWORD"
-            printf 'DATABASE_URL=postgresql+psycopg://inventory_user:%s@postgres:5432/inventory_db\n' "$BOOTSTRAP_POSTGRES_PASSWORD"
-            printf 'JWT_SECRET_KEY=%s\n' "$BOOTSTRAP_JWT_SECRET"
-            printf '%s\n' 'JWT_ALGORITHM=HS256' 'ACCESS_TOKEN_EXPIRE_MINUTES=480'
-            printf '%s\n' 'CORS_ORIGINS=http://178.238.237.182,https://test.rainbow-fashions.in'
-            printf '%s\n' 'UPLOAD_DIR=app/uploads' 'INVOICE_UPLOAD_DIR=app/uploads/invoices' 'PRODUCT_UPLOAD_DIR=app/uploads/products' 'MAX_UPLOAD_SIZE_MB=15' 'LOG_LEVEL=INFO'
-            printf '%s\n' 'OCR_PROVIDER=local' 'DOCUMENT_AI_PROVIDER=mock' 'DOCUMENT_AI_FALLBACK_PROVIDER=mock' 'DOCUMENT_AI_TIMEOUT_SECONDS=90' 'DOCUMENT_AI_MAX_RETRIES=2' 'DOCUMENT_RETENTION_DAYS=365' 'FAILED_UPLOAD_RETENTION_DAYS=7'
-          } > "$BOOTSTRAP_ENV_FILE"
-          (
-            cd "$APP_DIR/current"
-            docker compose exec -T postgres sh -ec "psql -v ON_ERROR_STOP=1 -U inventory_user -d inventory_db -c \"ALTER ROLE inventory_user WITH PASSWORD '$BOOTSTRAP_POSTGRES_PASSWORD';\""
-          )
-          mv "$BOOTSTRAP_ENV_FILE" "$ENV_FILE"
-          chmod 600 "$ENV_FILE"
-          unset BOOTSTRAP_ENV_FILE BOOTSTRAP_POSTGRES_PASSWORD BOOTSTRAP_JWT_SECRET
-          echo 'Generated and stored a secure production backend.env on the deployment host.'
-        fi
-        unset PREVIOUS_ENV_FILE
-      fi
+      test -s "$ENV_FILE" || { echo "$ENV_FILE is required. Create it from deployment/templates/backend.env.production.example on the server."; exit 1; }
       set -a
       . "$ENV_FILE"
       set +a
@@ -214,8 +195,29 @@ deploy_phase_3_activate:
       [ "$DATABASE_URL" = "$EXPECTED_DATABASE_URL" ] || { echo 'DATABASE_URL must match the PostgreSQL environment values.'; exit 1; }
       unset EXPECTED_DATABASE_URL
       mkdir -p "$APP_DIR/shared"
+      PREVIOUS_RELEASE=""
+      if [ -L "$APP_DIR/current" ]; then PREVIOUS_RELEASE="$(readlink -f "$APP_DIR/current")"; fi
+      printf 'previous_release=%s\nnew_release=%s\nprevious_commit=%s\nnew_commit=%s\nbackup_path=%s\n' "$PREVIOUS_RELEASE" "$RELEASE_DIR" "${CI_COMMIT_BEFORE_SHA:-unknown}" "$CI_COMMIT_SHA" "$APP_DIR/backups" > "$RELEASE_DIR/deployment-metadata.env"
+      rollback() {
+        code="$?"
+        [ "$code" -eq 0 ] && return 0
+        echo "Deployment failed. Attempting application rollback; database migration may already have been applied."
+        mkdir -p "$APP_DIR/failed-releases"
+        docker compose logs --no-color --tail=300 > "$RELEASE_DIR/failed-release.log" 2>&1 || true
+        if [ -n "$PREVIOUS_RELEASE" ] && [ -d "$PREVIOUS_RELEASE" ]; then
+          ln -sfn "$PREVIOUS_RELEASE" "$APP_DIR/current"
+          cp "$ENV_FILE" "$APP_DIR/current/backend/.env"
+          cd "$APP_DIR/current"
+          docker compose up -d
+          ./deployment/scripts/wait_for_application.sh --base-url "$LOCAL_DEPLOY_URL" --timeout 180 || true
+          PUBLIC_BASE_URL="$PUBLIC_DEPLOY_URL" LOCAL_BASE_URL="$LOCAL_DEPLOY_URL" ./deployment/scripts/smoke_test_production.sh || true
+        fi
+        exit "$code"
+      }
+      trap rollback EXIT
       ln -sfn "$RELEASE_DIR" "$APP_DIR/current"
       cd "$APP_DIR/current"
+      chmod +x deployment/scripts/wait_for_application.sh deployment/scripts/smoke_test_production.sh
       cp "$ENV_FILE" backend/.env
       docker compose config --quiet
       docker compose build
@@ -225,25 +227,86 @@ deploy_phase_3_activate:
       fi
       docker compose run --rm backend alembic upgrade head
       docker compose up -d --remove-orphans
+      ./deployment/scripts/wait_for_application.sh --base-url "$LOCAL_DEPLOY_URL" --timeout 180
       if ! docker compose exec -T backend python -c "from app.database.session import SessionLocal; from app.services.dashboard_service import DashboardService; from app.services.product_service import ProductService; db = SessionLocal(); ProductService(db).list_paginated(); DashboardService(db).summary(); db.close()"; then
         docker compose logs --tail=200 backend
         exit 1
       fi
+      PUBLIC_BASE_URL="$PUBLIC_DEPLOY_URL" LOCAL_BASE_URL="$LOCAL_DEPLOY_URL" ./deployment/scripts/smoke_test_production.sh
       docker compose ps
+      trap - EXIT
 
 deploy_phase_4_verify:
   stage: verify
-  image: curlimages/curl:8.11.1
+  image: alpine:3.20
   needs:
     - deploy_phase_3_activate
   environment:
     name: production
     url: $DEPLOY_URL
   script:
-    - curl --fail --retry 12 --retry-delay 5 "$DEPLOY_URL/"
-    - curl --fail --retry 12 --retry-delay 5 "$DEPLOY_URL/health"
+    - apk add --no-cache bash curl openssl
+    - bash deployment/scripts/wait_for_application.sh --base-url "$LOCAL_DEPLOY_URL" --timeout 180
+    - bash deployment/scripts/wait_for_application.sh --base-url "$PUBLIC_DEPLOY_URL" --timeout 180
+    - PUBLIC_BASE_URL="$PUBLIC_DEPLOY_URL" LOCAL_BASE_URL="$LOCAL_DEPLOY_URL" bash deployment/scripts/smoke_test_production.sh
   rules:
     - if: $CI_COMMIT_BRANCH == $DEPLOY_BRANCH
+
+diagnose_production_availability:
+  extends: .deploy_local
+  stage: verify
+  image: alpine:3.20
+  needs: []
+  environment:
+    name: production-diagnostics
+  when: manual
+  manual_confirmation: "Run read-only production availability diagnostics?"
+  script:
+    - |
+      set -eu
+      apk add --no-cache bash curl docker-cli docker-cli-compose openssl procps util-linux
+      APP_DIR="$DEPLOY_PATH/current"
+      ARTIFACT_DIR="$CI_PROJECT_DIR/availability-diagnostics"
+      mkdir -p "$ARTIFACT_DIR"
+      test -d "$APP_DIR"
+      cd "$APP_DIR"
+      {
+        echo "== docker compose ps =="
+        docker compose ps || true
+        echo "== container health =="
+        docker inspect -f '{{.Name}} {{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' $(docker compose ps -q) || true
+      } > "$ARTIFACT_DIR/docker.txt" 2>&1
+      {
+        systemctl status docker --no-pager || true
+        systemctl status nginx --no-pager || true
+        systemctl status rainbow-fashions --no-pager || true
+      } > "$ARTIFACT_DIR/systemd.txt" 2>&1
+      ss -lntp > "$ARTIFACT_DIR/listening-sockets.txt" 2>&1 || true
+      {
+        curl --silent --show-error --include --connect-timeout 5 --max-time 15 "$LOCAL_DEPLOY_URL/health/live" || true
+        curl --silent --show-error --include --connect-timeout 5 --max-time 15 "$LOCAL_DEPLOY_URL/health/ready" || true
+        curl --silent --show-error --include --connect-timeout 5 --max-time 15 "$PUBLIC_DEPLOY_URL/health/live" || true
+        curl --silent --show-error --include --connect-timeout 5 --max-time 15 "$PUBLIC_DEPLOY_URL/health/ready" || true
+      } > "$ARTIFACT_DIR/health.txt" 2>&1
+      df -h > "$ARTIFACT_DIR/disk-usage.txt" 2>&1 || true
+      df -ih > "$ARTIFACT_DIR/inode-usage.txt" 2>&1 || true
+      docker system df > "$ARTIFACT_DIR/docker-disk.txt" 2>&1 || true
+      host="${PUBLIC_DEPLOY_URL#https://}"; host="${host%%/*}"
+      echo | openssl s_client -connect "$host:443" -servername "$host" 2>/dev/null | openssl x509 -noout -dates > "$ARTIFACT_DIR/certificate.txt" 2>&1 || true
+      docker compose logs --tail=300 --no-color backend > "$ARTIFACT_DIR/backend.log" 2>&1 || true
+      docker compose logs --tail=300 --no-color frontend > "$ARTIFACT_DIR/frontend.log" 2>&1 || true
+      journalctl -u nginx -n 300 --no-pager > "$ARTIFACT_DIR/nginx-journal.log" 2>&1 || true
+      journalctl -u rainbow-fashions -n 300 --no-pager > "$ARTIFACT_DIR/rainbow-fashions-journal.log" 2>&1 || true
+      ls -la "$DEPLOY_PATH" "$DEPLOY_PATH/releases" > "$ARTIFACT_DIR/releases.txt" 2>&1 || true
+  artifacts:
+    when: always
+    expire_in: 1 day
+    paths:
+      - availability-diagnostics/
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+    - when: never
 
 # This is deliberately manual and is the only supported way to clear the
 # production business database. It keeps user accounts, store configuration,

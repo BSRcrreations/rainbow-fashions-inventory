@@ -30,6 +30,15 @@ deployment/nginx/rainbow-fashions.conf
 
 In production, place TLS termination in Nginx using Certbot or a managed load balancer.
 
+For the hardened `test.rainbow-fashions.in` deployment, use:
+
+```text
+docs/DEPLOYMENT_AVAILABILITY_HARDENING.md
+deployment/nginx/test.rainbow-fashions.in.conf
+deployment/systemd/rainbow-fashions.service
+deployment/systemd/rainbow-health-watch.timer
+```
+
 ## Backups
 
 Create backup:

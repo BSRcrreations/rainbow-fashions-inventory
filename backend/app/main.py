@@ -125,6 +125,7 @@ def health() -> dict[str, str]:
 
 
 @app.get("/health/ready", tags=["System"])
+@app.get("/api/health", tags=["System"])
 def readiness(request: Request):
     """Report readiness only when the database accepts a lightweight query."""
     try:
