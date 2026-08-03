@@ -1,52 +1,38 @@
 # Deployment
 
-Rainbow Fashions uses one FastAPI backend, one React web frontend, one Expo Android app, and one PostgreSQL database.
+Rainbow Fashions uses one FastAPI backend, one React web frontend, one Expo
+Android scaffold, and one PostgreSQL database.
+
+## Protected environment configuration
+
+Create the real backend environment file only on the deployment host from
+`backend/.env.docker.example`. Keep it outside the repository and release
+directories, restrict it to the service owner (`chmod 600`), and provide it to
+Compose through the approved host-level configuration path.
+
+The examples intentionally contain `CHANGE_ME` placeholders. Never commit real
+passwords, JWT material, database URLs, hostnames, tokens, or private keys.
+Before release, run:
+
+```bash
+bash scripts/security/check_tracked_secrets.sh
+```
 
 ## Local Docker
+
+For a local-only environment, copy the reviewed example to the ignored backend
+environment path, set values locally, and then run:
 
 ```bash
 docker compose up --build
 ```
 
-Open:
+## HTTPS and backups
 
-```text
-http://localhost
-```
-
-## Services
-
-- `postgres`: PostgreSQL database with schema and seed initialization.
-- `backend`: FastAPI REST API serving web and Android clients.
-- `frontend`: Nginx-served React build.
-
-## HTTPS
-
-Use the reverse proxy config in:
-
-```text
-deployment/nginx/rainbow-fashions.conf
-```
-
-In production, place TLS termination in Nginx using Certbot or a managed load balancer.
-
-## Backups
-
-Create backup:
-
-```bash
-DATABASE_URL=postgresql://inventory_user:inventory123@localhost:5432/inventory_db \
-deployment/scripts/backup_postgres.sh
-```
-
-Restore backup:
-
-```bash
-DATABASE_URL=postgresql://inventory_user:inventory123@localhost:5432/inventory_db \
-deployment/scripts/restore_postgres.sh ./backups/rainbow_inventory_YYYYMMDD_HHMMSS.dump
-```
-
-Backups older than 30 days are removed by the backup script.
+Use `deployment/nginx/rainbow-fashions.conf` with an approved TLS terminator.
+Run backup and restore scripts only with `DATABASE_URL` sourced from the
+protected host environment; do not paste credentials into command history or
+documentation.
 
 ## GitLab CI/CD
 
