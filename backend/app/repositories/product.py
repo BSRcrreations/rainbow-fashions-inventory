@@ -152,6 +152,7 @@ class ProductRepository(BaseRepository[Product]):
         brand_id: UUID,
         name: str,
         exclude_id: Optional[UUID] = None,
+        store_id: Optional[UUID] = None,
     ) -> Optional[Product]:
         query = self.db.query(Product).filter(
             Product.category_id == category_id,
@@ -159,6 +160,8 @@ class ProductRepository(BaseRepository[Product]):
             Product.brand_id == brand_id,
             func.lower(Product.name) == name.strip().lower(),
         )
+        if store_id is not None:
+            query = query.filter(Product.store_id == store_id)
         if exclude_id:
             query = query.filter(Product.id != exclude_id)
         return query.first()

@@ -14,6 +14,9 @@ from app.models.stock_scan import StockScanSession, StockScanSessionItem
 from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit
 from app.models.store import Store
 from app.models.supplier import Supplier
+from app.models.supplier import SupplierPayment
+from app.models.customer import Customer, CustomerPayment
+from app.models.expense import Expense, ExpenseCategory
 from app.models.uploaded_file import UploadedFile
 from app.models.user import User
 from app.models.purchase_document import DocumentProcessingJob, PurchaseDocument
@@ -44,6 +47,11 @@ __all__ = [
     "ProductBarcodeAudit",
     "Store",
     "Supplier",
+    "SupplierPayment",
+    "Customer",
+    "CustomerPayment",
+    "Expense",
+    "ExpenseCategory",
     "UploadedFile",
     "User",
     "PurchaseDocument",

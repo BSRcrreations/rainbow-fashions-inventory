@@ -75,6 +75,8 @@ export interface Product {
   minimum_stock: number;
   barcode?: string | null;
   product_date: string;
+  description?: string | null;
+  hsn_sac?: string | null;
   image_url?: string | null;
   is_active: boolean;
   is_test_data: boolean;
@@ -134,6 +136,45 @@ export interface ProductVariantBarcode {
   inventory_unit: string;
   base_unit_conversion: number;
   sale_mode: string;
+}
+
+export interface BarcodeTransferVariantSummary {
+  product_id: string;
+  variant_id: string;
+  store_id: string;
+  product_name: string;
+  brand_name?: string | null;
+  size?: string | null;
+  color?: string | null;
+  style_code?: string | null;
+  current_stock: number;
+}
+
+export interface BarcodeTransferLine {
+  barcode: string;
+  barcode_id: string;
+  source_variant_id: string;
+  target_variant_id: string;
+  draft_session_item_ids: string[];
+  confirmed_session_item_ids: string[];
+  confirmed_quantity: number;
+  completed_sale_count: number;
+  completed_purchase_count: number;
+  audit_id?: string | null;
+}
+
+export interface BulkBarcodeTransferPreview {
+  barcodes: string[];
+  source: BarcodeTransferVariantSummary;
+  target: BarcodeTransferVariantSummary;
+  lines: BarcodeTransferLine[];
+  draft_only: boolean;
+  source_stock_delta: number;
+  target_stock_delta: number;
+  net_stock_delta: number;
+  confirmation_phrase: string;
+  correction_stock_history_ids?: string[];
+  audit_ids?: string[];
 }
 
 export interface LabelExtractionSuggestion {
@@ -221,6 +262,7 @@ export interface SaleCatalogProduct {
   product_id: string;
   name: string;
   category_name?: string | null;
+  subcategory_name?: string | null;
   brand_name?: string | null;
   brand_logo_url?: string | null;
   product_image_url?: string | null;
@@ -254,6 +296,7 @@ export interface SaleItem {
 export interface Sale {
   id: string;
   invoice_number: string;
+  customer_id?: string | null;
   customer_name?: string | null;
   payment_mode: string;
   subtotal: string;
@@ -557,4 +600,117 @@ export interface PurchaseDocumentJob {
   error_code?: string | null;
   error_message?: string | null;
   result?: { extracted_invoice: PurchaseUploadResponse["extracted_invoice"]; review_items: PurchaseItem[]; warnings: string[] } | null;
+}
+
+export interface Supplier {
+  id: string;
+  store_id?: string | null;
+  name: string;
+  contact_person?: string | null;
+  phone?: string | null;
+  alternate_phone?: string | null;
+  email?: string | null;
+  gst_number?: string | null;
+  pan_number?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  opening_balance: string;
+  credit_limit?: string | null;
+  notes?: string | null;
+  is_active: boolean;
+  purchase_total: string;
+  paid_total: string;
+  balance_due: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SupplierDetail extends Supplier {
+  payments: Array<{ id: string; supplier_id: string; payment_date?: string | null; amount: string; payment_mode: string; reference?: string | null; notes?: string | null; created_at: string }>;
+  ledger: Array<{ id: string; entry_type: string; entry_date: string; reference?: string | null; description: string; debit: string; credit: string; balance: string }>;
+}
+
+export interface Customer {
+  id: string;
+  store_id: string;
+  name: string;
+  phone?: string | null;
+  alternate_phone?: string | null;
+  email?: string | null;
+  gst_number?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postal_code?: string | null;
+  opening_credit: string;
+  credit_limit?: string | null;
+  notes?: string | null;
+  is_active: boolean;
+  credit_sales_total: string;
+  paid_total: string;
+  balance_due: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomerDetail extends Customer {
+  payments: Array<{ id: string; customer_id: string; payment_date?: string | null; amount: string; payment_mode: string; reference?: string | null; notes?: string | null; created_at: string }>;
+  ledger: Array<{ id: string; entry_type: string; entry_date: string; reference?: string | null; description: string; debit: string; credit: string; balance: string }>;
+}
+
+export interface ExpenseCategory {
+  id: string;
+  store_id: string;
+  name: string;
+  description?: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Expense {
+  id: string;
+  store_id: string;
+  category_id: string;
+  expense_date: string;
+  title: string;
+  vendor?: string | null;
+  amount: string;
+  payment_mode: string;
+  reference?: string | null;
+  notes?: string | null;
+  receipt_url?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+  category?: ExpenseCategory | null;
+}
+
+export interface ReportsSummary {
+  profit_and_loss: {
+    start_date: string;
+    end_date: string;
+    sales_total: string;
+    purchase_total: string;
+    expense_total: string;
+    gross_profit: string;
+    net_profit: string;
+  };
+  cash_flow: {
+    start_date: string;
+    end_date: string;
+    cash_sales: string;
+    supplier_payments: string;
+    customer_payments: string;
+    expenses: string;
+    net_cash_flow: string;
+  };
+  inventory_valuation: {
+    total_stock: number;
+    purchase_value: string;
+    selling_value: string;
+    potential_margin: string;
+  };
 }

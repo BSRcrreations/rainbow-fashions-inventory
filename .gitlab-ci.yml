@@ -260,7 +260,10 @@ database_reset_production:
     url: $DEPLOY_URL
   when: manual
   manual_confirmation: "IRREVERSIBLE: back up then clear all production products, stock, purchases, sales, barcodes, documents, customers, suppliers, and uploads. Keep only users and stores?"
-  allow_failure: false
+  # Resetting data is an exceptional, destructive maintenance action. It must
+  # remain explicitly runnable, but it must not hold an otherwise verified
+  # deployment in the blocked state.
+  allow_failure: true
   script:
     - chmod +x scripts/database/clear_production_data.sh
     - DEPLOY_PATH="$DEPLOY_PATH" scripts/database/clear_production_data.sh --confirm-clear-production-data
@@ -350,6 +353,53 @@ database_import_production:
     - test -n "${DATABASE_MIGRATION_ENV_FILE:-}"
     - test -n "${MIGRATION_IMPORT_CONFIRMATION:-}"
     - scripts/database/import_remote_database.sh --confirm-replace
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+    - when: never
+
+# Read-only operational proof. Configure the production environment as protected
+# in GitLab so only authorized operators can run this job.
+verify_production_backup_recovery:
+  extends: .deploy_local
+  stage: verify
+  needs: []
+  resource_group: rainbow-fashions-production
+  environment:
+    name: production-backup-verification
+  when: manual
+  manual_confirmation: "Collect redacted production backup and recovery evidence?"
+  allow_failure: false
+  script:
+    - |
+      set -eu
+      APP_DIR="/opt/rainbow-fashions/current"
+      BACKUP_DIR="/opt/rainbow-fashions/backups"
+      ARTIFACT_DIR="$CI_PROJECT_DIR/production-backup-evidence"
+      test -x "$APP_DIR/deployment/scripts/generate_backup_evidence_report.sh"
+      mkdir -p "$ARTIFACT_DIR"
+      systemctl is-enabled rainbow-database-backup.timer > "$ARTIFACT_DIR/database-timer-enabled.txt"
+      systemctl is-active rainbow-database-backup.timer > "$ARTIFACT_DIR/database-timer-active.txt"
+      systemctl list-timers rainbow-database-backup.timer rainbow-offsite-backup.timer rainbow-backup-restore-test.timer rainbow-backup-health.timer > "$ARTIFACT_DIR/timers.txt"
+      systemctl status --no-pager rainbow-database-backup.service rainbow-offsite-backup.service rainbow-backup-restore-test.service rainbow-backup-health.service > "$ARTIFACT_DIR/services.txt" || true
+      "$APP_DIR/deployment/scripts/generate_backup_evidence_report.sh" > "$ARTIFACT_DIR/evidence-path.txt"
+      evidence="$(tail -n 1 "$ARTIFACT_DIR/evidence-path.txt")"
+      cp "$evidence" "${evidence%.json}.txt" "$ARTIFACT_DIR/"
+      find "$BACKUP_DIR/status" -maxdepth 1 -type f -name '*.json' -exec cp {} "$ARTIFACT_DIR/" \;
+      df -h / "$BACKUP_DIR" > "$ARTIFACT_DIR/disk-usage.txt"
+      docker system df > "$ARTIFACT_DIR/docker-disk-usage.txt"
+      python3 - "$evidence" <<'PY'
+      import json
+      import sys
+      report = json.load(open(sys.argv[1], encoding="utf-8"))
+      if report.get("overall_status") != "PROTECTED":
+          raise SystemExit("Backup recovery evidence is AT_RISK")
+      PY
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - production-backup-evidence/
   rules:
     - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
       when: manual

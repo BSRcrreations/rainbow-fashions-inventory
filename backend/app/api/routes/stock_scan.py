@@ -13,6 +13,10 @@ from app.schemas.stock_scan import (
     BarcodeAssignment,
     BatchBarcodeRequest,
     BarcodeTransferRequest,
+    BulkBarcodeTransferPreviewRead,
+    BulkBarcodeTransferPreviewRequest,
+    BulkBarcodeTransferRequest,
+    BulkBarcodeTransferResultRead,
     BarcodeImageResolutionRead,
     BarcodeOnboarding,
     BarcodeProductOnboarding,
@@ -68,6 +72,16 @@ def transfer_barcode(barcode_id: UUID, payload: BarcodeTransferRequest, request:
         from app.core.exceptions import bad_request
         raise bad_request("Confirm the barcode transfer before continuing", "BARCODE_TRANSFER_CONFIRMATION_REQUIRED")
     return StockScanService(db).transfer_barcode(barcode_id, payload.target_variant_id, current_user, request.state.request_id)
+
+
+@barcodes_router.post("/bulk-transfer/preview", response_model=BulkBarcodeTransferPreviewRead)
+def preview_bulk_barcode_transfer(payload: BulkBarcodeTransferPreviewRequest, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> BulkBarcodeTransferPreviewRead:
+    return StockScanService(db).preview_bulk_barcode_transfer(payload, current_user)
+
+
+@barcodes_router.post("/bulk-transfer", response_model=BulkBarcodeTransferResultRead)
+def bulk_barcode_transfer(payload: BulkBarcodeTransferRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> BulkBarcodeTransferResultRead:
+    return StockScanService(db).bulk_transfer_barcodes(payload, current_user, request.state.request_id)
 
 
 @barcodes_router.post("/resolve-image", response_model=BarcodeImageResolutionRead)

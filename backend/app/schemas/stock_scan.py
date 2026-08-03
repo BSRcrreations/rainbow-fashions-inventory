@@ -87,6 +87,82 @@ class BarcodeTransferRequest(BaseModel):
     confirm_transfer: bool = False
 
 
+class BulkBarcodeTransferBase(BaseModel):
+    barcodes: list[str] = Field(min_length=1, max_length=500)
+    target_product_variant_id: UUID
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("barcodes")
+    @classmethod
+    def normalize_transfer_barcodes(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("Each barcode is required")
+        if len({value.casefold() for value in normalized}) != len(normalized):
+            raise ValueError("Duplicate barcode values are not allowed")
+        return normalized
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_transfer_reason(cls, value: str) -> str:
+        return value.strip() if isinstance(value, str) else value
+
+
+class BulkBarcodeTransferPreviewRequest(BulkBarcodeTransferBase):
+    pass
+
+
+class BulkBarcodeTransferRequest(BulkBarcodeTransferBase):
+    confirmation_phrase: str = Field(min_length=1, max_length=80)
+
+    @field_validator("confirmation_phrase", mode="before")
+    @classmethod
+    def normalize_confirmation_phrase(cls, value: str) -> str:
+        return value.strip() if isinstance(value, str) else value
+
+
+class BarcodeTransferVariantSummary(BaseModel):
+    product_id: UUID
+    variant_id: UUID
+    store_id: UUID
+    product_name: str
+    brand_name: Optional[str] = None
+    size: Optional[str] = None
+    color: Optional[str] = None
+    style_code: Optional[str] = None
+    current_stock: int
+
+
+class BarcodeTransferLineRead(BaseModel):
+    barcode: str
+    barcode_id: UUID
+    source_variant_id: UUID
+    target_variant_id: UUID
+    draft_session_item_ids: list[UUID] = Field(default_factory=list)
+    confirmed_session_item_ids: list[UUID] = Field(default_factory=list)
+    confirmed_quantity: int = 0
+    completed_sale_count: int = 0
+    completed_purchase_count: int = 0
+    audit_id: Optional[UUID] = None
+
+
+class BulkBarcodeTransferPreviewRead(BaseModel):
+    barcodes: list[str]
+    source: BarcodeTransferVariantSummary
+    target: BarcodeTransferVariantSummary
+    lines: list[BarcodeTransferLineRead]
+    draft_only: bool
+    source_stock_delta: int
+    target_stock_delta: int
+    net_stock_delta: int
+    confirmation_phrase: str
+
+
+class BulkBarcodeTransferResultRead(BulkBarcodeTransferPreviewRead):
+    correction_stock_history_ids: list[UUID] = Field(default_factory=list)
+    audit_ids: list[UUID] = Field(default_factory=list)
+
+
 class BatchBarcodeRequest(BaseModel):
     product_variant_id: UUID
     barcodes: list[str] = Field(min_length=1, max_length=500)
@@ -169,6 +245,13 @@ class BarcodeProductOnboarding(BaseModel):
     mrp: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     selling_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     condition: str = Field(default="SELLABLE", min_length=2, max_length=40)
+
+    @field_validator("product_variant_id", "existing_product_id", "category_id", "subcategory_id", "brand_id", mode="before")
+    @classmethod
+    def blank_uuid_to_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("barcode", "alternate_barcode", "package_barcode")
     @classmethod

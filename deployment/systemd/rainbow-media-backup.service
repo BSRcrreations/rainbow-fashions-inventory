@@ -1,0 +1,9 @@
+[Unit]
+Description=Rainbow Fashions application uploads backup
+After=rainbow-database-backup.service
+
+[Service]
+Type=oneshot
+User=root
+Environment=RAINBOW_APP_ROOT=/opt/rainbow-fashions
+ExecStart=/opt/rainbow-fashions/current/deployment/scripts/prepare_upload_backup.sh

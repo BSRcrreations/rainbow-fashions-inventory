@@ -18,6 +18,8 @@ import { useAuth } from "../hooks/useAuth";
 import type { CategoryHierarchy, PaginatedProducts, PricingType, Product, ProductVariantBarcode } from "../types";
 import { money } from "../utils/format";
 import { productVariantLabel } from "../utils/product";
+import { productPayload, productUpdateErrorMessage } from "./productEditLogic";
+import type { ProductEditFormState } from "./productEditLogic";
 
 type SortBy = "name" | "sku" | "selling_price" | "purchase_price" | "stock" | "created_at" | "updated_at";
 type SortDir = "asc" | "desc";
@@ -44,29 +46,7 @@ interface BulkDeleteResult {
   request_id: string;
 }
 
-interface ProductFormState {
-  category_id: string;
-  subcategory_id: string;
-  brand_id: string;
-  sku: string;
-  name: string;
-  has_sizes: boolean;
-  sizes: string[];
-  has_colors: boolean;
-  colors: string[];
-  purchase_price: string;
-  selling_price: string;
-  pricing_type: PricingType;
-  mrp: string;
-  current_stock: string;
-  minimum_stock: string;
-  barcode: string;
-  product_date: string;
-  is_active: boolean;
-  is_test_data: boolean;
-}
-
-const emptyForm: ProductFormState = {
+const emptyForm: ProductEditFormState = {
   category_id: "",
   subcategory_id: "",
   brand_id: "",
@@ -84,11 +64,13 @@ const emptyForm: ProductFormState = {
   minimum_stock: "0",
   barcode: "",
   product_date: new Date().toISOString().slice(0, 10),
+  description: "",
+  hsn_sac: "",
   is_active: true,
   is_test_data: false,
 };
 
-function formFromProduct(product: Product): ProductFormState {
+function formFromProduct(product: Product): ProductEditFormState {
   const variants = product.variants ?? [];
   const sizes = Array.from(new Set(variants.map((variant) => variant.size).filter((value): value is string => Boolean(value))));
   const colors = Array.from(new Set(variants.map((variant) => variant.color).filter((value): value is string => Boolean(value))));
@@ -112,6 +94,8 @@ function formFromProduct(product: Product): ProductFormState {
     minimum_stock: String(product.minimum_stock),
     barcode: product.barcode ?? "",
     product_date: product.product_date,
+    description: product.description ?? "",
+    hsn_sac: product.hsn_sac ?? "",
     is_active: product.is_active,
     is_test_data: product.is_test_data,
   };
@@ -164,7 +148,7 @@ export default function ProductsPage() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
-  const [form, setForm] = useState<ProductFormState>(emptyForm);
+  const [form, setForm] = useState<ProductEditFormState>(emptyForm);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState("");
   const [editing, setEditing] = useState<Product | null>(null);
@@ -310,7 +294,7 @@ export default function ProductsPage() {
       ["category_id", "Category is required"],
       ["subcategory_id", "Subcategory is required"],
       ["brand_id", "Brand is required"],
-      ["name", "Product name is required"],
+      ["name", "Enter a product name."],
       ["purchase_price", "Cost is required"],
       ["selling_price", "Price is required"],
       ["product_date", "Product date is required"],
@@ -337,32 +321,6 @@ export default function ProductsPage() {
     return "";
   }
 
-  function payload() {
-    const sizes = form.has_sizes ? form.sizes.map((value) => value.trim()).filter(Boolean) : [];
-    const colors = form.has_colors ? form.colors.map((value) => value.trim()).filter(Boolean) : [];
-    return {
-      category_id: form.category_id,
-      subcategory_id: form.subcategory_id,
-      brand_id: form.brand_id,
-      sku: form.sku.trim() || null,
-      name: form.name.trim(),
-      size: sizes[0] ?? null,
-      color: colors[0] ?? null,
-      sizes,
-      colors,
-      purchase_price: Number(form.purchase_price),
-      selling_price: Number(form.selling_price),
-      mrp: form.mrp ? Number(form.mrp) : null,
-      current_stock: Number(form.current_stock),
-      minimum_stock: Number(form.minimum_stock),
-      barcode: form.barcode.trim() || null,
-      product_date: form.product_date,
-      is_active: form.is_active,
-      is_test_data: form.is_test_data,
-      pricing_type: form.pricing_type,
-    };
-  }
-
   function setVariantEnabled(kind: "sizes" | "colors", enabled: boolean) {
     const flag = kind === "sizes" ? "has_sizes" : "has_colors";
     setForm((current) => ({ ...current, [flag]: enabled, [kind]: enabled ? (current[kind].length ? current[kind] : [""]) : [] }));
@@ -385,7 +343,8 @@ export default function ProductsPage() {
       void print;
       const validationError = validateForm();
       if (validationError) throw new Error(validationError);
-      const product = editing ? await api.put<Product>(`/products/${editing.id}`, payload()) : await api.post<Product>("/products", payload());
+      const payload = productPayload(form, editing);
+      const product = editing ? await api.patch<Product>(`/products/${editing.id}`, payload) : await api.post<Product>("/products", payload);
       if (imageFile) {
         const body = new FormData();
         body.append("file", imageFile);
@@ -401,10 +360,12 @@ export default function ProductsPage() {
       setImageFile(null);
       setError("");
       invalidateProducts();
+      void queryClient.invalidateQueries({ queryKey: ["pos-variant-catalog"] });
       if (variables.print) setPrintTarget(product);
     },
     onError: (err) => {
-      const message = err instanceof Error ? err.message : "Unable to save product";
+      const requestId = err instanceof ApiError && err.requestId ? ` (request ${err.requestId})` : "";
+      const message = productUpdateErrorMessage(err instanceof ApiError ? err.code : undefined, err instanceof Error ? err.message : undefined) + requestId;
       setError(message);
       toast.error(message);
     },
@@ -760,7 +721,7 @@ export default function ProductsPage() {
         </select>
         </label>
         <label className="field-label sm:col-span-2">Product name<span>*</span>
-          <input className="field-input" placeholder="e.g. Cotton leggings" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} disabled={saveMutation.isPending} />
+          <input aria-label="Product name" className="field-input" placeholder="e.g. Cotton leggings" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} disabled={saveMutation.isPending} autoComplete="off" />
         </label>
         <label className="field-label">SKU
         <div className="flex gap-2">
@@ -775,6 +736,8 @@ export default function ProductsPage() {
         </div>
         </label>
         <label className="field-label">Product date<span>*</span><input className="field-input" type="date" value={form.product_date} onChange={(event) => setForm({ ...form, product_date: event.target.value })} disabled={saveMutation.isPending} /></label>
+        <label className="field-label">HSN / SAC<input className="field-input" placeholder="Optional" value={form.hsn_sac} onChange={(event) => setForm((current) => ({ ...current, hsn_sac: event.target.value }))} disabled={saveMutation.isPending} /></label>
+        <label className="field-label sm:col-span-2">Description<textarea className="field-input mt-1 min-h-20" placeholder="Optional product details" value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} disabled={saveMutation.isPending} /></label>
         <div className="grid gap-3 rounded-lg border border-border bg-surface-subtle p-4 sm:col-span-2 sm:grid-cols-2">
           <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border bg-surface px-3 text-sm font-semibold text-slate-700">
             <input type="checkbox" checked={form.has_colors} onChange={(event) => setVariantEnabled("colors", event.target.checked)} disabled={saveMutation.isPending} />
@@ -794,7 +757,7 @@ export default function ProductsPage() {
           <option value="MRP">MRP</option>
         </select></label>
         <label className="field-label">MRP<input className="field-input" placeholder="Optional" type="number" min="0" step="0.01" value={form.mrp} onChange={(event) => setForm({ ...form, mrp: event.target.value })} disabled={saveMutation.isPending} /></label>
-        <label className="field-label">Opening stock<input className="field-input" type="number" min="0" value={form.current_stock} onChange={(event) => setForm({ ...form, current_stock: event.target.value })} disabled={saveMutation.isPending || Boolean(editing)} /></label>
+        <div className="field-label"><span>{editing ? "Current stock" : "Opening stock"}</span><input className="field-input mt-1" type="number" min="0" value={form.current_stock} onChange={(event) => setForm({ ...form, current_stock: event.target.value })} disabled={saveMutation.isPending || Boolean(editing)} />{editing ? <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs font-medium text-slate-500"><span>Current stock cannot be edited directly. Use Stock Adjustment.</span><Button type="button" variant="secondary" size="sm" onClick={() => { const variantId = editing.variants?.length === 1 ? editing.variants[0].id : ""; navigate(variantId ? `/stock-adjustment?variant_id=${variantId}` : "/stock-adjustment"); }}><span>Adjust stock</span></Button></div> : null}</div>
         <label className="field-label">Low stock alert<input className="field-input" type="number" min="0" value={form.minimum_stock} onChange={(event) => setForm({ ...form, minimum_stock: event.target.value })} disabled={saveMutation.isPending} /></label>
         <label className="flex h-10 items-center gap-2 rounded-md border border-line px-3 text-sm text-slate-600 sm:col-span-2">
           <input type="checkbox" checked={form.is_active} onChange={(event) => setForm({ ...form, is_active: event.target.checked })} disabled={saveMutation.isPending} />

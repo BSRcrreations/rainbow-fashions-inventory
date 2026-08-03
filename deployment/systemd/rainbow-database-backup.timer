@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Rainbow Fashions PostgreSQL backup
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=rainbow-database-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Rainbow Fashions backup health every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+Unit=rainbow-backup-health.service
+
+[Install]
+WantedBy=timers.target

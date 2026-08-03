@@ -11,7 +11,7 @@ from app.models.enums import SaleStatus
 from app.schemas.common import ORMBaseModel
 
 
-PaymentMode = Literal["CASH", "CARD", "UPI", "BANK", "OTHER"]
+PaymentMode = Literal["CASH", "CARD", "UPI", "BANK", "CREDIT", "OTHER"]
 
 
 class SaleDeleteCheckRequest(BaseModel):
@@ -41,6 +41,7 @@ class SaleItemUpdate(SaleItemCreate):
 
 class SaleCreate(BaseModel):
     invoice_number: Optional[str] = Field(default=None, max_length=120)
+    customer_id: Optional[UUID] = None
     customer_name: Optional[str] = Field(default=None, max_length=180)
     payment_mode: PaymentMode
     discount_type: str = "PERCENTAGE"
@@ -64,6 +65,7 @@ class SaleCreate(BaseModel):
 
 
 class SaleUpdate(BaseModel):
+    customer_id: Optional[UUID] = None
     customer_name: Optional[str] = Field(default=None, max_length=180)
     payment_mode: PaymentMode
     discount: Decimal = Field(default=Decimal("0"), ge=0)
@@ -140,6 +142,7 @@ class SaleCatalogProduct(BaseModel):
     product_id: UUID
     name: str
     category_name: Optional[str] = None
+    subcategory_name: Optional[str] = None
     brand_name: Optional[str] = None
     brand_logo_url: Optional[str] = None
     product_image_url: Optional[str] = None
@@ -158,6 +161,7 @@ class CashierRead(ORMBaseModel):
 class SaleRead(ORMBaseModel):
     id: UUID
     invoice_number: str
+    customer_id: Optional[UUID] = None
     customer_name: Optional[str]
     payment_mode: str
     subtotal: Decimal

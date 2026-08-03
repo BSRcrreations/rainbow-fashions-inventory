@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Rainbow Fashions backup retention review
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=rainbow-backup-retention.service
+
+[Install]
+WantedBy=timers.target

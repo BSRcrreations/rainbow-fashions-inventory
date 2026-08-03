@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     max_invoice_pages: int = 20
     log_level: str = "INFO"
     delete_auth_password_hash: Optional[str] = None
+    backup_status_dir: Optional[Path] = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

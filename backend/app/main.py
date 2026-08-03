@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.staticfiles import StaticFiles
 
-from app.api.routes import auth, brands, categories, dashboard, products, purchases, sales, security, stock, stock_scan, subcategories, purchase_documents
+from app.api.routes import auth, brands, categories, customers, dashboard, expenses, products, purchases, reports, sales, security, stock, stock_scan, subcategories, suppliers, purchase_documents
 from app.core.config import get_settings
 from app.core.exceptions import error_payload
 from app.core.logging import configure_logging
@@ -22,6 +22,8 @@ from app.database.session import engine
 settings = get_settings()
 configure_logging()
 logger = logging.getLogger(__name__)
+
+READY_TABLES = ("users", "stores", "products", "product_variants", "product_barcodes", "stock_history", "suppliers", "customers", "expenses")
 
 app = FastAPI(
     title=settings.app_name,
@@ -62,11 +64,21 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    errors = exc.errors()
     fields = [
         {"field": ".".join(str(part) for part in error["loc"] if part != "body"), "message": error["msg"]}
-        for error in exc.errors()
+        for error in errors
     ]
-    payload = error_payload("Validation failed", "validation_error", fields)
+    onboarding_codes = {
+        "PRODUCT_REQUIRED",
+        "CATEGORY_REQUIRED",
+        "BRAND_REQUIRED",
+        "EXISTING_PRODUCT_REQUIRED",
+        "EXISTING_VARIANT_REQUIRED",
+    }
+    code = next((str(error["type"]) for error in errors if error.get("type") in onboarding_codes), "validation_error")
+    message = fields[0]["message"] if code != "validation_error" and fields else "Validation failed"
+    payload = error_payload(message, code, fields)
     payload["request_id"] = getattr(request.state, "request_id", None)
     return JSONResponse(status_code=422, content={"detail": payload})
 
@@ -95,6 +107,10 @@ app.include_router(sales.router, prefix=settings.api_v1_prefix)
 app.include_router(products.router, prefix=settings.api_v1_prefix)
 app.include_router(purchases.router, prefix=settings.api_v1_prefix)
 app.include_router(purchase_documents.router, prefix=settings.api_v1_prefix)
+app.include_router(suppliers.router, prefix=settings.api_v1_prefix)
+app.include_router(customers.router, prefix=settings.api_v1_prefix)
+app.include_router(expenses.router, prefix=settings.api_v1_prefix)
+app.include_router(reports.router, prefix=settings.api_v1_prefix)
 app.include_router(stock.router, prefix=settings.api_v1_prefix)
 app.include_router(stock_scan.router, prefix=settings.api_v1_prefix)
 app.include_router(stock_scan.variants_router, prefix=settings.api_v1_prefix)
@@ -103,18 +119,30 @@ app.include_router(security.router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/health", tags=["System"])
+@app.get("/health/live", tags=["System"])
 def health() -> dict[str, str]:
-    return {"status": "ok", "app": settings.app_name}
+    return {"status": "ok", "service": "backend"}
 
 
 @app.get("/health/ready", tags=["System"])
-def readiness():
+def readiness(request: Request):
     """Report readiness only when the database accepts a lightweight query."""
     try:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
-    except Exception:  # Database drivers can raise implementation-specific errors.
-        logger.warning("Database readiness check failed.")
-        return JSONResponse(status_code=503, content={"status": "unavailable"})
+            for table_name in READY_TABLES:
+                exists = connection.execute(text("SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = :table_name"), {"table_name": table_name}).scalar()
+                if exists != 1:
+                    raise RuntimeError("required table unavailable")
+    except Exception as exc:  # Database drivers can raise implementation-specific errors.
+        logger.warning(
+            "Database readiness check failed request_id=%s error_type=%s",
+            getattr(request.state, "request_id", None),
+            type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "service": "backend", "request_id": getattr(request.state, "request_id", None)},
+        )
 
-    return {"status": "ready"}
+    return {"status": "ready", "service": "backend"}

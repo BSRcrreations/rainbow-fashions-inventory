@@ -6,6 +6,7 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -51,4 +52,5 @@ class ProductBarcodeAudit(Base):
     reason: Mapped[Optional[str]] = mapped_column(String(500))
     changed_by: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     request_id: Mapped[Optional[str]] = mapped_column(String(80))
+    metadata_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

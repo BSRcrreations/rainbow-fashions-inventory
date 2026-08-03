@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly Rainbow Fashions staging-only restore drill
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=30m
+Unit=rainbow-backup-restore-test.service
+
+[Install]
+WantedBy=timers.target

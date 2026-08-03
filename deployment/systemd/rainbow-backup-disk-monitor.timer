@@ -1,0 +1,10 @@
+[Unit]
+Description=Frequent Rainbow Fashions backup disk monitor
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=rainbow-backup-disk-monitor.service
+
+[Install]
+WantedBy=timers.target
