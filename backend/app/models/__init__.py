@@ -22,6 +22,7 @@ from app.models.user import User
 from app.models.purchase_document import DocumentProcessingJob, PurchaseDocument
 from app.models.product_deletion_audit import ProductDeletionAudit
 from app.models.product_update_audit import ProductUpdateAudit
+from app.models.stock_import import StockImport, StockImportBackup, StockImportRollback, StockImportRow
 from app.models.destructive_action import DeletePasswordAttempt, DestructiveActionAudit, DestructiveIdempotencyRecord, StoreSecuritySetting
 
 __all__ = [
@@ -59,6 +60,10 @@ __all__ = [
     "DocumentProcessingJob",
     "ProductDeletionAudit",
     "ProductUpdateAudit",
+    "StockImport",
+    "StockImportRow",
+    "StockImportBackup",
+    "StockImportRollback",
     "DeletePasswordAttempt",
     "DestructiveActionAudit",
     "DestructiveIdempotencyRecord",

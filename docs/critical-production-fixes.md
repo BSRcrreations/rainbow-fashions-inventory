@@ -86,3 +86,40 @@ Run before implementing this programme:
 - Existing uncommitted changes must be reviewed and separated before release.
 - HTTPS deployment remains blocked on DNS, certificate issuance, and server
   access.
+
+## Local verification update
+
+- The isolated Docker UAT stack was rebuilt with `TEST_ENV_MODE=docker
+  ./scripts/start-test-environment.sh`. It used `rainbow_inventory_test`, ran
+  migrations, and seeded controlled test data only.
+- Docker-host checks returned HTTP 200 for `/health` and `/health/ready`; the
+  latter verifies database connectivity. The direct `/api/health` alias is now
+  implemented as the same readiness check for the requested UAT route.
+- Product metadata edits remain catalogue-only. Direct `current_stock` edits
+  are rejected with `STOCK_FIELDS_READ_ONLY`. Metadata and image changes now
+  create immutable `product_update_audits` records.
+- A first migration-backed strict opening-stock-import domain is implemented:
+  store-scoped CSV validation, idempotency key and file hash, row preview,
+  existing-active-variant matching, no second opening movement, explicit
+  confirmation state transitions, and fail-closed backup gating.
+
+### Commands completed
+
+```text
+cd backend && .venv/bin/pytest -q tests/test_product_metadata_update.py tests/test_health.py
+10 passed
+
+cd backend && .venv/bin/alembic heads
+20260803_0039 (head)
+
+cd frontend && npm run test -- --run src/pages/productEditLogic.test.ts
+4 passed
+cd frontend && npm run lint
+PASS
+cd frontend && npm run typecheck
+PASS
+```
+
+The full import confirmation journey, compensating rollback, production backup
+scripts, integration journey, 2,000-row benchmark, and deployment execution
+are incomplete and must not be reported as passing.
