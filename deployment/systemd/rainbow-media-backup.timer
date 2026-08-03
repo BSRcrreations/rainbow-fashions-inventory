@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily Rainbow Fashions uploaded media backup
+Description=Daily Rainbow Fashions application uploads backup
 
 [Timer]
 OnCalendar=*-*-* 02:20:00

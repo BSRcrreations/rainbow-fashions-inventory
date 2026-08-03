@@ -1,5 +1,5 @@
 [Unit]
-Description=Rainbow Fashions encrypted offsite database and media backup upload
+Description=Rainbow Fashions encrypted offsite database and uploads backup upload
 Wants=network-online.target
 After=network-online.target rainbow-database-backup.service rainbow-media-backup.service
 

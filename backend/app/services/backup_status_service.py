@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 STATUS_FILES = {
     "database": "latest-database-backup.json",
-    "media": "latest-media-backup.json",
+    "uploads": "latest-uploads-backup.json",
     "offsite": "latest-offsite-backup.json",
     "restore_test": "latest-restore-test.json",
     "disk": "latest-disk-status.json",

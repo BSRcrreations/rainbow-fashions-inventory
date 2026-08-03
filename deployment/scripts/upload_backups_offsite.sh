@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Upload verified database and media archives to encrypted remote storage (restic).
+# Upload verified database and application-upload archives to encrypted remote storage (restic).
 set -Eeuo pipefail
 
 CONFIG_FILE="${BACKUP_CONFIG_FILE:-/etc/rainbow-fashions/backup.env}"
@@ -20,22 +20,22 @@ trap 'code=$?; write_status "Offsite upload failed (exit ${code})."; exit "$code
 
 command -v restic >/dev/null || { log "restic is not installed"; exit 127; }
 database_count=0
-media_count=0
-for directory in "$BACKUP_LOCAL_PATH/database" "$BACKUP_LOCAL_PATH/media"; do
+uploads_count=0
+for directory in "$BACKUP_LOCAL_PATH/database" "$BACKUP_LOCAL_PATH/uploads"; do
   [[ -d "$directory" ]] || { log "Backup directory is missing: $directory"; exit 1; }
   while IFS= read -r -d '' archive; do
-    if [[ "$directory" == "$BACKUP_LOCAL_PATH/database" ]]; then database_count=$((database_count + 1)); else media_count=$((media_count + 1)); fi
+    if [[ "$directory" == "$BACKUP_LOCAL_PATH/database" ]]; then database_count=$((database_count + 1)); else uploads_count=$((uploads_count + 1)); fi
     [[ -s "$archive" && -s "${archive}.sha256" ]] || { log "Archive or checksum missing: $archive"; exit 1; }
     if command -v sha256sum >/dev/null; then (cd "$(dirname "$archive")" && sha256sum --check "$(basename "${archive}.sha256")") >/dev/null; else (cd "$(dirname "$archive")" && shasum -a 256 --check "$(basename "${archive}.sha256")") >/dev/null; fi
   done < <(find "$directory" -maxdepth 1 -type f \( -name '*.dump' -o -name '*.tar.gz' \) -print0)
 done
 [[ "$database_count" -gt 0 ]] || { log "No database backups are available for offsite upload"; exit 1; }
-[[ "$media_count" -gt 0 ]] || { log "No media backups are available for offsite upload"; exit 1; }
+[[ "$uploads_count" -gt 0 ]] || { log "No uploads backups are available for offsite upload"; exit 1; }
 
 restic cat config >/dev/null
-backup_json="$(restic backup --json --tag rainbow-fashions --tag database --tag media "$BACKUP_LOCAL_PATH/database" "$BACKUP_LOCAL_PATH/media")"
+backup_json="$(restic backup --json --tag rainbow-fashions --tag database --tag uploads "$BACKUP_LOCAL_PATH/database" "$BACKUP_LOCAL_PATH/uploads")"
 SNAPSHOT="$(printf '%s\n' "$backup_json" | sed -n 's/.*"snapshot_id":"\([^"]*\)".*/\1/p' | tail -n 1)"
 [[ -n "$SNAPSHOT" ]] || { log "restic did not report a snapshot"; exit 1; }
 # Retain at least 30 daily points remotely as well as local copies.
 restic forget --prune --keep-daily="$BACKUP_RETENTION_DAYS" --keep-weekly=8 --tag rainbow-fashions
-RESULT=success; write_status "Encrypted database and media backup uploaded."; log "result=success snapshot=${SNAPSHOT}"
+RESULT=success; write_status "Encrypted database and uploads backup uploaded."; log "result=success snapshot=${SNAPSHOT}"

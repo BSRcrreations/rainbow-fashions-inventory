@@ -1,8 +1,8 @@
 [Unit]
-Description=Rainbow Fashions uploaded media backup
+Description=Rainbow Fashions application uploads backup
 After=rainbow-database-backup.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/rainbow-fashions/backup.env
-ExecStart=/opt/rainbow-fashions/current/deployment/scripts/backup_media.sh
+ExecStart=/opt/rainbow-fashions/current/deployment/scripts/backup_uploads.sh
