@@ -24,7 +24,10 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - backend_uploads:/app/app/uploads
+      # A host bind mount lets the host backup service archive all uploads.
+      - ${UPLOADS_HOST_PATH:-./runtime/uploads}:/app/app/uploads
+      # Status is operational metadata only and is displayed to owners by API.
+      - ${BACKUP_STATUS_HOST_PATH:-./runtime/backups/status}:/backup-status:ro
     expose:
       - "8000"
     healthcheck:
@@ -54,4 +57,3 @@ services:
 
 volumes:
   postgres_data:
-  backend_uploads:

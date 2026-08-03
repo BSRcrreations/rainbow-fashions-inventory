@@ -12,10 +12,13 @@ venv/
 .env.*
 !.env.example
 !backend/.env.docker.example
+!backend/.env.test.example
+!frontend/.env.test.example
 
 backend/.env
 frontend/.env
 mobile/.env
+.test-runtime/
 deployment/templates/backend.env.production
 deployment/templates/backup-offsite.env
 
@@ -47,3 +50,4 @@ backend/app/uploads/invoices/*
 backend/app/uploads/products/*
 !backend/app/uploads/invoices/.gitkeep
 !backend/app/uploads/products/.gitkeep
+backend/app/test_uploads/

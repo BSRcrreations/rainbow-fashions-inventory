@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Rainbow Fashions uploaded media backup
+
+[Timer]
+OnCalendar=*-*-* 02:20:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=rainbow-media-backup.service
+
+[Install]
+WantedBy=timers.target
