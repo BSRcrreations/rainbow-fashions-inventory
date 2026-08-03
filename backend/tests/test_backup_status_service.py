@@ -48,6 +48,32 @@ def test_invalid_status_file_is_reported_as_unknown(tmp_path) -> None:
     assert disk.available is False
 
 
+def test_status_reads_new_verified_backup_evidence_names(tmp_path) -> None:
+    (tmp_path / "latest-upload-manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "SUCCESS",
+                "product_image_count": "4",
+                "brand_logo_count": "2",
+                "manifest_path": "/opt/rainbow-fashions/backups/uploads/private.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "latest-database-restore-test.json").write_text(
+        json.dumps({"status": "SUCCESS", "row_counts": "{\"products\": 10}"}),
+        encoding="utf-8",
+    )
+
+    status = BackupStatusService(tmp_path).status()
+
+    uploads = next(component for component in status.components if component.component == "uploads")
+    restore = next(component for component in status.components if component.component == "database_restore")
+    assert uploads.status == "SUCCESS"
+    assert uploads.details == {"product_image_count": "4", "brand_logo_count": "2"}
+    assert restore.details == {"row_counts": "{\"products\": 10}"}
+
+
 def test_backup_status_endpoint_requires_authentication() -> None:
     response = TestClient(app).get("/api/v1/security/backup-status")
 

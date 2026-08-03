@@ -2,7 +2,7 @@
 Description=Daily Rainbow Fashions application uploads backup
 
 [Timer]
-OnCalendar=*-*-* 02:20:00
+OnCalendar=*-*-* 02:30:00
 Persistent=true
 RandomizedDelaySec=10m
 Unit=rainbow-media-backup.service

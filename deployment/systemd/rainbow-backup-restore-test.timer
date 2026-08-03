@@ -2,9 +2,9 @@
 Description=Weekly Rainbow Fashions staging-only restore drill
 
 [Timer]
-OnCalendar=Sun *-*-* 05:00:00
+OnCalendar=Sun *-*-* 04:00:00
 Persistent=true
-RandomizedDelaySec=20m
+RandomizedDelaySec=30m
 Unit=rainbow-backup-restore-test.service
 
 [Install]

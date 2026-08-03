@@ -1,41 +1,81 @@
 #!/usr/bin/env bash
-# Upload verified database and application-upload archives to encrypted remote storage (restic).
+# Upload verified local recovery material to an encrypted Restic repository.
 set -Eeuo pipefail
 
-CONFIG_FILE="${BACKUP_CONFIG_FILE:-/etc/rainbow-fashions/backup.env}"
-[[ -r "$CONFIG_FILE" ]] || { echo "Missing protected backup configuration: $CONFIG_FILE" >&2; exit 2; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=deployment/scripts/lib_backup.sh
+source "${SCRIPT_DIR}/lib_backup.sh"
+
+OFFSITE_ENV="${RAINBOW_OFFSITE_ENV:-${RAINBOW_SHARED_DIR}/backup-offsite.env}"
+[[ -r "$OFFSITE_ENV" ]] || backup_die "Missing protected offsite configuration: $OFFSITE_ENV"
 # shellcheck disable=SC1090
-source "$CONFIG_FILE"
-: "${BACKUP_LOCAL_PATH:=/u02/backups}"
+source "$OFFSITE_ENV"
 : "${RESTIC_REPOSITORY:?RESTIC_REPOSITORY is required}"
 : "${RESTIC_PASSWORD:?RESTIC_PASSWORD is required}"
-: "${BACKUP_RETENTION_DAYS:=30}"
 
-STATUS_DIR="$BACKUP_LOCAL_PATH/status"; LOG_DIR="$BACKUP_LOCAL_PATH/logs"; STATUS_FILE="$STATUS_DIR/latest-offsite-backup.json"
-mkdir -p "$STATUS_DIR" "$LOG_DIR"; chmod 700 "$STATUS_DIR" "$LOG_DIR"; umask 077
-START="$(date --iso-8601=seconds 2>/dev/null || date)"; START_EPOCH="$(date +%s)"; RESULT=failed; SNAPSHOT=""
-log() { printf '%s offsite-backup %s\n' "$(date --iso-8601=seconds 2>/dev/null || date)" "$*" | tee -a "$LOG_DIR/offsite-backup.log" >&2; }
-write_status() { local msg="$1"; printf '{"component":"offsite","status":"%s","started_at":"%s","finished_at":"%s","snapshot_id":"%s","duration_seconds":%s,"message":"%s"}\n' "$RESULT" "$START" "$(date --iso-8601=seconds 2>/dev/null || date)" "$SNAPSHOT" "$(( $(date +%s) - START_EPOCH ))" "${msg//\"/\\\"}" > "$STATUS_FILE"; chmod 600 "$STATUS_FILE"; }
-trap 'code=$?; write_status "Offsite upload failed (exit ${code})."; exit "$code"' ERR
+backup_require_command restic
+backup_require_command python3
+backup_init_log offsite-backup.log
+backup_lock offsite-backup
+backup_cleanup_partials
 
-command -v restic >/dev/null || { log "restic is not installed"; exit 127; }
-database_count=0
-uploads_count=0
-for directory in "$BACKUP_LOCAL_PATH/database" "$BACKUP_LOCAL_PATH/uploads"; do
-  [[ -d "$directory" ]] || { log "Backup directory is missing: $directory"; exit 1; }
+status_file="${RAINBOW_BACKUP_STATUS_DIR}/latest-offsite-backup.json"
+started_epoch="$(date +%s)"
+files_list="$(mktemp "${TMPDIR:-/tmp}/rainbow-offsite-files.XXXXXX")"
+trap 'rm -f "$files_list"' EXIT
+
+find "$RAINBOW_BACKUP_ROOT/database" -type f -name 'rainbow_inventory_*.dump' -print0 2>/dev/null |
+  while IFS= read -r -d '' dump; do
+    [[ "$dump" != *.partial ]] || backup_die "Partial database backup cannot be uploaded: $dump"
+    backup_check_sha256 "$dump" || backup_die "Database backup checksum is missing or invalid: $dump"
+    metadata="${dump}.metadata.json"
+    [[ -s "$metadata" ]] || backup_die "Database backup metadata is missing: $dump"
+    printf '%s\0%s\0%s\0' "$dump" "${dump}.sha256" "$metadata"
+  done > "$files_list"
+
+[[ -s "$files_list" ]] || backup_die "No verified local PostgreSQL dump is available for offsite upload."
+find "$RAINBOW_BACKUP_ROOT/uploads" -type f -name 'rainbow_uploads_*.tar.gz' -print0 2>/dev/null |
   while IFS= read -r -d '' archive; do
-    if [[ "$directory" == "$BACKUP_LOCAL_PATH/database" ]]; then database_count=$((database_count + 1)); else uploads_count=$((uploads_count + 1)); fi
-    [[ -s "$archive" && -s "${archive}.sha256" ]] || { log "Archive or checksum missing: $archive"; exit 1; }
-    if command -v sha256sum >/dev/null; then (cd "$(dirname "$archive")" && sha256sum --check "$(basename "${archive}.sha256")") >/dev/null; else (cd "$(dirname "$archive")" && shasum -a 256 --check "$(basename "${archive}.sha256")") >/dev/null; fi
-  done < <(find "$directory" -maxdepth 1 -type f \( -name '*.dump' -o -name '*.tar.gz' \) -print0)
-done
-[[ "$database_count" -gt 0 ]] || { log "No database backups are available for offsite upload"; exit 1; }
-[[ "$uploads_count" -gt 0 ]] || { log "No uploads backups are available for offsite upload"; exit 1; }
+    backup_check_sha256 "$archive" || backup_die "Uploads archive checksum is missing or invalid: $archive"
+    manifest="${archive}.manifest.json"
+    [[ -s "$manifest" ]] || backup_die "Uploads manifest is missing: $archive"
+    printf '%s\0%s\0%s\0' "$archive" "${archive}.sha256" "$manifest"
+  done >> "$files_list"
+[[ -d "${RAINBOW_BACKUP_ROOT}/restore-tests" ]] && find "${RAINBOW_BACKUP_ROOT}/restore-tests" -type f -name '*.json' -print0 >> "$files_list"
+[[ -d "$RAINBOW_BACKUP_STATUS_DIR" ]] && find "$RAINBOW_BACKUP_STATUS_DIR" -type f -name '*.json' -print0 >> "$files_list"
 
+# Restic applies authenticated encryption client-side. It will refuse a missing
+# repository instead of silently creating a destination with a typo.
 restic cat config >/dev/null
-backup_json="$(restic backup --json --tag rainbow-fashions --tag database --tag uploads "$BACKUP_LOCAL_PATH/database" "$BACKUP_LOCAL_PATH/uploads")"
-SNAPSHOT="$(printf '%s\n' "$backup_json" | sed -n 's/.*"snapshot_id":"\([^"]*\)".*/\1/p' | tail -n 1)"
-[[ -n "$SNAPSHOT" ]] || { log "restic did not report a snapshot"; exit 1; }
-# Retain at least 30 daily points remotely as well as local copies.
-restic forget --prune --keep-daily="$BACKUP_RETENTION_DAYS" --keep-weekly=8 --tag rainbow-fashions
-RESULT=success; write_status "Encrypted database and uploads backup uploaded."; log "result=success snapshot=${SNAPSHOT}"
+backup_log "offsite_backup_started repository=$(backup_redact_repository "$RESTIC_REPOSITORY")"
+backup_json="$(restic backup --json --tag rainbow-fashions --tag production --tag database --tag uploads \
+  --files-from-raw "$files_list")"
+snapshot_id="$(printf '%s\n' "$backup_json" | sed -n 's/.*"snapshot_id":"\([^"]*\)".*/\1/p' | tail -n 1)"
+[[ -n "$snapshot_id" ]] || backup_die "Restic did not return a snapshot identifier."
+restic snapshots --json | python3 - "$snapshot_id" <<'PY'
+import json
+import sys
+snapshot_id = sys.argv[1]
+snapshots = json.load(sys.stdin)
+if not any(snapshot.get('short_id') == snapshot_id or snapshot.get('id', '').startswith(snapshot_id) for snapshot in snapshots):
+    raise SystemExit('Created Restic snapshot was not found.')
+PY
+
+file_count="$(tr -cd '\0' < "$files_list" | wc -c | tr -d ' ')"
+total_bytes="$(python3 - "$files_list" <<'PY'
+import os
+import sys
+total = 0
+for raw in open(sys.argv[1], 'rb').read().split(b'\0'):
+    if raw:
+        total += os.path.getsize(raw.decode('utf-8', 'surrogateescape'))
+print(total)
+PY
+)"
+duration="$(( $(date +%s) - started_epoch ))"
+backup_write_json "$status_file" \
+  "timestamp=$(backup_now)" "status=SUCCESS" "snapshot_id=${snapshot_id}" \
+  "hostname=$(hostname)" "files_included=${file_count}" "total_bytes=${total_bytes}" \
+  "duration_seconds=${duration}" "repository=$(backup_redact_repository "$RESTIC_REPOSITORY")" \
+  "encryption=RESTIC_CLIENT_SIDE_ENCRYPTION"
+backup_log "offsite_backup_succeeded snapshot=${snapshot_id} files=${file_count} duration_seconds=${duration}"

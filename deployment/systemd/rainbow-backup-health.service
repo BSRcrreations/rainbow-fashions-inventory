@@ -1,0 +1,10 @@
+[Unit]
+Description=Rainbow Fashions backup health and alert check
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Environment=RAINBOW_APP_ROOT=/opt/rainbow-fashions
+ExecStart=/opt/rainbow-fashions/current/deployment/scripts/check_backup_health.sh
