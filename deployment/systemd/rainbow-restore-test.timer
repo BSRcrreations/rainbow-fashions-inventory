@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly Rainbow Fashions staging restore test
+
+[Timer]
+OnCalendar=Sun *-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=rainbow-restore-test.service
+
+[Install]
+WantedBy=timers.target

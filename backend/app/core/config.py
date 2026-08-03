@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     delete_auth_password_hash: Optional[str] = None
     backup_status_dir: Optional[Path] = None
+    backup_retention_days: int = Field(default=30, ge=30)
+    backup_manual_actions_enabled: bool = False
+    backup_manual_rate_limit_minutes: int = Field(default=5, ge=1, le=60)
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -86,7 +86,10 @@ command -v tar >/dev/null || { log "tar is not installed"; exit 127; }
 log "start=${STARTED_AT} archive=${ARCHIVE_NAME} paths=${archive_paths[*]}"
 # GNU tar retains mtimes by default. --null and --verbatim-files-from make
 # whitespace and unusual filenames safe; the archive contains root-relative paths.
-tar --create --gzip --file="$PARTIAL_FILE" --directory="$ROOT_PATH" --null --verbatim-files-from --files-from="$FILE_LIST"
+tar --create --gzip --file="$PARTIAL_FILE" --directory="$ROOT_PATH" \
+  --exclude='.env' --exclude='*.log' --exclude='__pycache__' --exclude='node_modules' \
+  --exclude='.venv' --exclude='.git' --exclude='tmp' --exclude='cache' \
+  --null --verbatim-files-from --files-from="$FILE_LIST"
 [[ -s "$PARTIAL_FILE" ]] || { log "tar produced an empty archive"; exit 1; }
 tar --list --gzip --file="$PARTIAL_FILE" >/dev/null
 FILE_COUNT="$(tar --list --gzip --file="$PARTIAL_FILE" | wc -l | tr -d ' ')"

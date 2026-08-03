@@ -1,0 +1,10 @@
+[Unit]
+Description=Process owner-requested Rainbow backup jobs
+
+[Timer]
+OnCalendar=*:0/1
+Persistent=true
+Unit=rainbow-backup-job-runner.service
+
+[Install]
+WantedBy=timers.target

@@ -14,6 +14,7 @@ import StockPage from "./pages/StockPage";
 import StockAdjustmentPage from "./pages/StockAdjustmentPage";
 import StockScanPage from "./pages/StockScanPage";
 import SecuritySettingsPage from "./pages/SecuritySettingsPage";
+import DataProtectionPage from "./pages/DataProtectionPage";
 
 export default function App() {
   return (
@@ -37,6 +38,7 @@ export default function App() {
           <Route path="/stock-adjustment" element={<StockAdjustmentPage />} />
           <Route path="/stock-adjustments" element={<StockAdjustmentPage />} />
           <Route path="/settings/security" element={<SecuritySettingsPage />} />
+          <Route path="/settings/data-protection" element={<DataProtectionPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
