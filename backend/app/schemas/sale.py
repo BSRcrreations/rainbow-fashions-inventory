@@ -140,6 +140,7 @@ class SaleCatalogProduct(BaseModel):
     product_id: UUID
     name: str
     category_name: Optional[str] = None
+    subcategory_name: Optional[str] = None
     brand_name: Optional[str] = None
     brand_logo_url: Optional[str] = None
     product_image_url: Optional[str] = None

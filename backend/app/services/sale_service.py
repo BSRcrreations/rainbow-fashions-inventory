@@ -94,7 +94,11 @@ class SaleService:
             self.db.query(ProductVariant)
             .join(Product)
             .outerjoin(Brand, Product.brand_id == Brand.id)
-            .options(joinedload(ProductVariant.product).joinedload(Product.category), joinedload(ProductVariant.product).joinedload(Product.brand))
+            .options(
+                joinedload(ProductVariant.product).joinedload(Product.category),
+                joinedload(ProductVariant.product).joinedload(Product.subcategory),
+                joinedload(ProductVariant.product).joinedload(Product.brand),
+            )
             .filter(ProductVariant.store_id == store_id, ProductVariant.is_active.is_(True), Product.is_active.is_(True))
         )
         if search and search.strip():
@@ -109,6 +113,7 @@ class SaleService:
                     product_id=product.id,
                     name=product.name,
                     category_name=product.category.name if product.category else None,
+                    subcategory_name=product.subcategory.name if product.subcategory else None,
                     brand_name=product.brand.name if product.brand else None,
                     brand_logo_url=product.brand.logo_url if product.brand else None,
                     product_image_url=product.image_url,

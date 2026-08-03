@@ -75,6 +75,8 @@ export interface Product {
   minimum_stock: number;
   barcode?: string | null;
   product_date: string;
+  description?: string | null;
+  hsn_sac?: string | null;
   image_url?: string | null;
   is_active: boolean;
   is_test_data: boolean;
@@ -134,6 +136,45 @@ export interface ProductVariantBarcode {
   inventory_unit: string;
   base_unit_conversion: number;
   sale_mode: string;
+}
+
+export interface BarcodeTransferVariantSummary {
+  product_id: string;
+  variant_id: string;
+  store_id: string;
+  product_name: string;
+  brand_name?: string | null;
+  size?: string | null;
+  color?: string | null;
+  style_code?: string | null;
+  current_stock: number;
+}
+
+export interface BarcodeTransferLine {
+  barcode: string;
+  barcode_id: string;
+  source_variant_id: string;
+  target_variant_id: string;
+  draft_session_item_ids: string[];
+  confirmed_session_item_ids: string[];
+  confirmed_quantity: number;
+  completed_sale_count: number;
+  completed_purchase_count: number;
+  audit_id?: string | null;
+}
+
+export interface BulkBarcodeTransferPreview {
+  barcodes: string[];
+  source: BarcodeTransferVariantSummary;
+  target: BarcodeTransferVariantSummary;
+  lines: BarcodeTransferLine[];
+  draft_only: boolean;
+  source_stock_delta: number;
+  target_stock_delta: number;
+  net_stock_delta: number;
+  confirmation_phrase: string;
+  correction_stock_history_ids?: string[];
+  audit_ids?: string[];
 }
 
 export interface LabelExtractionSuggestion {
@@ -221,6 +262,7 @@ export interface SaleCatalogProduct {
   product_id: string;
   name: string;
   category_name?: string | null;
+  subcategory_name?: string | null;
   brand_name?: string | null;
   brand_logo_url?: string | null;
   product_image_url?: string | null;

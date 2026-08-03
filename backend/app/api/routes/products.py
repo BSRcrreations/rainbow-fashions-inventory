@@ -178,6 +178,7 @@ def get_product(product_id: UUID, db: Session = Depends(get_db), _: User = Depen
 
 
 @router.put("/{product_id}", response_model=ProductRead)
+@router.patch("/{product_id}", response_model=ProductRead)
 def update_product(product_id: UUID, payload: ProductUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
     if payload.is_test_data is True and current_user.role != UserRole.OWNER:
         raise forbidden("Only an owner can mark a product as test data")

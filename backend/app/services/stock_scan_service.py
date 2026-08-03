@@ -16,13 +16,14 @@ from app.core.exceptions import bad_request, conflict, error_payload, not_found
 from fastapi import HTTPException, status
 from app.models.brand import Brand
 from app.models.category import Category
-from app.models.enums import PricingType, PurchaseStatus, StockMovementType, StockScanMode, StockScanStatus, UserRole
+from app.models.enums import PricingType, PurchaseStatus, SaleStatus, StockMovementType, StockScanMode, StockScanStatus, UserRole
 from app.models.product import Product
 from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit
 from app.models.product_inventory import ProductInventory
 from app.models.product_variant import InventoryCostLot, ProductVariant
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.models.sale import Sale, SaleItem
 from app.models.stock_audit_event import StockAuditEvent
 from app.models.stock_history import StockHistory
 from app.models.stock_scan import StockScanSession, StockScanSessionItem
@@ -33,6 +34,12 @@ from app.schemas.stock_scan import (
     BarcodeAssignment,
     BatchBarcodeRequest,
     BarcodeImageResolutionRead,
+    BarcodeTransferLineRead,
+    BarcodeTransferVariantSummary,
+    BulkBarcodeTransferPreviewRead,
+    BulkBarcodeTransferPreviewRequest,
+    BulkBarcodeTransferRequest,
+    BulkBarcodeTransferResultRead,
     BarcodeOnboarding,
     BarcodeProductOnboarding,
     LabelExtractionSuggestion,
@@ -99,6 +106,114 @@ class StockScanService:
         self.db.add(ProductBarcodeAudit(store_id=store_id, barcode=mapping.barcode, old_product_variant_id=old_variant_id, new_product_variant_id=target.id, action="TRANSFERRED", reason="OWNER_CONFIRMED", changed_by=current_user.id, request_id=request_id))
         self.db.commit()
         return self._variant_read(target, mapping)
+
+    def preview_bulk_barcode_transfer(self, payload: BulkBarcodeTransferPreviewRequest, current_user: User) -> BulkBarcodeTransferPreviewRead:
+        store_id = self._store_id(current_user)
+        target = self._variant_for_store(payload.target_product_variant_id, store_id)
+        lines, source = self._bulk_transfer_plan(payload.barcodes, target, store_id)
+        return self._bulk_transfer_preview(payload.barcodes, source, target, lines)
+
+    def bulk_transfer_barcodes(self, payload: BulkBarcodeTransferRequest, current_user: User, request_id: Optional[str] = None) -> BulkBarcodeTransferResultRead:
+        if payload.confirmation_phrase != "MOVE TO S":
+            raise bad_request("Type MOVE TO S to confirm this barcode transfer.", "BARCODE_TRANSFER_CONFIRMATION_REQUIRED")
+        store_id = self._store_id(current_user)
+        request_key = request_id or f"BARCODE-TRANSFER-{uuid4()}"
+        try:
+            target = self._variant_for_store(payload.target_product_variant_id, store_id, lock=True)
+            lines, source = self._bulk_transfer_plan(payload.barcodes, target, store_id, lock=True)
+            correction_ids: list[UUID] = []
+            audit_ids: list[UUID] = []
+            total_confirmed_quantity = sum(line.confirmed_quantity for line in lines)
+            source_before = source.current_stock
+            target_before = target.current_stock
+            if total_confirmed_quantity:
+                if source.current_stock - total_confirmed_quantity < 0:
+                    raise bad_request("Source variant does not have enough stock for this correction.", "NEGATIVE_STOCK")
+                source.current_stock -= total_confirmed_quantity
+                target.current_stock += total_confirmed_quantity
+                source_history = StockHistory(
+                    id=uuid4(),
+                    product_id=source.product_id,
+                    product_variant_id=source.id,
+                    unit_cost=source.average_cost,
+                    store_id=store_id,
+                    movement_type=StockMovementType.MANUAL_ADJUSTMENT,
+                    qty=total_confirmed_quantity,
+                    before_stock=source_before,
+                    after_stock=source.current_stock,
+                    reference="Incorrect barcode assigned to M instead of S",
+                    request_id=request_key,
+                    correction_reason="INCORRECT_BARCODE_ASSIGNMENT",
+                    correction_notes=payload.reason,
+                    created_by=current_user.id,
+                )
+                target_history = StockHistory(
+                    id=uuid4(),
+                    product_id=target.product_id,
+                    product_variant_id=target.id,
+                    unit_cost=target.average_cost,
+                    store_id=store_id,
+                    movement_type=StockMovementType.MANUAL_ADJUSTMENT,
+                    qty=total_confirmed_quantity,
+                    before_stock=target_before,
+                    after_stock=target.current_stock,
+                    reference="Incorrect barcode assigned to M instead of S",
+                    request_id=request_key,
+                    correction_reason="INCORRECT_BARCODE_ASSIGNMENT",
+                    correction_notes=payload.reason,
+                    created_by=current_user.id,
+                )
+                self.db.add(source_history)
+                self.db.add(target_history)
+                self.db.flush()
+                correction_ids.extend([source_history.id, target_history.id])
+
+            for line in lines:
+                mapping = self.db.query(ProductBarcode).filter(ProductBarcode.id == line.barcode_id, ProductBarcode.store_id == store_id).with_for_update().first()
+                if not mapping or mapping.product_variant_id != source.id:
+                    raise conflict("A barcode mapping changed while preparing the transfer.", "BARCODE_TRANSFER_STALE")
+                self._move_draft_scan_items(mapping, target, store_id)
+                old_variant_id = mapping.product_variant_id
+                mapping.product_id = target.product_id
+                mapping.product_variant_id = target.id
+                mapping.active = True
+                audit = ProductBarcodeAudit(
+                    id=uuid4(),
+                    store_id=store_id,
+                    barcode=mapping.barcode,
+                    old_product_variant_id=old_variant_id,
+                    new_product_variant_id=target.id,
+                    action="BARCODE_TRANSFERRED",
+                    reason=payload.reason,
+                    changed_by=current_user.id,
+                    request_id=request_key,
+                    metadata_json={
+                        "old_size": source.size,
+                        "new_size": target.size,
+                        "old_color": source.color,
+                        "new_color": target.color,
+                        "old_style": source.style_code,
+                        "new_style": target.style_code,
+                        "draft_session_item_ids": [str(item_id) for item_id in line.draft_session_item_ids],
+                        "confirmed_session_item_ids": [str(item_id) for item_id in line.confirmed_session_item_ids],
+                        "correction_stock_history_ids": [str(item_id) for item_id in correction_ids],
+                    },
+                )
+                self.db.add(audit)
+                self.db.flush()
+                line.audit_id = audit.id
+                audit_ids.append(audit.id)
+
+            self.db.commit()
+            result = self._bulk_transfer_preview(payload.barcodes, source, target, lines)
+            return BulkBarcodeTransferResultRead(
+                **result.model_dump(),
+                correction_stock_history_ids=correction_ids,
+                audit_ids=audit_ids,
+            )
+        except Exception:
+            self.db.rollback()
+            raise
 
     def onboard_barcode(self, payload: BarcodeOnboarding, current_user: User, request_id: Optional[str] = None) -> ProductVariantBarcodeRead:
         store_id = self._store_id(current_user)
@@ -313,6 +428,11 @@ class StockScanService:
 
             if payload.action == "NEW_VARIANT":
                 product = self._product_for_store(payload.existing_product_id, store_id, lock=True)
+                if self._matching_variant_for_payload(product, payload, store_id, lock=True):
+                    raise conflict(
+                        "This variant already exists. Use Assign existing variant to add another barcode.",
+                        "VARIANT_ALREADY_EXISTS",
+                    )
                 variant = self._create_variant(product, payload, barcode, store_id)
                 self.db.add(variant)
                 self.db.flush()
@@ -688,22 +808,179 @@ class StockScanService:
         session.status = StockScanStatus.IN_PROGRESS
         return item
 
+    def _bulk_transfer_plan(
+        self,
+        barcodes: list[str],
+        target: ProductVariant,
+        store_id: UUID,
+        lock: bool = False,
+    ) -> tuple[list[BarcodeTransferLineRead], ProductVariant]:
+        normalized = [barcode.casefold() for barcode in barcodes]
+        query = self.db.query(ProductBarcode).filter(ProductBarcode.store_id == store_id, func.lower(ProductBarcode.barcode).in_(normalized))
+        mappings = (query.with_for_update().all() if lock else query.all())
+        mapping_by_barcode = {mapping.barcode.casefold(): mapping for mapping in mappings}
+        missing = [barcode for barcode in barcodes if barcode.casefold() not in mapping_by_barcode]
+        if missing:
+            raise bad_request(f"These barcodes are not assigned in this store: {', '.join(missing)}", "BARCODE_NOT_FOUND")
+        if not all(mapping.active for mapping in mappings):
+            raise bad_request("Inactive barcode mappings cannot be transferred.", "BARCODE_INACTIVE")
+
+        source_variant_ids = {mapping.product_variant_id for mapping in mappings}
+        source_product_ids = {mapping.product_id for mapping in mappings}
+        if len(source_product_ids) != 1:
+            raise bad_request("All barcodes must belong to the same product.", "BARCODE_PRODUCT_MISMATCH")
+        if len(source_variant_ids) != 1:
+            raise bad_request("All barcodes must currently belong to the same source variant.", "BARCODE_SOURCE_VARIANT_MISMATCH")
+        source_variant_id = next(iter(source_variant_ids))
+        if target.id == source_variant_id:
+            raise bad_request("Target variant is already assigned to these barcodes.", "BARCODE_TRANSFER_NOOP")
+        if target.product_id != next(iter(source_product_ids)):
+            raise bad_request("Target variant must belong to the same product as the barcodes.", "BARCODE_TARGET_PRODUCT_MISMATCH")
+
+        source = self._variant_for_store(source_variant_id, store_id, lock=lock)
+        completed_sale_counts = self._completed_sale_counts(barcodes, store_id)
+        used_in_sales = [barcode for barcode, count in completed_sale_counts.items() if count]
+        if used_in_sales:
+            raise conflict(f"These barcodes were used in completed sales and cannot be silently transferred: {', '.join(used_in_sales)}", "BARCODE_USED_IN_COMPLETED_SALE")
+        completed_purchase_counts = self._completed_purchase_counts(barcodes, store_id)
+
+        lines: list[BarcodeTransferLineRead] = []
+        for barcode in barcodes:
+            mapping = mapping_by_barcode[barcode.casefold()]
+            draft_items = self._scan_items_for_barcode(mapping.barcode, store_id, {StockScanStatus.DRAFT, StockScanStatus.IN_PROGRESS})
+            confirmed_items = self._scan_items_for_barcode(mapping.barcode, store_id, {StockScanStatus.CONFIRMED})
+            confirmed_quantity = sum(item.base_quantity for item, _session in confirmed_items)
+            lines.append(BarcodeTransferLineRead(
+                barcode=mapping.barcode,
+                barcode_id=mapping.id,
+                source_variant_id=source.id,
+                target_variant_id=target.id,
+                draft_session_item_ids=[item.id for item, _session in draft_items],
+                confirmed_session_item_ids=[item.id for item, _session in confirmed_items],
+                confirmed_quantity=confirmed_quantity,
+                completed_sale_count=completed_sale_counts.get(mapping.barcode, 0),
+                completed_purchase_count=completed_purchase_counts.get(mapping.barcode, 0),
+            ))
+        return lines, source
+
+    def _bulk_transfer_preview(
+        self,
+        barcodes: list[str],
+        source: ProductVariant,
+        target: ProductVariant,
+        lines: list[BarcodeTransferLineRead],
+    ) -> BulkBarcodeTransferPreviewRead:
+        total_confirmed_quantity = sum(line.confirmed_quantity for line in lines)
+        return BulkBarcodeTransferPreviewRead(
+            barcodes=barcodes,
+            source=self._transfer_variant_summary(source),
+            target=self._transfer_variant_summary(target),
+            lines=lines,
+            draft_only=total_confirmed_quantity == 0,
+            source_stock_delta=-total_confirmed_quantity,
+            target_stock_delta=total_confirmed_quantity,
+            net_stock_delta=0,
+            confirmation_phrase="MOVE TO S",
+        )
+
+    def _scan_items_for_barcode(
+        self,
+        barcode: str,
+        store_id: UUID,
+        statuses: set[StockScanStatus],
+    ) -> list[tuple[StockScanSessionItem, StockScanSession]]:
+        return (
+            self.db.query(StockScanSessionItem, StockScanSession)
+            .join(StockScanSession, StockScanSession.id == StockScanSessionItem.session_id)
+            .filter(
+                StockScanSession.store_id == store_id,
+                StockScanSessionItem.barcode == barcode,
+                StockScanSession.status.in_(list(statuses)),
+            )
+            .all()
+        )
+
+    def _move_draft_scan_items(self, mapping: ProductBarcode, target: ProductVariant, store_id: UUID) -> None:
+        for item, session in self._scan_items_for_barcode(mapping.barcode, store_id, {StockScanStatus.DRAFT, StockScanStatus.IN_PROGRESS}):
+            item.product_id = target.product_id
+            item.product_variant_id = target.id
+            item.product_barcode_id = mapping.id
+            item.package_quantity = mapping.base_unit_conversion
+            item.base_quantity = self._base_quantity(item.scanned_quantity, item.package_quantity)
+            item.expected_quantity = self._expected_quantity(session, target.id)
+            item.difference_quantity = self._difference(session.mode, item.base_quantity, item.expected_quantity)
+
+    def _completed_sale_counts(self, barcodes: list[str], store_id: UUID) -> dict[str, int]:
+        rows = (
+            self.db.query(SaleItem.barcode_snapshot, func.count(SaleItem.id))
+            .join(Sale, Sale.id == SaleItem.sale_id)
+            .filter(
+                Sale.store_id == store_id,
+                Sale.status == SaleStatus.COMPLETED,
+                SaleItem.barcode_snapshot.in_(barcodes),
+            )
+            .group_by(SaleItem.barcode_snapshot)
+            .all()
+        )
+        return {barcode: count for barcode, count in rows if barcode}
+
+    def _completed_purchase_counts(self, barcodes: list[str], store_id: UUID) -> dict[str, int]:
+        rows = (
+            self.db.query(PurchaseItem.barcode, func.count(PurchaseItem.id))
+            .join(Purchase, Purchase.id == PurchaseItem.purchase_id)
+            .filter(
+                Purchase.store_id == store_id,
+                Purchase.status == PurchaseStatus.CONFIRMED,
+                PurchaseItem.barcode.in_(barcodes),
+            )
+            .group_by(PurchaseItem.barcode)
+            .all()
+        )
+        return {barcode: count for barcode, count in rows if barcode}
+
+    @staticmethod
+    def _transfer_variant_summary(variant: ProductVariant) -> BarcodeTransferVariantSummary:
+        return BarcodeTransferVariantSummary(
+            product_id=variant.product_id,
+            variant_id=variant.id,
+            store_id=variant.store_id,
+            product_name=variant.product.name if variant.product else "Product",
+            brand_name=variant.product.brand.name if variant.product and variant.product.brand else None,
+            size=variant.size,
+            color=variant.color,
+            style_code=variant.style_code,
+            current_stock=variant.current_stock,
+        )
+
     def _product_for_store(self, product_id: Optional[UUID], store_id: UUID, lock: bool = False) -> Product:
         if not product_id:
-            raise bad_request("Select an existing product")
-        query = self.db.query(Product).filter(Product.id == product_id, Product.store_id == store_id)
-        product = query.with_for_update().first() if lock else query.first()
+            raise bad_request("Select the existing product for this new variant", "EXISTING_PRODUCT_REQUIRED")
+        query = (
+            self.db.query(Product)
+            .options(
+                joinedload(Product.category),
+                joinedload(Product.subcategory),
+                joinedload(Product.brand),
+                selectinload(Product.variants),
+            )
+            .filter(Product.id == product_id, Product.store_id == store_id, Product.is_active.is_(True))
+        )
+        product = query.with_for_update(of=Product).first() if lock else query.first()
         if not product:
             raise not_found("Product")
+        if not product.category or not product.category.is_active:
+            raise bad_request("Selected product category is inactive.", "CATEGORY_INACTIVE")
+        if not product.brand or not product.brand.is_active:
+            raise bad_request("Selected product brand is inactive.", "BRAND_INACTIVE")
         return product
 
     def _variant_for_store(self, variant_id: Optional[UUID], store_id: UUID, lock: bool = False) -> ProductVariant:
         if not variant_id:
-            raise bad_request("Select an existing variant")
+            raise bad_request("Select the exact existing variant", "EXISTING_VARIANT_REQUIRED")
         query = (
             self.db.query(ProductVariant)
             .join(Product, Product.id == ProductVariant.product_id)
-            .options(joinedload(ProductVariant.product))
+            .options(joinedload(ProductVariant.product).joinedload(Product.brand))
             .filter(
                 ProductVariant.id == variant_id,
                 ProductVariant.store_id == store_id,
@@ -719,6 +996,8 @@ class StockScanService:
         return variant
 
     def _create_product(self, payload: BarcodeProductOnboarding, store_id: UUID, session: StockScanSession) -> Product:
+        if not payload.product_name:
+            raise bad_request("Enter a product name", "PRODUCT_REQUIRED")
         if not payload.category_id:
             raise bad_request("Select a category", "CATEGORY_REQUIRED")
         if not payload.brand_id:
@@ -823,15 +1102,38 @@ class StockScanService:
             ))
 
     @staticmethod
+    def _variant_identity_part(value: Optional[str]) -> str:
+        return (value or "").strip().casefold()
+
+    def _matching_variant_for_payload(
+        self,
+        product: Product,
+        payload: BarcodeProductOnboarding,
+        store_id: UUID,
+        lock: bool = False,
+    ) -> Optional[ProductVariant]:
+        query = self.db.query(ProductVariant).filter(
+            ProductVariant.store_id == store_id,
+            ProductVariant.product_id == product.id,
+            ProductVariant.is_active.is_(True),
+            func.lower(func.coalesce(ProductVariant.size, "")) == self._variant_identity_part(payload.size),
+            func.lower(func.coalesce(ProductVariant.color, "")) == self._variant_identity_part(payload.color),
+            func.lower(func.coalesce(ProductVariant.style_code, "")) == self._variant_identity_part(payload.style_code),
+            func.lower(func.coalesce(ProductVariant.model_number, "")) == self._variant_identity_part(payload.model_number),
+            func.lower(func.coalesce(ProductVariant.manufacturer_sku, "")) == self._variant_identity_part(payload.manufacturer_sku),
+        )
+        return query.with_for_update(of=ProductVariant).first() if lock else query.first()
+
+    @staticmethod
     def _create_variant(product: Product, payload: BarcodeProductOnboarding, barcode: str, store_id: UUID) -> ProductVariant:
         internal_sku = payload.internal_sku or f"RFV-{uuid4().hex[:12].upper()}"
         identity = "|".join((
             str(product.id),
-            (payload.size or "").casefold(),
-            (payload.color or "").casefold(),
-            (payload.style_code or "").casefold(),
-            (payload.model_number or "").casefold(),
-            (payload.manufacturer_sku or "").casefold(),
+            StockScanService._variant_identity_part(payload.size),
+            StockScanService._variant_identity_part(payload.color),
+            StockScanService._variant_identity_part(payload.style_code),
+            StockScanService._variant_identity_part(payload.model_number),
+            StockScanService._variant_identity_part(payload.manufacturer_sku),
             str(payload.mrp if payload.mrp is not None else payload.selling_price),
             str(payload.selling_price),
             barcode.casefold(),

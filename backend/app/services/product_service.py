@@ -134,7 +134,7 @@ class ProductService:
 
     def create(self, payload: ProductCreate, store_id: UUID | None = None) -> Product:
         self._ensure_hierarchy(payload.category_id, payload.subcategory_id, payload.brand_id)
-        self._validate_unique_product(payload.category_id, payload.subcategory_id, payload.brand_id, payload.name)
+        self._validate_unique_product(payload.category_id, payload.subcategory_id, payload.brand_id, payload.name, store_id=store_id)
         if payload.sku and self.repo.get_by_sku(payload.sku):
             raise conflict("SKU already exists")
         barcode = payload.barcode or self.generate_code("barcode")
@@ -159,7 +159,7 @@ class ProductService:
             raise not_found("Product")
         data = payload.model_dump(exclude_unset=True)
         if "current_stock" in data:
-            raise bad_request("Current stock cannot be edited directly. Use Stock Adjustment.")
+            raise bad_request("Current stock cannot be edited directly. Use Stock Adjustment.", "STOCK_FIELDS_READ_ONLY")
         colors = data.pop("colors", None)
         sizes = data.pop("sizes", None)
         next_category_id = data.get("category_id", product.category_id)
@@ -171,11 +171,11 @@ class ProductService:
         if next_pricing_type.value == "MRP" and next_mrp is None:
             raise bad_request("MRP is required when pricing_type is MRP")
         self._ensure_hierarchy(next_category_id, next_subcategory_id, next_brand_id)
-        self._validate_unique_product(next_category_id, next_subcategory_id, next_brand_id, next_name, exclude_id=product_id)
+        self._validate_unique_product(next_category_id, next_subcategory_id, next_brand_id, next_name, exclude_id=product_id, store_id=product.store_id)
         if data.get("sku") and self.repo.get_by_sku(data["sku"], exclude_id=product_id):
             raise conflict("SKU already exists")
         if data.get("barcode") and self.repo.get_by_barcode(data["barcode"], exclude_id=product_id):
-            raise conflict("Barcode already exists")
+            raise conflict("This barcode is already assigned to another variant.", "BARCODE_ALREADY_ASSIGNED")
         for key, value in data.items():
             setattr(product, key, value)
         if colors is not None or sizes is not None:
@@ -184,11 +184,11 @@ class ProductService:
             next_sizes = sizes if sizes is not None else existing_sizes
             product.color = next_colors[0] if next_colors else None
             product.size = next_sizes[0] if next_sizes else None
-            self._replace_variants(product, next_colors, next_sizes)
+            self._sync_variants(product, next_colors, next_sizes)
         elif "color" in data or "size" in data:
             legacy_colors = [product.color] if product.color else []
             legacy_sizes = [product.size] if product.size else []
-            self._replace_variants(product, legacy_colors, legacy_sizes)
+            self._sync_variants(product, legacy_colors, legacy_sizes)
         self.db.commit()
         return self.get(product.id)
 
@@ -255,7 +255,7 @@ class ProductService:
         products = self._products_for_bulk(payload.product_ids)
         for product in products:
             self._ensure_hierarchy(payload.category_id, product.subcategory_id, product.brand_id)
-            self._validate_unique_product(payload.category_id, product.subcategory_id, product.brand_id, product.name, product.id)
+            self._validate_unique_product(payload.category_id, product.subcategory_id, product.brand_id, product.name, product.id, product.store_id)
             product.category_id = payload.category_id
         self.db.commit()
         return {"updated": len(products)}
@@ -266,7 +266,7 @@ class ProductService:
         products = self._products_for_bulk(payload.product_ids)
         for product in products:
             self._ensure_hierarchy(product.category_id, product.subcategory_id, payload.brand_id)
-            self._validate_unique_product(product.category_id, product.subcategory_id, payload.brand_id, product.name, product.id)
+            self._validate_unique_product(product.category_id, product.subcategory_id, payload.brand_id, product.name, product.id, product.store_id)
             product.brand_id = payload.brand_id
         self.db.commit()
         return {"updated": len(products)}
@@ -411,10 +411,13 @@ class ProductService:
         brand_id: UUID,
         name: str,
         exclude_id: Optional[UUID] = None,
+        store_id: Optional[UUID] = None,
     ) -> None:
-        duplicate = self.repo.get_duplicate(category_id, subcategory_id, brand_id, name, exclude_id)
+        if not name or not name.strip():
+            raise bad_request("Enter a product name.", "PRODUCT_NAME_REQUIRED")
+        duplicate = self.repo.get_duplicate(category_id, subcategory_id, brand_id, name, exclude_id, store_id)
         if duplicate:
-            raise conflict("Product already exists for this category, subcategory, brand, and name")
+            raise conflict("A product with this name and brand already exists.", "PRODUCT_ALREADY_EXISTS")
 
     @staticmethod
     def _current_variant_values(product: Product) -> tuple[list[str], list[str]]:
@@ -458,6 +461,41 @@ class ProductService:
                     current_stock=stock_per_variant + (1 if index <= remainder else 0),
                 )
             )
+
+    @staticmethod
+    def _sync_variants(product: Product, colors: list[str], sizes: list[str]) -> None:
+        """Safely update existing variant labels without replacing variant records.
+
+        Product variants are referenced by stock, purchase, sale, and barcode records.
+        An edit form must never delete and recreate them simply because the product was
+        renamed or a size/colour label was corrected.
+        """
+        if colors and sizes:
+            targets = [(color, size) for color in colors for size in sizes]
+        elif colors:
+            targets = [(color, None) for color in colors]
+        elif sizes:
+            targets = [(None, size) for size in sizes]
+        else:
+            targets = []
+        existing = list(product.variants)
+        if len(targets) != len(existing):
+            raise bad_request("Adding or removing variants requires the dedicated variant workflow.", "VARIANT_STRUCTURE_CHANGE_NOT_ALLOWED")
+        if len(set(targets)) != len(targets):
+            raise conflict("This size and colour variant already exists.", "VARIANT_ALREADY_EXISTS")
+        remaining = list(targets)
+        for variant in existing:
+            pair = (variant.color, variant.size)
+            if pair in remaining:
+                remaining.remove(pair)
+        for variant in existing:
+            pair = (variant.color, variant.size)
+            if pair in targets:
+                continue
+            color, size = remaining.pop(0)
+            variant.color = color
+            variant.size = size
+            variant.identity_key = "|".join((str(product.id), (size or "").casefold(), (color or "").casefold(), (variant.style_code or "").casefold(), str(variant.mrp or variant.selling_price), str(variant.selling_price), str(variant.id)))
 
     def _products_for_bulk(self, product_ids: list[UUID]) -> list[Product]:
         products = self.repo.list_by_ids(product_ids)
