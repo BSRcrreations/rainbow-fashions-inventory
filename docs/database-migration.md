@@ -19,7 +19,7 @@ The scripts use PostgreSQL custom-format dumps (`pg_dump -Fc`) and restore with 
 
    ```bash
    cd "/Users/subbu/Documents/shop inventory"
-   cp scripts/database/database-migration.env.example scripts/database/database-migration.env
+   cp scripts/database/database-migration.template scripts/database/database-migration.env
    chmod 600 scripts/database/database-migration.env
    ```
 

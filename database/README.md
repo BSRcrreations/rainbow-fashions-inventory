@@ -18,7 +18,7 @@ psql "${DATABASE_URL}" -f database/queries/inspect_tables.sql
 For the project migration configuration, first create the ignored local configuration file:
 
 ```bash
-cp scripts/database/database-migration.env.example scripts/database/database-migration.env
+cp scripts/database/database-migration.template scripts/database/database-migration.env
 ```
 
 Set its `LOCAL_DATABASE_*` values, then export only the local database DDL:
