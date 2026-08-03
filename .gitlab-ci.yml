@@ -261,6 +261,9 @@ diagnose_production_availability:
     name: production-diagnostics
   when: manual
   manual_confirmation: "Run read-only production availability diagnostics?"
+  # Diagnostics are available on demand, but must not hold a verified release
+  # in the blocked state.
+  allow_failure: true
   script:
     - |
       set -eu
