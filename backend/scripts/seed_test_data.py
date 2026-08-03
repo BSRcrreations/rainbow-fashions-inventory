@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 import os
+import sys
+from datetime import date
 from decimal import Decimal
+from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid5
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import get_settings
 from app.core.security import hash_password
@@ -13,6 +20,8 @@ from app.database.session import SessionLocal
 from app.models.brand import Brand
 from app.models.category import Category
 from app.models.enums import PricingType, StockMovementType, UserRole
+from app.models.customer import Customer
+from app.models.expense import Expense, ExpenseCategory
 from app.models.product import Product
 from app.models.product_barcode import ProductBarcode
 from app.models.product_inventory import ProductInventory
@@ -20,6 +29,7 @@ from app.models.product_variant import InventoryCostLot, ProductVariant
 from app.models.stock_history import StockHistory
 from app.models.store import Store
 from app.models.subcategory import SubCategory
+from app.models.supplier import Supplier
 from app.models.user import User
 
 
@@ -65,9 +75,9 @@ def main() -> None:
         db.flush()
 
         users = (
-            ("owner", "UAT Owner", "owner.uat@rainbow.test", UserRole.OWNER),
-            ("inventory", "UAT Inventory Staff", "inventory.uat@rainbow.test", UserRole.STAFF),
-            ("cashier", "UAT Cashier", "cashier.uat@rainbow.test", UserRole.STAFF),
+            ("owner", "UAT Owner", "owner.uat@example.com", UserRole.OWNER),
+            ("inventory", "UAT Inventory Staff", "inventory.uat@example.com", UserRole.STAFF),
+            ("cashier", "UAT Cashier", "cashier.uat@example.com", UserRole.STAFF),
         )
         for key, full_name, email, role in users:
             record(
@@ -121,6 +131,81 @@ def main() -> None:
                 is_active=True,
             )
 
+        suppliers = (
+            ("ark", "ARK distributors", "Ark Accounts", "+91-9000000001"),
+            ("ggl", "GGl", "GGl Billing", "+91-9000000002"),
+        )
+        for key, name, contact, phone in suppliers:
+            record(
+                db,
+                Supplier,
+                uid(f"supplier:{key}"),
+                store_id=store.id,
+                name=name,
+                contact_person=contact,
+                phone=phone,
+                alternate_phone=None,
+                email=f"{key}@supplier.example.com",
+                gst_number=None,
+                pan_number=None,
+                address="UAT supplier address",
+                city="Hyderabad",
+                state="Telangana",
+                postal_code="500001",
+                opening_balance=Decimal("0.00"),
+                credit_limit=Decimal("50000.00"),
+                notes="Seed supplier for isolated UAT only.",
+                is_active=True,
+            )
+
+        for key, name, phone in (("customer:asha", "Asha Retail Customer", "+91-9100000001"), ("customer:meena", "Meena Credit Customer", "+91-9100000002")):
+            record(
+                db,
+                Customer,
+                uid(key),
+                store_id=store.id,
+                name=name,
+                phone=phone,
+                alternate_phone=None,
+                email=None,
+                gst_number=None,
+                address="UAT customer address",
+                city="Hyderabad",
+                state="Telangana",
+                postal_code="500001",
+                opening_credit=Decimal("0.00"),
+                credit_limit=Decimal("10000.00"),
+                notes="Seed customer for isolated UAT only.",
+                is_active=True,
+            )
+
+        expense_category = record(
+            db,
+            ExpenseCategory,
+            uid("expense-category:rent"),
+            store_id=store.id,
+            name="Rent",
+            description="Shop rent and occupancy costs",
+            is_active=True,
+        )
+        db.flush()
+        record(
+            db,
+            Expense,
+            uid("expense:rent:sample"),
+            store_id=store.id,
+            category_id=expense_category.id,
+            expense_date=date.today(),
+            title="UAT monthly rent",
+            vendor="Rainbow Fashions UAT landlord",
+            amount=Decimal("12000.00"),
+            payment_mode="BANK",
+            reference="UAT-EXP-RENT",
+            notes="Seed expense for isolated UAT reports.",
+            receipt_url=None,
+            created_by=uid("user:owner"),
+        )
+
         for brand_name in ("Prisma", "Fly Birds"):
             product_id = uid(f"product:full-leggings:{brand_name}")
             product = record(
@@ -146,6 +231,7 @@ def main() -> None:
                 is_active=True,
                 is_test_data=True,
             )
+            db.flush()
             for size in ("S", "M", "L", "XL", "2XL", "3XL"):
                 key = f"{brand_name.replace(' ', '-').upper()}-{size}"
                 variant_id = uid(f"variant:full-leggings:{brand_name}:{size}")
@@ -171,6 +257,7 @@ def main() -> None:
                     classification_review_required=False,
                     is_active=True,
                 )
+                db.flush()
                 record(
                     db,
                     ProductBarcode,
@@ -243,7 +330,7 @@ def main() -> None:
             )
 
         db.commit()
-        print(f"Seeded isolated UAT data into {database_name}: 3 users, 3 categories, 4 brands, 2 products, 12 variants.")
+        print(f"Seeded isolated UAT data into {database_name}: users, catalog, suppliers, customers, expenses, products, variants.")
     except Exception:
         db.rollback()
         raise

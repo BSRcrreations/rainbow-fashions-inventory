@@ -124,6 +124,10 @@ aside .bg-primary-700 > .border-t > button {
     @apply focus-ring h-control w-full rounded-lg border border-border bg-surface px-3.5 font-normal text-foreground shadow-sm transition placeholder:text-slate-400 hover:border-slate-300 disabled:cursor-not-allowed disabled:bg-surface-subtle disabled:text-muted;
   }
 
+  .form-input {
+    @apply field-input;
+  }
+
   .filter-chip {
     @apply inline-flex h-7 items-center gap-1 rounded-full border border-primary-200 bg-primary-50 px-2.5 font-medium text-primary-800 transition hover:bg-primary-100;
   }

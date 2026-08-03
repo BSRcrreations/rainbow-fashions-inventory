@@ -18,6 +18,11 @@ Environment: isolated `rainbow_inventory_test` only. This checklist records the
 | UAT-011 | Category-first stock entry | Owner | Choose category, then brand, then scan | Brand list constrained to category | Not run | NOT RUN | N/A | UI present; workflow pending |
 | UAT-012 | Cross-store access | Two stores, owner/staff/cashier | Attempt cross-store endpoints | 403/404 without leakage | Not run | NOT RUN | N/A | Add isolated second-store fixture |
 | UAT-013 | Backup job visibility | Owner, configured backup test service | Open security/data-protection status | Recent job, retention, failure status visible | Not run | NOT RUN | N/A | Production blocker |
+| UAT-014 | Suppliers | Owner, seeded ARK/GGl suppliers | Open `/suppliers` | Supplier totals and seeded suppliers render without API error | ARK distributors and GGl rendered | PASS | Browser UAT + authenticated API | Payment form visible; edit/delete not run |
+| UAT-015 | Customers | Owner, seeded customers | Open `/customers` | Customer totals and seeded customers render without API error | Asha Retail Customer and Meena Credit Customer rendered | PASS | Browser UAT + authenticated API | Credit sale creation not run |
+| UAT-016 | Expenses | Owner, seeded rent expense | Open `/expenses` | Expense categories and seeded expense render without API error | Rent and UAT monthly rent rendered | PASS | Browser UAT + authenticated API | Edit/delete not run |
+| UAT-017 | Reports | Owner, seeded expense/sales/inventory data | Open `/reports` | P&L, cash flow, and inventory valuation render | Profit and loss and inventory valuation rendered | PASS | Browser UAT + authenticated API | Export/report drilldowns not implemented |
+| UAT-018 | Mobile Business nav | Owner, 390px viewport | Open menu and Business links | Suppliers, Customers, Expenses, Reports are available | Mobile menu exposed all four links | PASS | Browser viewport UAT | Android-sized responsive smoke only |
 
 Use a new UAT row for every repeat run. Do not reuse invoice numbers or request
 IDs as proof after resetting the test database.

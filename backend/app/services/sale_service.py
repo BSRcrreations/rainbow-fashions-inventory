@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.core.exceptions import bad_request, conflict, error_payload, not_found
 from app.models.brand import Brand
 from app.models.category import Category
+from app.models.customer import Customer
 from app.models.enums import SaleStatus, StockMovementType
 from app.models.product import Product
 from app.models.product_barcode import ProductBarcode
@@ -44,6 +45,7 @@ class SaleService:
         invoice_number = payload.invoice_number or self._generate_invoice_number()
         if self.repo.get_by_invoice(invoice_number, store_id):
             raise conflict("Invoice number already exists")
+        customer = self._customer_for_sale(payload.customer_id, payload.customer_name, payload.payment_mode, store_id)
         prepared = self._prepare_items(payload.items, store_id)
         subtotal, cost_amount, _ = self._totals(prepared, Decimal("0"))
         discount_amount = self._checkout_discount(subtotal, payload.discount_type, payload.discount_value, request_id)
@@ -51,7 +53,8 @@ class SaleService:
         sale = Sale(
             store_id=store_id,
             invoice_number=invoice_number,
-            customer_name=payload.customer_name,
+            customer_id=customer.id if customer else None,
+            customer_name=customer.name if customer else payload.customer_name,
             payment_mode=payload.payment_mode,
             cashier_id=current_user.id,
             subtotal=subtotal,
@@ -160,6 +163,7 @@ class SaleService:
         invoice_number = payload.invoice_number or self._generate_invoice_number()
         if self.repo.get_by_invoice(invoice_number, store_id):
             raise conflict("Invoice number already exists")
+        customer = self._customer_for_sale(payload.customer_id, payload.customer_name, payload.payment_mode, store_id)
         variant_ids = [item.product_variant_id for item in payload.items]
         if len(variant_ids) != len(set(variant_ids)):
             raise bad_request("A variant can appear only once in a sale")
@@ -207,7 +211,7 @@ class SaleService:
         discount_amount = self._checkout_discount(subtotal, payload.discount_type, payload.discount_value, request_id)
         total = money(subtotal - discount_amount)
         cost_amount = sum((cost for _, _, _, _, _, cost, _ in prepared), Decimal("0"))
-        sale = Sale(store_id=store_id, invoice_number=invoice_number, customer_name=payload.customer_name, payment_mode=payload.payment_mode, cashier_id=current_user.id, subtotal=subtotal, discount=discount_amount, discount_type=payload.discount_type, discount_value=money(payload.discount_value), discount_amount=discount_amount, total_amount=total, cost_amount=cost_amount, profit_amount=total - cost_amount, sale_date=payload.sale_date or datetime.now(timezone.utc))
+        sale = Sale(store_id=store_id, invoice_number=invoice_number, customer_id=customer.id if customer else None, customer_name=customer.name if customer else payload.customer_name, payment_mode=payload.payment_mode, cashier_id=current_user.id, subtotal=subtotal, discount=discount_amount, discount_type=payload.discount_type, discount_value=money(payload.discount_value), discount_amount=discount_amount, total_amount=total, cost_amount=cost_amount, profit_amount=total - cost_amount, sale_date=payload.sale_date or datetime.now(timezone.utc))
         self.db.add(sale)
         self.db.flush()
         for product, variant, quantity, price, line_total, cost, allocations in prepared:
@@ -249,6 +253,7 @@ class SaleService:
         if len(product_ids) != len(set(product_ids)):
             raise bad_request("A product can appear only once in a sale")
         prepared = self._prepare_items(payload.items, store_id, validate_stock=False)
+        customer = self._customer_for_sale(payload.customer_id, payload.customer_name, payload.payment_mode, store_id)
         subtotal, cost_amount, total_amount = self._totals(prepared, payload.discount)
         old_items = {item.product_id: item for item in sale.items}
         new_items = {product.id: (product, inventory, quantity, price, line_total) for product, inventory, quantity, price, line_total in prepared}
@@ -266,7 +271,8 @@ class SaleService:
         self.db.flush()
         for product, _, quantity, unit_price, line_total in prepared:
             self.db.add(SaleItem(sale_id=sale.id, product_id=product.id, product_name=product.name, quantity=quantity, unit_price=unit_price, unit_cost=product.purchase_price, line_total=line_total, sku_snapshot=product.sku, barcode_snapshot=product.barcode, size_snapshot=product.size, color_snapshot=product.color))
-        sale.customer_name = payload.customer_name
+        sale.customer_id = customer.id if customer else None
+        sale.customer_name = customer.name if customer else payload.customer_name
         sale.payment_mode = payload.payment_mode
         sale.subtotal, sale.discount, sale.total_amount, sale.cost_amount = subtotal, payload.discount, total_amount, cost_amount
         sale.discount_type, sale.discount_value, sale.discount_amount = "FIXED_AMOUNT", money(payload.discount), money(payload.discount)
@@ -625,6 +631,16 @@ class SaleService:
             raise bad_request("Current user is not assigned to a store")
         return current_user.store_id
 
+    def _customer_for_sale(self, customer_id: Optional[UUID], customer_name: Optional[str], payment_mode: str, store_id: UUID) -> Optional[Customer]:
+        if not customer_id:
+            if payment_mode == "CREDIT":
+                raise bad_request("Credit sales must be linked to a customer")
+            return None
+        customer = self.db.query(Customer).filter(Customer.id == customer_id, Customer.store_id == store_id).first()
+        if not customer or not customer.is_active:
+            raise bad_request("Select an active customer")
+        return customer
+
     def _locked_sale(self, sale_id: UUID, store_id: UUID) -> Sale:
         sale = (
             self.db.query(Sale)
@@ -779,6 +795,7 @@ class SaleService:
         return {
             "status": sale.status.value,
             "version": sale.version,
+            "customer_id": str(sale.customer_id) if sale.customer_id else None,
             "customer_name": sale.customer_name,
             "payment_mode": sale.payment_mode,
             "subtotal": str(sale.subtotal),

@@ -10,6 +10,10 @@ import ProductsPage from "./pages/ProductsPage";
 import CategoriesPage from "./pages/CategoriesPage";
 import PurchasesPage from "./pages/PurchasesPage";
 import PurchaseDetailPage from "./pages/PurchaseDetailPage";
+import SuppliersPage from "./pages/SuppliersPage";
+import CustomersPage from "./pages/CustomersPage";
+import ExpensesPage from "./pages/ExpensesPage";
+import ReportsPage from "./pages/ReportsPage";
 import StockPage from "./pages/StockPage";
 import StockAdjustmentPage from "./pages/StockAdjustmentPage";
 import StockScanPage from "./pages/StockScanPage";
@@ -31,6 +35,10 @@ export default function App() {
           <Route path="/brands" element={<Navigate to="/categories" replace />} />
           <Route path="/purchases" element={<PurchasesPage />} />
           <Route path="/purchases/:purchaseId" element={<PurchaseDetailPage />} />
+          <Route path="/suppliers" element={<SuppliersPage />} />
+          <Route path="/customers" element={<CustomersPage />} />
+          <Route path="/expenses" element={<ExpensesPage />} />
+          <Route path="/reports" element={<ReportsPage />} />
           <Route path="/stock" element={<StockPage />} />
           <Route path="/stock/scan" element={<StockScanPage />} />
           <Route path="/stock/adjustment" element={<StockAdjustmentPage />} />

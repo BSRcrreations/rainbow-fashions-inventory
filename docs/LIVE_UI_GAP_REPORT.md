@@ -4,10 +4,11 @@ Audit date: 2026-08-03. Scope is the isolated local UAT application only.
 
 ## Executive Summary
 
-The core UAT sale and scan workflows work end to end after two verified runtime
-fixes: valid test-account emails and a complete `SupplierPayment` relationship.
-The application is **not ready for production** because current SQLAlchemy
-models require an uncommitted migration after the tracked Alembic head.
+The core UAT sale and scan workflows work end to end. Supplier, customer,
+expense, and report modules now have working backend APIs and responsive web
+pages verified in the isolated UAT browser session. The application is **not
+ready for production** until the current working-tree migration and module
+changes are reviewed, committed, and broader destructive-flow UAT is completed.
 
 ## Working End To End
 
@@ -19,6 +20,10 @@ models require an uncommitted migration after the tracked Alembic head.
   completion, stock deduction, and Sales History persistence.
 - Known barcode resolution, repeated-scan quantity accumulation, review, and
   confirmed immutable stock posting.
+- Suppliers list, balances, seeded supplier details, and supplier payment form.
+- Customers list, balances, seeded customer details, and collection form.
+- Expenses list, expense category entry, and seeded rent expense.
+- Reports summary with profit and loss, cash flow, and inventory valuation.
 
 ## Backend-Ready Or Frontend-Connected, But Not UAT Verified
 
@@ -33,7 +38,7 @@ models require an uncommitted migration after the tracked Alembic head.
 
 | Severity | Finding | Impact | Required action |
 | --- | --- | --- | --- |
-| BLOCKER | `20260803_0037_business_accounts_expenses_reports.py` is untracked while models use `sales.customer_id` and related tables. | A database at the tracked head (`0036`) raises a runtime `UndefinedColumn` error on the dashboard. | Review and commit the migration with its models/routes/tests, rebuild, migrate a disposable database, then re-run UAT. |
+| BLOCKER | Business-account module changes and migration `20260803_0037_business_accounts_expenses_reports.py` are still working-tree changes. | A deployment from older committed files would miss the new schema/routes/UI. | Review, commit, rebuild from committed files only, migrate a disposable database, then re-run UAT. |
 | BLOCKER | The UAT bootstrap uses `Base.metadata.create_all()` and stamps Alembic head. | It can make a test DB appear migrated even when a migration is absent from the image. | Make the migration chain authoritative for a fresh-test bootstrap or ensure the committed baseline schema matches head. |
 | BLOCKER | Backup/restore is documented but no scheduler, restore drill, or failure visibility was browser-verified. | Data-recovery claims are not operationally proven. | Run an isolated restore exercise and document evidence before production approval. |
 
@@ -61,7 +66,7 @@ models require an uncommitted migration after the tracked Alembic head.
 
 ## Recommended Implementation Order
 
-1. Commit and validate migration `0037` with the business-account model set.
+1. Commit and validate migration `0037` with the business-account model, route, service, and UI set.
 2. Replace schema stamping as the only new-test bootstrap evidence with a
    migration-chain validation job.
 3. Add API/browser UAT for cross-store denial and destructive inventory/sale

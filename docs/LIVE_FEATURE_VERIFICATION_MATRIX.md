@@ -30,6 +30,10 @@ this audit; no feature is marked `PRODUCTION_READY`.
 | Scan & Add Stock | Repeated manufacturer barcode | BARCODE_FEATURE_README.md | `POST /stock-scan/sessions/{id}/scan` | scan session items | `StockScanPage` | Barcode tests | Two scans remained one row with quantity 2 | UAT_VERIFIED | None | Add an API-level idempotency/repeat test against PostgreSQL | UI shows 1 unique variant / 2 scans | Engineering |
 | Scan & Add Stock | Confirmed inventory posting | INVENTORY_UAT.md | `POST /stock-scan/sessions/{id}/confirm` | stock history, cost lots | confirmation dialog | Stock scan tests | Confirmed M changed from 19 to 21 and locked session | UAT_VERIFIED | None | Capture explicit stock-history request ID in test | Immutable confirmed session UI | Engineering |
 | Purchases | Invoice intake, review, confirm | OCR_INTERFACE.md, MODULES.md | purchase/document routes/services | purchases, purchase_items, documents | Purchase pages | Purchase calculation tests | Not manually exercised | AUTOMATED_TESTED | High | Add invoice upload/poll/review UAT | No purchase seed was used | Engineering |
+| Suppliers | Supplier CRUD, balances, payments, ledger | This audit | `/suppliers`, `SupplierService` | suppliers, supplier_payments, purchases | `SuppliersPage` | Backend suite, frontend build/typecheck/lint | Seeded suppliers rendered; proxy/API returned ARK distributors and GGl | UAT_VERIFIED | None | Add edit/delete browser journey and supplier purchase fixture | Authenticated API and browser UAT on 5174/8001 | Engineering |
+| Customers | Customer CRUD, credit balances, payments, ledger | This audit | `/customers`, `CustomerService` | customers, customer_payments, sales.customer_id | `CustomersPage` | Backend suite, frontend build/typecheck/lint | Seeded customers rendered on desktop UAT page | UAT_VERIFIED | None | Add credit-sale browser journey and customer edit/delete coverage | Asha and Meena visible in browser UAT | Engineering |
+| Expenses | Expense categories and expense entry | This audit | `/expenses`, `ExpenseService` | expense_categories, expenses | `ExpensesPage` | Backend suite, frontend build/typecheck/lint | Seeded rent expense rendered | UAT_VERIFIED | None | Add edit/delete and receipt upload coverage | `UAT monthly rent` visible in browser UAT | Engineering |
+| Reports | Business summary, cash flow, inventory valuation | This audit | `/reports/summary`, `ReportService` | sales, purchases, expenses, payments, variants | `ReportsPage` | Backend suite, frontend build/typecheck/lint | P&L and inventory valuation rendered | UAT_VERIFIED | None | Add date-range assertions and export formats | Reports page browser UAT passed | Engineering |
 | Sales | Product search, cart and exact variants | ARCHITECTURE.md, MODULES.md | sales catalog routes/services | sales, items, variants | `NewSalePage` | 14 New Sale tests | Cart line visibly rendered with M/Assorted/barcode and stock after sale | UAT_VERIFIED | None | Keep fixed cart-list regression test | 1 line/1 unit rendered | Engineering |
 | Sales | Percentage discount and completion | API.md | `POST /sales`, `SaleService` | sales, sale_items, stock history | `NewSalePage` | sale discount tests | 10% changed INR 499.00 to INR 449.10; completed invoice | UAT_VERIFIED | None | Add fixed-discount UAT | Invoice `RF-20260803-318796` in isolated DB | Engineering |
 | Sales history | List and persisted invoice | API.md | `GET /sales` | sales, sale_items | `SalesHistoryPage` | Service coverage partial | Completed UAT invoice appeared after navigation | UAT_VERIFIED | None | Add invoice details/export/void coverage | 1 completed invoice displayed | Engineering |
@@ -46,9 +50,8 @@ this audit; no feature is marked `PRODUCTION_READY`.
 2. `SupplierPayment` was missing its `supplier` relationship, preventing
    SQLAlchemy mapper configuration and all database-backed service work. A
    focused mapper test now protects the relationship.
-3. `backend/app/models` references customer, supplier-payment, and expense
-   models that depend on the untracked
-   `20260803_0037_business_accounts_expenses_reports.py` migration. The
-   tracked Alembic head remains `20260803_0036`; a database migrated only to
-   the tracked head lacks `sales.customer_id` and makes the dashboard fail.
-   This is a release blocker, not a UAT data defect.
+3. Business-account migration `20260803_0037_business_accounts_expenses_reports.py`
+   now covers suppliers, supplier payments, customers, customer payments,
+   expense categories, expenses, and `sales.customer_id`. It was applied
+   successfully to the isolated UAT database. It must be reviewed and committed
+   with the associated models/routes/UI before any staging or production release.

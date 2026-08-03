@@ -21,6 +21,7 @@ class Sale(Base):
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     store_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("stores.id", ondelete="SET NULL"), index=True)
     invoice_number: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    customer_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL"), index=True)
     customer_name: Mapped[Optional[str]] = mapped_column(String(180), index=True)
     payment_mode: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     cashier_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
@@ -46,6 +47,7 @@ class Sale(Base):
     void_reason: Mapped[Optional[str]] = mapped_column(String(300))
 
     store = relationship("Store", back_populates="sales")
+    customer = relationship("Customer", back_populates="sales")
     cashier = relationship("User", back_populates="sales", foreign_keys=[cashier_id])
     items = relationship("SaleItem", back_populates="sale", cascade="all, delete-orphan")
     audits = relationship("SaleAudit", back_populates="sale", cascade="all, delete-orphan")
