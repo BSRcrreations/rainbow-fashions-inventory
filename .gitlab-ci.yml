@@ -260,7 +260,10 @@ database_reset_production:
     url: $DEPLOY_URL
   when: manual
   manual_confirmation: "IRREVERSIBLE: back up then clear all production products, stock, purchases, sales, barcodes, documents, customers, suppliers, and uploads. Keep only users and stores?"
-  allow_failure: false
+  # Resetting data is an exceptional, destructive maintenance action. It must
+  # remain explicitly runnable, but it must not hold an otherwise verified
+  # deployment in the blocked state.
+  allow_failure: true
   script:
     - chmod +x scripts/database/clear_production_data.sh
     - DEPLOY_PATH="$DEPLOY_PATH" scripts/database/clear_production_data.sh --confirm-clear-production-data
