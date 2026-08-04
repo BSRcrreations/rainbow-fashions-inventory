@@ -1,6 +1,6 @@
 # Production backend environment
 
-Use [backend.env.production.example](backend.env.production.example) only as a
+Use [backend.production.template](backend.production.template) only as a
 safe template. The real server environment file must be located at:
 
 ```text
@@ -18,7 +18,7 @@ then restrict its permissions:
 
 ```bash
 sudo mkdir -p /opt/rainbow-fashions/shared
-sudo cp deployment/templates/backend.env.production.example /opt/rainbow-fashions/shared/backend.env
+sudo cp deployment/templates/backend.production.template /opt/rainbow-fashions/shared/backend.env
 sudo chmod 600 /opt/rainbow-fashions/shared/backend.env
 ```
 

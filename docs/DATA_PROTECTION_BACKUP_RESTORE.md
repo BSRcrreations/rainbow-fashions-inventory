@@ -16,7 +16,7 @@ The database backup filename is `rainbow_inventory_db_YYYY-MM-DD_HH-MM-SS.dump`;
 
 1. Install `postgresql-client`, `restic`, `curl`, and the system `tar` utility on the staging host.
 2. Move uploads to a host path so the backup service can read them without entering a container. Create `/u02/rainbow/uploads`, copy the existing `backend_uploads` volume contents into it once, then set `UPLOADS_HOST_PATH=/u02/rainbow/uploads` for Compose. Do not use `--delete` while copying data. Configure `APPLICATION_UPLOAD_PATH` to this root so products, brands, invoices, OCR files, supplier documents, and future upload folders are all included. Alternatively configure the individual `*_PATH` settings and `ADDITIONAL_UPLOAD_PATHS`.
-3. Create `/etc/rainbow-fashions/backup.env` from `deployment/templates/backup.env.example`, fill in staging-only values, then run `chmod 600 /etc/rainbow-fashions/backup.env`.
+3. Create `/etc/rainbow-fashions/backup.env` from `deployment/templates/backup.template`, fill in staging-only values, then run `chmod 600 /etc/rainbow-fashions/backup.env`.
 4. Create a dedicated PostgreSQL backup role with only the permissions needed by `pg_dump`, and create a `/etc/rainbow-fashions/pgpass` file with `0600` permissions. Do not put `PGPASSWORD` or a database password into a script, unit, repository, or shell history.
 5. Create the dedicated, disposable staging database named exactly `rainbow_inventory_restore_test` (or another name ending `_restore_test`) and grant only its restore-test role access to it. It must not be a production database or production host.
 6. Initialize the confirmed remote Restic repository once: `source /etc/rainbow-fashions/backup.env && restic init`. Use a bucket/key restricted to this backup repository.

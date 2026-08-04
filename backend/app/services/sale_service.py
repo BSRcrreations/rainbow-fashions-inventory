@@ -16,7 +16,7 @@ from app.core.exceptions import bad_request, conflict, error_payload, not_found
 from app.models.brand import Brand
 from app.models.category import Category
 from app.models.customer import Customer
-from app.models.enums import SaleStatus, StockMovementType
+from app.models.enums import SaleStatus, StockMovementType, UserRole
 from app.models.product import Product
 from app.models.product_barcode import ProductBarcode
 from app.models.product_inventory import ProductInventory
@@ -46,7 +46,7 @@ class SaleService:
         if self.repo.get_by_invoice(invoice_number, store_id):
             raise conflict("Invoice number already exists")
         customer = self._customer_for_sale(payload.customer_id, payload.customer_name, payload.payment_mode, store_id)
-        prepared = self._prepare_items(payload.items, store_id)
+        prepared, price_overrides = self._prepare_items(payload.items, store_id, current_user, request_id)
         subtotal, cost_amount, _ = self._totals(prepared, Decimal("0"))
         discount_amount = self._checkout_discount(subtotal, payload.discount_type, payload.discount_value, request_id)
         total_amount = money(subtotal - discount_amount)
@@ -88,6 +88,8 @@ class SaleService:
             self.db.flush()
             self._adjust_stock(product, inventory, -quantity, StockMovementType.SALE, invoice_number, sale, sale_item, current_user)
 
+        if price_overrides:
+            self.db.add(SaleAudit(sale_id=sale.id, action="PRICE_OVERRIDE", reason=None, performed_by=current_user.id, before_data=None, after_data={"price_overrides": price_overrides}))
         self.db.commit()
         return self.get(sale.id, current_user)
 
@@ -168,6 +170,7 @@ class SaleService:
         if len(variant_ids) != len(set(variant_ids)):
             raise bad_request("A variant can appear only once in a sale")
         prepared: list[tuple[Product, ProductVariant, int, Decimal, Decimal, Decimal, list[tuple[Optional[InventoryCostLot], int, Decimal]]]] = []
+        price_overrides: list[dict[str, str]] = []
         for request in sorted(payload.items, key=lambda item: str(item.product_variant_id)):
             variant = (
                 self.db.query(ProductVariant)
@@ -180,13 +183,9 @@ class SaleService:
                 raise bad_request("The selected product variant is unavailable")
             if variant.current_stock < request.quantity:
                 raise bad_request(f"Insufficient stock for {variant.product.name} {variant.size or ''}; {variant.current_stock} available")
-            price = request.unit_price if request.unit_price is not None else variant.selling_price
-            if request.unit_price is not None and request.unit_price != variant.selling_price:
-                role = getattr(current_user.role, "value", str(current_user.role))
-                if role == "CASHIER":
-                    raise bad_request("Only a manager or owner can override the configured selling price")
-                if role == "MANAGER" and variant.mrp is not None and request.unit_price > variant.mrp:
-                    raise bad_request("Manager price override cannot exceed MRP")
+            price, override = self._resolve_unit_price(variant.selling_price, request.unit_price, variant.mrp, current_user, variant.id, request_id)
+            if override:
+                price_overrides.append(override)
             lots = (
                 self.db.query(InventoryCostLot)
                 .filter(InventoryCostLot.product_variant_id == variant.id, InventoryCostLot.remaining_quantity > 0)
@@ -228,7 +227,7 @@ class SaleService:
                 before_variant_stock = variant.current_stock
             inventory.current_stock -= quantity
             product.current_stock = max(0, product.current_stock - quantity)
-        self.db.add(SaleAudit(sale_id=sale.id, action="COMPLETED", reason=None, performed_by=current_user.id, before_data=None, after_data={"variant_sale": True, "discount_type": payload.discount_type, "discount_value": str(payload.discount_value), "discount_amount": str(discount_amount), "total_amount": str(total)}))
+        self.db.add(SaleAudit(sale_id=sale.id, action="COMPLETED", reason=None, performed_by=current_user.id, before_data=None, after_data={"variant_sale": True, "discount_type": payload.discount_type, "discount_value": str(payload.discount_value), "discount_amount": str(discount_amount), "total_amount": str(total), "price_overrides": price_overrides}))
         self.db.commit()
         return self.get(sale.id, current_user)
 
@@ -252,7 +251,7 @@ class SaleService:
         product_ids = [item.product_id for item in payload.items]
         if len(product_ids) != len(set(product_ids)):
             raise bad_request("A product can appear only once in a sale")
-        prepared = self._prepare_items(payload.items, store_id, validate_stock=False)
+        prepared, price_overrides = self._prepare_items(payload.items, store_id, current_user, validate_stock=False)
         customer = self._customer_for_sale(payload.customer_id, payload.customer_name, payload.payment_mode, store_id)
         subtotal, cost_amount, total_amount = self._totals(prepared, payload.discount)
         old_items = {item.product_id: item for item in sale.items}
@@ -278,7 +277,7 @@ class SaleService:
         sale.discount_type, sale.discount_value, sale.discount_amount = "FIXED_AMOUNT", money(payload.discount), money(payload.discount)
         sale.profit_amount = total_amount - cost_amount
         sale.status, sale.version, sale.edit_reason, sale.edited_by, sale.edited_at = SaleStatus.EDITED, sale.version + 1, payload.edit_reason, current_user.id, datetime.now(timezone.utc)
-        self.db.add(SaleAudit(sale_id=sale.id, action="EDITED", reason=payload.edit_reason, performed_by=current_user.id, before_data=before, after_data={"total_amount": str(total_amount), "version": sale.version}))
+        self.db.add(SaleAudit(sale_id=sale.id, action="EDITED", reason=payload.edit_reason, performed_by=current_user.id, before_data=before, after_data={"total_amount": str(total_amount), "version": sale.version, "price_overrides": price_overrides}))
         self.db.commit()
         return self.get(sale.id, current_user)
 
@@ -669,20 +668,41 @@ class SaleService:
             self.db.flush()
         return product, inventory
 
-    def _prepare_items(self, items: list, store_id: UUID, validate_stock: bool = True) -> list[tuple[Product, ProductInventory, int, Decimal, Decimal]]:
+    def _prepare_items(self, items: list, store_id: UUID, current_user: User, request_id: str | None = None, validate_stock: bool = True) -> tuple[list[tuple[Product, ProductInventory, int, Decimal, Decimal]], list[dict[str, str]]]:
         product_ids = [item.product_id for item in items]
         if len(product_ids) != len(set(product_ids)):
             raise bad_request("A product can appear only once in a sale")
         prepared = []
+        price_overrides: list[dict[str, str]] = []
         for request in sorted(items, key=lambda item: str(item.product_id)):
             product, inventory = self._locked_product_inventory(request.product_id, store_id)
             if not product.is_active:
                 raise bad_request(f"{product.name} is inactive")
             if validate_stock and inventory.current_stock < request.quantity:
                 raise bad_request(f"Insufficient stock for {product.name}; {inventory.current_stock} available")
-            unit_price = request.unit_price if request.unit_price is not None else product.selling_price
+            unit_price, override = self._resolve_unit_price(product.selling_price, request.unit_price, product.mrp, current_user, product.id, request_id)
+            if override:
+                price_overrides.append(override)
             prepared.append((product, inventory, request.quantity, unit_price, unit_price * request.quantity))
-        return prepared
+        return prepared, price_overrides
+
+    @staticmethod
+    def _resolve_unit_price(configured_price: Decimal, submitted_price: Decimal | None, mrp: Decimal | None, current_user: User, item_id: UUID, request_id: str | None) -> tuple[Decimal, dict[str, str] | None]:
+        if submitted_price is None or submitted_price == configured_price:
+            return configured_price, None
+        if submitted_price < 0:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error_payload("Selling price cannot be negative", "invalid_selling_price", request_id=request_id))
+        try:
+            role = current_user.role if isinstance(current_user.role, UserRole) else UserRole(str(current_user.role))
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=error_payload("Selling-price override is not permitted for this role", "selling_price_override_forbidden", request_id=request_id)) from exc
+        if role is UserRole.STAFF:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=error_payload("Staff must use the configured selling price", "selling_price_override_forbidden", request_id=request_id))
+        if role is UserRole.MANAGER and mrp is not None and submitted_price > mrp:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error_payload("Manager price override cannot exceed MRP", "selling_price_override_exceeds_mrp", request_id=request_id))
+        if role not in {UserRole.MANAGER, UserRole.OWNER}:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=error_payload("Selling-price override is not permitted for this role", "selling_price_override_forbidden", request_id=request_id))
+        return submitted_price, {"item_id": str(item_id), "configured_price": str(configured_price), "submitted_price": str(submitted_price), "user_role": role.value, "user_id": str(current_user.id), "request_id": request_id or ""}
 
     def _totals(self, prepared: list[tuple[Product, ProductInventory, int, Decimal, Decimal]], discount: Decimal) -> tuple[Decimal, Decimal, Decimal]:
         subtotal = money(sum((line_total for _, _, _, _, line_total in prepared), Decimal("0")))
