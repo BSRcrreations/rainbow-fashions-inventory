@@ -19,6 +19,7 @@ backend/.env
 frontend/.env
 mobile/.env
 .test-runtime/
+.barcode-feature-backup/
 deployment/templates/backend.env.production
 deployment/templates/backup-offsite.env
 
