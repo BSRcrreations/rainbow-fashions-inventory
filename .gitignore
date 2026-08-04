@@ -7,18 +7,24 @@ __pycache__/
 .venv/
 venv/
 
-# Environment files
-.env
-.env.*
-!.env.example
+# Environment files: ignore every real variant, including whitespace suffixes.
+.env*
+**/.env*
+*.env
+**/*.env
+*.env*
+**/*.env*
+
+# Only these reviewed, placeholder-only templates may be tracked.
+!backend/.env.example
+backend/app/runtime/opening-stock-imports/
 !backend/.env.docker.example
 !backend/.env.test.example
 !frontend/.env.test.example
+!frontend/.env.example
 
-backend/.env
-frontend/.env
-mobile/.env
 .test-runtime/
+.barcode-feature-backup/
 deployment/templates/backend.env.production
 deployment/templates/backup-offsite.env
 

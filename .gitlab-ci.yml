@@ -41,6 +41,13 @@ backend_tests:
     - pytest
     - test "$(alembic heads | grep -c '(head)')" -eq 1
 
+tracked_secret_check:
+  stage: validate
+  image: alpine:3.20
+  script:
+    - apk add --no-cache bash git
+    - bash scripts/security/check_tracked_secrets.sh
+
 frontend_quality:
   stage: validate
   image: node:20-alpine

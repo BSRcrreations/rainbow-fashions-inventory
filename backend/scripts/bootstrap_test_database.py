@@ -11,10 +11,8 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app import models  # noqa: F401
 from app.core.config import get_settings
 from app.core.testing import assert_test_database
-from app.database.base import Base
 
 
 def main() -> None:
@@ -32,10 +30,9 @@ def main() -> None:
             "drop the isolated test schema first."
         )
 
-    Base.metadata.create_all(engine)
     alembic_cfg = Config(str(BACKEND_ROOT / "alembic.ini"))
-    command.stamp(alembic_cfg, "head")
-    print(f"Bootstrapped empty testing database {database_name} from current models and stamped Alembic head.")
+    command.upgrade(alembic_cfg, "head")
+    print(f"Migrated empty testing database {database_name} through Alembic head.")
 
 
 if __name__ == "__main__":

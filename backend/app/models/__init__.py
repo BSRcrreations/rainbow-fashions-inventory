@@ -24,6 +24,8 @@ from app.models.product_deletion_audit import ProductDeletionAudit
 from app.models.product_update_audit import ProductUpdateAudit
 from app.models.stock_import import StockImport, StockImportBackup, StockImportRollback, StockImportRow
 from app.models.destructive_action import DeletePasswordAttempt, DestructiveActionAudit, DestructiveIdempotencyRecord, StoreSecuritySetting
+from app.models.opening_stock_import import OpeningStockImport, OpeningStockImportAudit, OpeningStockImportError, OpeningStockImportRow
+from app.models.inventory_reconciliation import InventoryReconciliationAudit
 
 __all__ = [
     "Brand",
@@ -68,4 +70,9 @@ __all__ = [
     "DestructiveActionAudit",
     "DestructiveIdempotencyRecord",
     "StoreSecuritySetting",
+    "OpeningStockImport",
+    "OpeningStockImportRow",
+    "OpeningStockImportError",
+    "OpeningStockImportAudit",
+    "InventoryReconciliationAudit",
 ]
