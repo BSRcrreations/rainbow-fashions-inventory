@@ -207,7 +207,8 @@ describe("Current Sale cart panel", () => {
     expect(markup).not.toContain("Your cart is empty");
     expect(markup).toContain('data-testid="cart-item-list"');
     expect(markup).toContain("min-h-[148px]");
-    expect(markup).toContain("max-h-[40svh]");
+    expect(markup).toContain("flex-1");
+    expect(markup).toContain("overflow-x-hidden");
     expect(markup).toContain("overflow-y-auto");
     expect(markup).toContain("Softa Padded Bra");
     expect(markup).toContain("Brand: WithIn");

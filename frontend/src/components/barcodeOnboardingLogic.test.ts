@@ -84,6 +84,17 @@ describe("newProductBarcodePayload", () => {
   it("preserves the scanned barcode as a string with leading zeros", () => {
     expect(newProductBarcodePayload("session-1", "00008904481711450", form).barcode).toBe("00008904481711450");
   });
+
+  it("refuses to send blank required UUID strings when validation is bypassed", () => {
+    const invalidForm = {
+      ...form,
+      category_id: " ",
+      subcategory_id: " ",
+      brand_id: " ",
+    };
+
+    expect(() => newProductBarcodePayload("session-1", "8904481711450", invalidForm)).toThrow("Select a category");
+  });
 });
 
 describe("newVariantBarcodePayload", () => {
@@ -115,6 +126,20 @@ describe("validateBarcodeOnboarding", () => {
     const validation = validateBarcodeOnboarding("NEW_VARIANT", { ...form, size: "36/90 cm" }, "product-1", "");
 
     expect(validation).toBeNull();
+  });
+
+  it("rejects an invalid draft quantity instead of silently changing it", () => {
+    expect(validateBarcodeOnboarding("NEW_VARIANT", { ...form, quantity: "0" }, "product-1", "")).toEqual({
+      message: "Enter a quantity of at least 1",
+      field: "quantity",
+    });
+  });
+
+  it("validates quantity before assigning an existing variant", () => {
+    expect(validateBarcodeOnboarding("EXISTING_VARIANT", { ...form, quantity: "0" }, "", "variant-1")).toEqual({
+      message: "Enter a quantity of at least 1",
+      field: "quantity",
+    });
   });
 });
 

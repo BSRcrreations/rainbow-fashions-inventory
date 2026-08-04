@@ -129,7 +129,7 @@ def test_new_variant_does_not_require_client_product_category_or_brand_metadata(
 
 
 def test_new_product_requires_a_brand_or_unbranded_selection():
-    with pytest.raises(ValidationError, match="Select a brand or choose Unbranded"):
+    with pytest.raises(ValidationError, match="Select a brand or choose Unbranded") as error:
         BarcodeProductOnboarding(
             session_id=uuid4(),
             action="NEW_PRODUCT",
@@ -140,6 +140,24 @@ def test_new_product_requires_a_brand_or_unbranded_selection():
             purchase_cost=Decimal("250"),
             selling_price=Decimal("395"),
         )
+
+    assert error.value.errors()[0]["type"] == "BRAND_REQUIRED"
+
+
+def test_action_specific_required_ids_use_stable_friendly_validation_codes():
+    with pytest.raises(ValidationError) as existing_variant_error:
+        BarcodeProductOnboarding(session_id=uuid4(), action="EXISTING_VARIANT", barcode="RF-EXISTING")
+    with pytest.raises(ValidationError) as new_variant_error:
+        BarcodeProductOnboarding(
+            session_id=uuid4(),
+            action="NEW_VARIANT",
+            barcode="RF-NEW-VARIANT",
+            purchase_cost=Decimal("250"),
+            selling_price=Decimal("395"),
+        )
+
+    assert existing_variant_error.value.errors()[0]["type"] == "EXISTING_VARIANT_REQUIRED"
+    assert new_variant_error.value.errors()[0]["type"] == "EXISTING_PRODUCT_REQUIRED"
 
 
 def test_existing_variant_creates_a_mapping_and_adds_only_the_draft_line():
@@ -187,6 +205,45 @@ def test_new_variant_blocks_an_exact_duplicate_variant_before_creating_anything(
     assert error.value.detail["code"] == "VARIANT_ALREADY_EXISTS"
     service._create_variant.assert_not_called()
     db.add.assert_not_called()
+
+
+def test_new_variant_uses_the_selected_store_product_without_overwriting_its_hierarchy():
+    service, _, _, store_id = configured_service()
+    product = SimpleNamespace(
+        id=uuid4(),
+        store_id=store_id,
+        name="Padded Bra",
+        category_id=uuid4(),
+        subcategory_id=uuid4(),
+        brand_id=uuid4(),
+    )
+    hierarchy_before = (product.name, product.category_id, product.subcategory_id, product.brand_id)
+    variant = active_variant(store_id)
+    payload = BarcodeProductOnboarding(
+        session_id=uuid4(),
+        action="NEW_VARIANT",
+        barcode="RF-NEW-SIZE",
+        existing_product_id=product.id,
+        # These deliberately untrusted fields are ignored for NEW_VARIANT.
+        category_id=uuid4(),
+        brand_id=uuid4(),
+        size="36/90 cm",
+        color="all",
+        style_code="SoftA",
+        purchase_cost=Decimal("250"),
+        selling_price=Decimal("395"),
+    )
+    service._barcode_mapping = MagicMock(return_value=None)
+    service._product_for_store = MagicMock(return_value=product)
+    service._matching_variant_for_payload = MagicMock(return_value=None)
+    service._create_variant = MagicMock(return_value=variant)
+    service._add_mapping_to_session = MagicMock()
+
+    service.onboard_product(payload, user(store_id))
+
+    service._product_for_store.assert_called_once_with(product.id, store_id, lock=True)
+    assert service._create_variant.call_args.args[0] is product
+    assert (product.name, product.category_id, product.subcategory_id, product.brand_id) == hierarchy_before
 
 
 def test_existing_variant_does_not_change_variant_prices_costs_or_stock():

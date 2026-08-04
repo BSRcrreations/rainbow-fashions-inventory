@@ -21,6 +21,8 @@ from app.models.uploaded_file import UploadedFile
 from app.models.user import User
 from app.models.purchase_document import DocumentProcessingJob, PurchaseDocument
 from app.models.product_deletion_audit import ProductDeletionAudit
+from app.models.product_update_audit import ProductUpdateAudit
+from app.models.stock_import import StockImport, StockImportBackup, StockImportRollback, StockImportRow
 from app.models.destructive_action import DeletePasswordAttempt, DestructiveActionAudit, DestructiveIdempotencyRecord, StoreSecuritySetting
 from app.models.opening_stock_import import OpeningStockImport, OpeningStockImportAudit, OpeningStockImportError, OpeningStockImportRow
 from app.models.inventory_reconciliation import InventoryReconciliationAudit
@@ -59,6 +61,11 @@ __all__ = [
     "PurchaseDocument",
     "DocumentProcessingJob",
     "ProductDeletionAudit",
+    "ProductUpdateAudit",
+    "StockImport",
+    "StockImportRow",
+    "StockImportBackup",
+    "StockImportRollback",
     "DeletePasswordAttempt",
     "DestructiveActionAudit",
     "DestructiveIdempotencyRecord",

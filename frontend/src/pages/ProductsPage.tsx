@@ -1,6 +1,6 @@
 import { ChangeEvent, DragEvent, FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Barcode, ChevronDown, ChevronLeft, ChevronRight, Download, Edit3, FileDown, FileUp, Filter, ImagePlus, PackageOpen, Plus, RefreshCw, Search, Trash2, Wand2, X } from "lucide-react";
+import { Archive, Barcode, ChevronDown, ChevronLeft, ChevronRight, Download, Edit3, FileDown, FileUp, Filter, History, ImagePlus, PackageOpen, Plus, RefreshCw, Search, Trash2, Wand2, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, api } from "../api/client";
 import BarcodeScannerInput from "../components/BarcodeScannerInput";
@@ -105,18 +105,6 @@ function imageSrc(imageUrl?: string | null) {
   if (!imageUrl) return "";
   if (imageUrl.startsWith("http")) return imageUrl;
   return `${window.location.protocol}//${window.location.hostname}:8000${imageUrl}`;
-}
-
-function formatReferenceCounts(references: Record<string, number>) {
-  const labels: Record<string, string> = {
-    inventory_transactions: "inventory transactions",
-    purchase_items: "purchase items",
-    sale_items: "sale items",
-    inventory_records: "inventory records",
-    variants: "variants",
-  };
-  const values = Object.entries(references).filter(([, count]) => count > 0).map(([key, count]) => `${count} ${labels[key] ?? key.replace(/_/g, " ")}`);
-  return values.length ? values.join(", ") : "No business references";
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -244,6 +232,9 @@ export default function ProductsPage() {
 
   function invalidateProducts() {
     void queryClient.invalidateQueries({ queryKey: ["products"] });
+    void queryClient.invalidateQueries({ queryKey: ["inventory-products"] });
+    void queryClient.invalidateQueries({ queryKey: ["adjustment-products"] });
+    void queryClient.invalidateQueries({ queryKey: ["stock-history"] });
   }
 
   function validateImage(file: File) {
@@ -395,6 +386,11 @@ export default function ProductsPage() {
     setImageFile(null);
     setError("");
     setFormOpen(true);
+  }
+
+  function openStockAdjustmentForProduct(product: Product | null) {
+    const variantId = product?.variants?.length === 1 ? product.variants[0].id : "";
+    navigate(variantId ? `/stock-adjustment?variant_id=${variantId}` : "/stock-adjustment");
   }
 
   async function openPermanentDelete(productIds: string[]) {
@@ -700,8 +696,12 @@ export default function ProductsPage() {
         </div> : null}
       </div>
 
-      <Dialog open={formOpen} title={editing ? "Edit product" : "Add product"} description={editing ? `Update ${editing.name} without changing its stock history.` : "Add the essentials now. You can edit details later."} onClose={cancelEdit} maxWidth="xl">
+      <Dialog open={formOpen} title={editing ? "Edit product" : "Add product"} description={editing ? "Changes product information only. Stock quantity is unchanged." : "Add the essentials now. Opening stock is recorded only when the product is created."} onClose={cancelEdit} maxWidth="xl">
       <form onSubmit={(event: FormEvent) => { event.preventDefault(); saveMutation.mutate({ print: false }); }} className="grid gap-4 sm:grid-cols-2">
+        {editing ? <div className="rounded-lg border border-teal-200 bg-teal-50 p-3 text-sm text-teal-900 sm:col-span-2">
+          <div className="font-semibold">Product editing updates catalogue details only.</div>
+          <p className="mt-1">Use this form for product name, category, brand, barcode, price, image, low-stock alert, and active status. Use Stock Adjustment to correct current physical stock.</p>
+        </div> : null}
         <label className="field-label">Category<span>*</span>
         <select autoFocus className="field-input" value={form.category_id} onChange={(event) => setForm({ ...form, category_id: event.target.value, subcategory_id: "", brand_id: "" })} disabled={saveMutation.isPending}>
           <option value="">Category</option>
@@ -757,7 +757,7 @@ export default function ProductsPage() {
           <option value="MRP">MRP</option>
         </select></label>
         <label className="field-label">MRP<input className="field-input" placeholder="Optional" type="number" min="0" step="0.01" value={form.mrp} onChange={(event) => setForm({ ...form, mrp: event.target.value })} disabled={saveMutation.isPending} /></label>
-        <div className="field-label"><span>{editing ? "Current stock" : "Opening stock"}</span><input className="field-input mt-1" type="number" min="0" value={form.current_stock} onChange={(event) => setForm({ ...form, current_stock: event.target.value })} disabled={saveMutation.isPending || Boolean(editing)} />{editing ? <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs font-medium text-slate-500"><span>Current stock cannot be edited directly. Use Stock Adjustment.</span><Button type="button" variant="secondary" size="sm" onClick={() => { const variantId = editing.variants?.length === 1 ? editing.variants[0].id : ""; navigate(variantId ? `/stock-adjustment?variant_id=${variantId}` : "/stock-adjustment"); }}><span>Adjust stock</span></Button></div> : null}</div>
+        <div className="field-label"><span>{editing ? "Current stock" : "Opening stock"}</span><input className="field-input mt-1" type="number" min="0" value={form.current_stock} onChange={(event) => setForm({ ...form, current_stock: event.target.value })} disabled={saveMutation.isPending || Boolean(editing)} />{editing ? <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-950"><p>Current stock is transaction-controlled and cannot be edited as a product field.</p><Button type="button" variant="secondary" size="sm" className="mt-2" onClick={() => openStockAdjustmentForProduct(editing)}><span>Open Stock Adjustment</span></Button></div> : null}</div>
         <label className="field-label">Low stock alert<input className="field-input" type="number" min="0" value={form.minimum_stock} onChange={(event) => setForm({ ...form, minimum_stock: event.target.value })} disabled={saveMutation.isPending} /></label>
         <label className="flex h-10 items-center gap-2 rounded-md border border-line px-3 text-sm text-slate-600 sm:col-span-2">
           <input type="checkbox" checked={form.is_active} onChange={(event) => setForm({ ...form, is_active: event.target.checked })} disabled={saveMutation.isPending} />
@@ -899,7 +899,7 @@ export default function ProductsPage() {
                         </div>
                       </td>
                     </tr>
-                    {expanded ? <tr className="bg-slate-50/60"><td className="px-4 py-4" colSpan={9}><div className="overflow-x-auto rounded-md border border-line bg-white"><table className="min-w-[920px] w-full text-left text-xs"><thead className="bg-slate-50 uppercase text-slate-500"><tr><th className="px-3 py-2">Size</th><th className="px-3 py-2">Colour</th><th className="px-3 py-2">Barcode</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2 text-right">MRP</th><th className="px-3 py-2 text-right">Selling</th><th className="px-3 py-2 text-right">Cost</th><th className="px-3 py-2 text-right">Stock</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Actions</th></tr></thead><tbody className="divide-y divide-line">{product.variants.map((variant) => <tr key={variant.id}><td className="px-3 py-2 font-semibold">{variant.size || "Standard"}</td><td className="px-3 py-2">{variant.color || "-"}</td><td className="px-3 py-2 font-mono">{variant.barcode}</td><td className="px-3 py-2 font-mono">{variant.internal_sku}</td><td className="px-3 py-2 text-right">{variant.mrp ? money(variant.mrp) : "-"}</td><td className="px-3 py-2 text-right font-semibold">{money(variant.selling_price)}</td><td className="px-3 py-2 text-right">{money(variant.average_cost || variant.last_purchase_cost)}</td><td className="px-3 py-2 text-right font-bold">{variant.current_stock}</td><td className="px-3 py-2"><span className={`rounded px-2 py-1 font-medium ${variant.is_active ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-600"}`}>{variant.is_active ? "Active" : "Inactive"}</span></td><td className="px-3 py-2"><div className="flex gap-1"><Button type="button" variant="secondary" size="sm" onClick={() => navigate(`/stock-adjustment?variant_id=${variant.id}`)}>Stock</Button><Button type="button" variant="ghost" size="icon" title="Print variant barcode" onClick={() => printVariantLabel(product, variant)}><Barcode size={15} /></Button></div></td></tr>)}</tbody></table></div></td></tr> : null}
+                    {expanded ? <tr className="bg-slate-50/60"><td className="px-4 py-4" colSpan={9}><div className="overflow-x-auto rounded-md border border-line bg-white"><table className="min-w-[920px] w-full text-left text-xs"><thead className="bg-slate-50 uppercase text-slate-500"><tr><th className="px-3 py-2">Size</th><th className="px-3 py-2">Colour</th><th className="px-3 py-2">Barcode</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2 text-right">MRP</th><th className="px-3 py-2 text-right">Selling</th><th className="px-3 py-2 text-right">Cost</th><th className="px-3 py-2 text-right">Stock</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Actions</th></tr></thead><tbody className="divide-y divide-line">{product.variants.map((variant) => <tr key={variant.id}><td className="px-3 py-2 font-semibold">{variant.size || "Standard"}</td><td className="px-3 py-2">{variant.color || "-"}</td><td className="px-3 py-2 font-mono">{variant.barcode}</td><td className="px-3 py-2 font-mono">{variant.internal_sku}</td><td className="px-3 py-2 text-right">{variant.mrp ? money(variant.mrp) : "-"}</td><td className="px-3 py-2 text-right font-semibold">{money(variant.selling_price)}</td><td className="px-3 py-2 text-right">{money(variant.average_cost || variant.last_purchase_cost)}</td><td className="px-3 py-2 text-right font-bold">{variant.current_stock}</td><td className="px-3 py-2"><span className={`rounded px-2 py-1 font-medium ${variant.is_active ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-600"}`}>{variant.is_active ? "Active" : "Inactive"}</span></td><td className="px-3 py-2"><div className="flex gap-1"><Button type="button" variant="secondary" size="sm" onClick={() => navigate(`/stock-adjustment?variant_id=${variant.id}`)}>Adjust stock</Button><Button type="button" variant="ghost" size="icon" title="Print variant barcode" onClick={() => printVariantLabel(product, variant)}><Barcode size={15} /></Button></div></td></tr>)}</tbody></table></div></td></tr> : null}
                   </Fragment>
                 );
               })}
@@ -932,7 +932,7 @@ export default function ProductsPage() {
       <Dialog open={deleteDialogOpen} title={`Permanently delete ${deleteCheck ? deleteCheck.deletable.length + deleteCheck.blocked.length : selectedCount} product${(deleteCheck ? deleteCheck.deletable.length + deleteCheck.blocked.length : selectedCount) === 1 ? "" : "s"}?`} description="This action cannot be undone." onClose={() => setDeleteDialogOpen(false)} maxWidth="lg">
         {!deleteCheck ? <SkeletonRows rows={3} /> : <div className="space-y-5">
           {deleteCheck.deletable.length ? <section><h3 className="text-sm font-semibold text-foreground">Eligible for permanent deletion</h3><p className="mt-1 text-sm text-muted">The following products and their unused variants will be permanently removed.</p><ul className="mt-3 space-y-1 text-sm text-foreground">{deleteCheck.deletable.map((item) => <li key={item.product_id}>- {item.product_name}</li>)}</ul></section> : null}
-          {deleteCheck.blocked.length ? <section className="rounded-lg border border-amber-200 bg-amber-50 p-4"><h3 className="text-sm font-semibold text-amber-950">Blocked products</h3><ul className="mt-2 space-y-2 text-sm text-amber-900">{deleteCheck.blocked.map((item) => <li key={item.product_id}><div className="font-medium">{item.product_name}</div><div>{item.reason}</div><div className="mt-1 text-xs">{formatReferenceCounts(item.references)}</div></li>)}</ul></section> : null}
+          {deleteCheck.blocked.length ? <section className="rounded-lg border border-amber-200 bg-amber-50 p-4"><h3 className="text-sm font-semibold text-amber-950">Blocked products</h3><p className="mt-1 text-sm text-amber-900">Product cannot be deleted because it has stock or transaction history.</p><ul className="mt-3 space-y-3 text-sm text-amber-900">{deleteCheck.blocked.map((item) => { const product = products.find((candidate) => candidate.id === item.product_id); const currentStock = product?.variants.reduce((sum, variant) => sum + variant.current_stock, 0) ?? 0; return <li key={item.product_id} className="rounded-lg bg-white/60 p-3"><div className="font-medium">{item.product_name}</div><div className="mt-1 text-xs">{item.reason}</div><div className="mt-2 grid gap-1 text-xs sm:grid-cols-2"><span>Current stock: {currentStock}</span><span>Variant count: {item.references.variants ?? product?.variants.length ?? 0}</span><span>Inventory transaction count: {item.references.inventory_transactions ?? 0}</span><span>Sales dependencies: {item.references.sale_items ?? 0}</span><span>Purchase dependencies: {item.references.purchase_items ?? 0}</span></div><div className="mt-3 flex flex-wrap gap-2"><Button type="button" size="sm" variant="secondary" onClick={() => openStockAdjustmentForProduct(product ?? null)}>Correct stock</Button><Button type="button" size="sm" variant="secondary" onClick={() => { if (product) void api.post(`/products/${product.id}/archive`).then(() => { toast.success("Product archived"); invalidateProducts(); setDeleteDialogOpen(false); }).catch((cause: unknown) => toast.error(cause instanceof Error ? cause.message : "Unable to archive product")); }}><Archive size={14} /> Archive product</Button><Button type="button" size="sm" variant="secondary" onClick={() => navigate(`/stock?product_id=${item.product_id}`)}><History size={14} /> View history</Button></div></li>; })}</ul></section> : null}
           {deleteCheck.deletable.length ? <section className="rounded-lg border border-rose-200 bg-rose-50 p-4"><label className="field-label text-rose-950">Type DELETE to continue<input className="field-input mt-2" autoFocus value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><div className="mt-4 flex flex-wrap justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button><Button type="button" variant="destructive" disabled={deleteConfirmation !== "DELETE"} onClick={() => void confirmPermanentDelete()}>Permanently delete eligible</Button></div></section> : <div className="flex justify-end"><Button type="button" variant="secondary" onClick={() => setDeleteDialogOpen(false)}>Close</Button></div>}
           {canPermanentlyDelete && Array.from(selectedIds).some((id) => products.find((product) => product.id === id)?.is_test_data) ? <section className="border-t border-border pt-5"><h3 className="text-sm font-semibold text-foreground">Purge selected test products</h3><p className="mt-1 text-sm text-muted">Only explicitly marked test products can use this owner-only workflow.</p><label className="field-label mt-3">Type PURGE TEST DATA to continue<input className="field-input mt-2" value={purgeConfirmation} onChange={(event) => setPurgeConfirmation(event.target.value)} /></label><div className="mt-3 flex justify-end"><Button type="button" variant="destructive" disabled={purgeConfirmation !== "PURGE TEST DATA"} onClick={() => void purgeSelectedTestProducts()}>Purge selected test products</Button></div></section> : null}
         </div>}

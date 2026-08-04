@@ -118,3 +118,19 @@ def test_duplicate_product_has_a_structured_conflict_code():
 
     assert error.value.status_code == 409
     assert error.value.detail["code"] == "PRODUCT_ALREADY_EXISTS"
+
+
+def test_product_metadata_change_records_an_audit_without_changing_stock():
+    product = stocked_product()
+    service, db = configured_service(product)
+    owner = SimpleNamespace(id=uuid4(), role=SimpleNamespace(value="OWNER"))
+
+    service.update(product.id, ProductUpdate(name="Soft padded bra"), product.store_id, owner, "product-edit-request")
+
+    audit = db.add.call_args.args[0]
+    assert audit.product_id == product.id
+    assert audit.store_id == product.store_id
+    assert audit.request_id == "product-edit-request"
+    assert audit.before_values == {"name": "Softa padded bra"}
+    assert audit.after_values == {"name": "Soft padded bra"}
+    assert product.current_stock == 25

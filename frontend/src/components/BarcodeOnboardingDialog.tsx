@@ -101,6 +101,7 @@ export default function BarcodeOnboardingDialog({
   const sellingPriceRef = useRef<HTMLInputElement>(null);
   const mrpRef = useRef<HTMLInputElement>(null);
   const packageQuantityRef = useRef<HTMLInputElement>(null);
+  const quantityRef = useRef<HTMLInputElement>(null);
 
   const hierarchyQuery = useQuery({
     queryKey: ["category-hierarchy"],
@@ -138,6 +139,7 @@ export default function BarcodeOnboardingDialog({
       field === "selling_price" ? sellingPriceRef.current :
       field === "mrp" ? mrpRef.current :
       field === "package_quantity" ? packageQuantityRef.current :
+      field === "quantity" ? quantityRef.current :
       null;
     window.requestAnimationFrame(() => {
       target?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -159,8 +161,8 @@ export default function BarcodeOnboardingDialog({
     if (!variant) return;
     setForm((current) => ({
       ...current,
-      mrp: variant.mrp ? String(variant.mrp) : current.mrp,
-      selling_price: variant.selling_price ? String(variant.selling_price) : current.selling_price,
+      mrp: variant.mrp === null || variant.mrp === undefined ? current.mrp : String(variant.mrp),
+      selling_price: variant.selling_price === null || variant.selling_price === undefined ? current.selling_price : String(variant.selling_price),
     }));
   }
 
@@ -339,9 +341,13 @@ export default function BarcodeOnboardingDialog({
                     <div className="text-xs font-semibold uppercase tracking-wide text-primary-800">Inherited product</div>
                     <div className="mt-1 font-semibold text-primary-950">{selectedProduct.name}</div>
                     <div className="mt-1 text-sm text-primary-900">{[selectedProduct.category_name, selectedProduct.subcategory_name, selectedProduct.brand_name || "Unbranded"].filter(Boolean).join(" · ")}</div>
-                    {defaultVariant(selectedProduct) ? <div className="mt-1 text-xs text-primary-800">Price copied from {detail(defaultVariant(selectedProduct)!)}.</div> : null}
+                    {defaultVariant(selectedProduct) ? (
+                      <div className="mt-1 text-xs text-primary-800">
+                        Current prices from {detail(defaultVariant(selectedProduct)!)}: MRP ₹{defaultVariant(selectedProduct)!.mrp ?? "—"} · Selling ₹{defaultVariant(selectedProduct)!.selling_price}
+                      </div>
+                    ) : null}
                   </div>
-                  <Button type="button" variant="secondary" onClick={() => copyPriceFromVariant(defaultVariant(selectedProduct))}>Copy price</Button>
+                  <Button type="button" variant="secondary" onClick={() => copyPriceFromVariant(defaultVariant(selectedProduct))}>Copy price from existing variant</Button>
                 </div>
               ) : (
                 <p className="text-sm text-muted">Select the existing product first. Category, subcategory, and brand will be inherited from the backend.</p>
@@ -357,7 +363,7 @@ export default function BarcodeOnboardingDialog({
               </label>
               <label className="field-label">
                 Category
-                <select ref={categoryRef} className="field-input" value={form.category_id} onChange={(event) => chooseCategory(event.target.value)}>
+                <select ref={categoryRef} className="field-input" value={form.category_id ?? ""} onChange={(event) => chooseCategory(event.target.value)}>
                   <option value="">Select category</option>
                   {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
                 </select>
@@ -389,7 +395,7 @@ export default function BarcodeOnboardingDialog({
               </div>
               <label className="field-label">
                 Brand
-                <select ref={brandRef} className="field-input" disabled={!form.category_id} value={form.brand_id} onChange={(event) => update("brand_id", event.target.value)}>
+                <select ref={brandRef} className="field-input" disabled={!form.category_id} value={form.brand_id ?? ""} onChange={(event) => update("brand_id", event.target.value)}>
                   <option value="">Select brand</option>
                   {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
                 </select>
@@ -427,12 +433,12 @@ export default function BarcodeOnboardingDialog({
                 </div>
               ) : <p className="text-sm text-muted">Select the exact size and colour above.</p>}
               {session.quantity_mode === "QUANTITY_ENTRY" ? (
-                <label className="field-label max-w-xs">Quantity to add<input className="field-input" min="1" type="number" value={form.quantity} onChange={(event) => update("quantity", event.target.value)} /></label>
+                <label className="field-label max-w-xs">Quantity to add<input ref={quantityRef} className="field-input" min="1" type="number" value={form.quantity} onChange={(event) => update("quantity", event.target.value)} /></label>
               ) : null}
             </section>
           ) : (
             <section className="grid gap-3 sm:grid-cols-3">
-              <label className="field-label">Quantity to add<input className="field-input" min="1" type="number" value={form.quantity} onChange={(event) => update("quantity", event.target.value)} /></label>
+              <label className="field-label">Quantity to add<input ref={quantityRef} className="field-input" min="1" type="number" value={form.quantity} onChange={(event) => update("quantity", event.target.value)} /></label>
               {action === "NEW_PRODUCT" ? (
                 <>
                   <label className="field-label">Product date<input className="field-input" type="date" value={form.product_date} onChange={(event) => update("product_date", event.target.value)} /></label>

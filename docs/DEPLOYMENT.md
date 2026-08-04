@@ -53,6 +53,15 @@ Use the reverse proxy configuration in `deployment/nginx/rainbow-fashions.conf`.
 Terminate TLS with Certbot, a managed load balancer, or an equivalent approved
 service.
 
+For the hardened `test.rainbow-fashions.in` deployment, use:
+
+```text
+docs/DEPLOYMENT_AVAILABILITY_HARDENING.md
+deployment/nginx/test.rainbow-fashions.in.conf
+deployment/systemd/rainbow-fashions.service
+deployment/systemd/rainbow-health-watch.timer
+```
+
 ## Backups
 
 Set `DATABASE_URL` in the protected deployment environment before running the

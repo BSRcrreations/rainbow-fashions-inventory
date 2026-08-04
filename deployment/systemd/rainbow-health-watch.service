@@ -1,0 +1,11 @@
+[Unit]
+Description=Rainbow Fashions availability health watchdog
+After=network-online.target docker.service nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/rainbow-fashions/current
+ExecStart=/opt/rainbow-fashions/current/deployment/scripts/check_application_health.sh
+User=root
+Group=root

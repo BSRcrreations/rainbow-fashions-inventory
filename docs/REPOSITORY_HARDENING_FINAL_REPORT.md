@@ -9,7 +9,7 @@ The application code-level checks completed successfully, but release readiness 
 
 ## 2. Commit SHA tested
 
-The integrated implementation chain was tested at `c2d5f7ad21476922dc84a13351c0f51771b548ae` on `release/repository-hardening-integration`, based on `origin/main` commit `54cf706a30c0e30c8db18a82f389a66eed16caee`.
+The GitHub integration chain was tested at `c2d5f7ad21476922dc84a13351c0f51771b548ae`. The deployment branch additionally merges the GitLab-only stock-import history and uses merge revision `20260804_0040` to retain one Alembic head.
 
 ## 3. Security status
 
@@ -37,7 +37,7 @@ The integrated implementation chain was tested at `c2d5f7ad21476922dc84a13351c0f
 
 ## 6. Database migration results
 
-- Alembic has one head: `20260804_0039`.
+- Alembic has one deployment head: `20260804_0040`.
 - The read-only schema verifier confirmed the single head.
 - Docker now relies on backend startup migration rather than `schema.sql` or `seed.sql` mounts.
 - Fresh migration, representative legacy upgrade, ORM-vs-live schema comparison, and generated snapshot comparison were **not run**: no disposable PostgreSQL database or safe backend environment configuration was available.

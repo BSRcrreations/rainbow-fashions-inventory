@@ -194,6 +194,19 @@ class ProductRead(ProductBase, ORMBaseModel):
     variants: list[ProductVariantRead] = Field(default_factory=list)
 
 
+class ProductUpdateAuditRead(ORMBaseModel):
+    id: UUID
+    store_id: UUID
+    product_id: UUID
+    changed_by: Optional[UUID] = None
+    changed_by_role: Optional[str] = None
+    request_id: str
+    change_source: str
+    before_values: dict
+    after_values: dict
+    created_at: datetime
+
+
 class ProductListMeta(BaseModel):
     page: int
     page_size: int
