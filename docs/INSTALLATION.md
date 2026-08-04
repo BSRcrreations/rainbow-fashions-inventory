@@ -10,12 +10,11 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Create the PostgreSQL database:
+Create the PostgreSQL database and migrate it:
 
 ```bash
 createdb inventory_db
-psql inventory_db -f ../database/schema.sql
-psql inventory_db -f ../database/seed.sql
+alembic upgrade head
 ```
 
 Run the API:
@@ -24,11 +23,7 @@ Run the API:
 uvicorn app.main:app --reload
 ```
 
-Default login:
-
-```text
-Rainbow@fashions.com / Fashions123
-```
+Create the initial owner through the approved development/test bootstrap workflow. Production deployments never seed users or catalog records automatically.
 
 ## Frontend
 
