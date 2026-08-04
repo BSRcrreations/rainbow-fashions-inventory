@@ -8,6 +8,7 @@ import { SkeletonRows } from "../components/LoadingState";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
 import { Button } from "../components/ui/button";
+import { useAuth } from "../hooks/useAuth";
 import type { SalesDashboard } from "../types";
 import { money, shortDate } from "../utils/format";
 
@@ -36,6 +37,7 @@ function CollectionRow({ icon: Icon, label, value, tone }: { icon: typeof Bankno
 }
 
 export default function SalesDashboardPage() {
+  const { user } = useAuth();
   const [preset, setPreset] = useState<Preset>("today");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -43,12 +45,14 @@ export default function SalesDashboardPage() {
   if (preset === "custom" && startDate && endDate) { params.set("start_date", startDate); params.set("end_date", endDate); }
   const enabled = preset !== "custom" || Boolean(startDate && endDate);
   const query = useQuery({ queryKey: ["sales-dashboard", preset, startDate, endDate], queryFn: () => api.get<SalesDashboard>(`/sales/dashboard?${params}`), enabled });
+  const integrityQuery = useQuery({ queryKey: ["inventory-reconciliation-summary"], queryFn: () => api.get<{ critical_mismatches: number }>("/inventory/reconciliation/summary"), enabled: user?.role === "OWNER" || user?.role === "MANAGER" });
   const data = query.data;
   const periodName = periodNames[preset];
 
   return (
     <>
       <PageHeader title="Dashboard" subtitle="Your retail performance and inventory snapshot" />
+      {integrityQuery.data?.critical_mismatches ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"><strong>{integrityQuery.data.critical_mismatches} critical inventory integrity issue{integrityQuery.data.critical_mismatches === 1 ? "" : "s"}</strong> require investigation in Stock → Inventory Integrity.</div> : null}
       <div className="mb-6 flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
         <div className="grid grid-cols-5 gap-1 sm:flex" aria-label="Dashboard period">
           {([['today','Today'],['yesterday','Yesterday'],['week','This Week'],['month','This Month'],['custom','Custom']] as Array<[Preset,string]>).map(([value, label]) => <Button key={value} type="button" size="sm" variant={preset === value ? "default" : "ghost"} className="w-full whitespace-nowrap px-1 text-[10px] sm:w-auto sm:px-4 sm:text-sm" onClick={() => setPreset(value)}>{label}</Button>)}
