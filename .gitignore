@@ -9,6 +9,7 @@ venv/
 
 # Environment files
 .env
+backend/app/runtime/opening-stock-imports/
 .env.*
 !.env.example
 !backend/.env.docker.example

@@ -1,0 +1,2 @@
+product_name,category,subcategory,brand,sku,barcode,quantity,purchase_cost,selling_price,size,color,style_code,mrp,hsn_code,gst_rate,description,unit,warehouse
+Example Kurta,Women,Kurtas,Example Brand,EXAMPLE-KURTA-M,8900000000001,10,500.00,799.00,M,Blue,EK-01,999.00,6204,5,Template row only - replace before upload,Each,Main

@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     upload_dir: Path = Path("app/uploads")
     invoice_upload_dir: Path = Path("app/uploads/invoices")
     product_upload_dir: Path = Path("app/uploads/products")
+    # Import files are operational evidence, not source artifacts. Mount this outside
+    # the release checkout in production and keep the directory out of Git.
+    opening_stock_import_dir: Path = Path("app/runtime/opening-stock-imports")
+    max_opening_stock_import_size_mb: int = 25
+    max_opening_stock_import_rows: int = 20_000
+    allow_test_opening_stock_import_bypass: bool = False
     max_upload_size_mb: int = 15
     max_product_image_size_mb: int = 5
     allowed_invoice_content_types: set[str] = {
@@ -89,6 +95,10 @@ class Settings(BaseSettings):
     @property
     def max_product_image_size_bytes(self) -> int:
         return self.max_product_image_size_mb * 1024 * 1024
+
+    @property
+    def max_opening_stock_import_size_bytes(self) -> int:
+        return self.max_opening_stock_import_size_mb * 1024 * 1024
 
     @property
     def cors_origin_list(self) -> list[str]:
