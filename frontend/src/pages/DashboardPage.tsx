@@ -9,6 +9,7 @@ import StatCard from "../components/StatCard";
 import StatusBadge from "../components/StatusBadge";
 import type { DashboardSummary } from "../types";
 import { money, shortDate } from "../utils/format";
+import { useAuth } from "../hooks/useAuth";
 
 function DistributionBars({ title, items }: { title: string; items: Array<{ label: string; value: number }> }) {
   const max = Math.max(...items.map((item) => item.value), 1);
@@ -34,9 +35,11 @@ function DistributionBars({ title, items }: { title: string; items: Array<{ labe
 }
 
 export default function DashboardPage() {
+  const { user } = useAuth();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [criticalIntegrityIssues, setCriticalIntegrityIssues] = useState<number | null>(null);
 
   useEffect(() => {
     api.get<DashboardSummary>("/dashboard/summary")
@@ -44,6 +47,10 @@ export default function DashboardPage() {
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Unable to load dashboard"))
       .finally(() => setLoading(false));
   }, []);
+  useEffect(() => {
+    if (user?.role !== "OWNER" && user?.role !== "MANAGER") return;
+    api.get<{ critical_mismatches: number }>("/inventory/reconciliation/summary").then((value) => setCriticalIntegrityIssues(value.critical_mismatches)).catch(() => undefined);
+  }, [user?.role]);
 
   if (error) return <ErrorState message={error} />;
 
@@ -60,6 +67,7 @@ export default function DashboardPage() {
             <StatCard label="Low Stock" value={summary.low_stock_count} tone="rose" icon={AlertTriangle} />
             <StatCard label="Inventory Value" value={money(summary.inventory_value)} tone="amber" icon={IndianRupee} />
           </div>
+          {criticalIntegrityIssues ? <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"><strong>{criticalIntegrityIssues} critical inventory integrity issue{criticalIntegrityIssues === 1 ? "" : "s"}</strong> require investigation. Open Stock → Inventory Integrity for the read-only reconciliation report.</div> : null}
           <div className="mt-6 grid gap-4 xl:grid-cols-2">
             <section className="rounded-md border border-line bg-white">
               <div className="border-b border-line px-4 py-3 font-semibold">Latest products</div>
