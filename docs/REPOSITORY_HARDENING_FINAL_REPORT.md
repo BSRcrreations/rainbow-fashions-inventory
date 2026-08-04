@@ -9,18 +9,18 @@ The application code-level checks completed successfully, but release readiness 
 
 ## 2. Commit SHA tested
 
-The implementation chain was tested at `84dce6ba74cc9a8cdffb7461acc29c9c5edc26ee` on the local `chore/alembic-schema-source-of-truth` branch. `origin/main` remained at `54cf706a30c0e30c8db18a82f389a66eed16caee`; therefore the prerequisite local changes have not been confirmed merged upstream.
+The integrated implementation chain was tested at `c2d5f7ad21476922dc84a13351c0f51771b548ae` on `release/repository-hardening-integration`, based on `origin/main` commit `54cf706a30c0e30c8db18a82f389a66eed16caee`.
 
 ## 3. Security status
 
-**Failed / blocked.** The tracked tree includes an environment file whose filename has trailing whitespace, two database dump files, SQL seed material, and upload placeholder directories. Contents were deliberately not displayed or copied. A filename-only credential-pattern review also found the tracked environment file among files requiring remediation review. Prior local commits exist for credential cleanup, environment-file removal, and password-probe removal, but they are not merged into the inspected upstream branch. The controlled history rewrite and credential rotation remain unverified.
+**Partially passed / blocked.** The integration branch removes the tracked environment file with trailing whitespace, removes the two tracked database dumps, removes password-probe scripts, removes obsolete patch tooling, and removes orphaned frontend pages. The repository policy scans `check_tracked_secrets.sh` and `check_fixed_password_hashes.sh` pass; no tracked filename ends in whitespace and no tracked `.dump` or `.backup` file remains. Contents of removed artifacts were deliberately not displayed or copied. The controlled history rewrite and credential rotation remain unverified.
 
-`gitleaks` and `trufflehog` were unavailable in this environment, so no approved secret-scanner pass can be claimed. `npm audit` completed with 3 moderate, 1 high, and 1 critical dependency advisory. A filename-only absolute-path review found legacy documentation/utility candidates that need review. No private-key filename was found.
+`gitleaks` and `trufflehog` were unavailable in this environment, so no approved external secret-scanner pass can be claimed. `npm audit` completed with 3 moderate, 1 high, and 1 critical dependency advisory. A filename-only absolute-path review found legacy documentation/utility candidates that need review. No private-key filename was found.
 
 ## 4. Backend results
 
 - Python compile check: passed.
-- Full pytest: **157 passed, 1 warning** (an Argon2 dependency deprecation warning).
+- Full pytest: **177 passed, 1 warning** (an Argon2 dependency deprecation warning).
 - OpenAPI generation: passed.
 - `/health/live`: passed with HTTP 200 using the application test client.
 - `/health/ready`: returned HTTP 503 because no disposable PostgreSQL service was configured; this is expected for the isolated worktree and does not prove deployed readiness.
@@ -29,7 +29,7 @@ The implementation chain was tested at `84dce6ba74cc9a8cdffb7461acc29c9c5edc26ee
 ## 5. Frontend results
 
 - `npm ci`: completed.
-- `npm test`: **45 passed** in 8 files.
+- `npm test`: **48 passed** in 10 files.
 - `npm run lint`: passed.
 - `npm run typecheck`: passed.
 - `npm run build`: passed; the build emitted a non-failing JavaScript chunk-size warning.
@@ -60,13 +60,12 @@ Backup and restore shell scripts passed syntax validation. Backup-status unit te
 
 ## 11. Remaining production blockers
 
-1. Remove/rewrite tracked environment material, database dumps, and trailing-whitespace filenames; rotate every potentially exposed credential.
-2. Complete and verify the controlled Git-history remediation across all branches/tags; document collaborator recovery.
-3. Merge the prerequisite cleanup/inventory commits into the reviewed upstream release branch.
-4. Resolve the high and critical npm advisories or record a reviewed, time-bound exception.
-5. Run an approved secret scanner against the rewritten repository and retain a redacted result.
-6. Run fresh and representative Alembic migration tests plus the complete inventory/import workflow in disposable PostgreSQL/Docker infrastructure.
-7. Run and verify backup/restore, upload persistence, disk, and health checks in disposable infrastructure.
+1. Complete and verify the controlled Git-history remediation across all branches/tags; rotate every potentially exposed credential and document collaborator recovery.
+2. Merge this reviewed integration branch into the upstream release path.
+3. Resolve the high and critical npm advisories or record a reviewed, time-bound exception.
+4. Run an approved secret scanner against the rewritten repository and retain a redacted result.
+5. Run fresh and representative Alembic migration tests plus the complete inventory/import workflow in disposable PostgreSQL/Docker infrastructure.
+6. Run and verify backup/restore, upload persistence, disk, and health checks in disposable infrastructure.
 
 ## 12. Go/no-go recommendation
 
