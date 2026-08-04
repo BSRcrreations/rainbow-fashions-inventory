@@ -34,12 +34,13 @@ backend_tests:
   before_script:
     - python --version
     - apt-get update
-    - apt-get install -y --no-install-recommends build-essential libpq-dev
+    - apt-get install -y --no-install-recommends build-essential git libpq-dev
+    - rm -rf /var/lib/apt/lists/*
     - python -m pip install --upgrade pip
     - pip install -r backend/requirements.txt
   script:
     - cd backend
-    - python -m compileall -q app
+    - python -m compileall app
     - pytest
     - test "$(alembic heads | grep -c '(head)')" -eq 1
     - python -c "from app.main import app; assert app.openapi().get('openapi')"
@@ -70,10 +71,19 @@ repository_artifact_check:
 
 gitleaks_check:
   stage: validate
-  image: zricethezav/gitleaks:v8.24.2
+  image:
+    name: zricethezav/gitleaks:v8.24.2
+    entrypoint: [""]
   tags: [rainbow-ci]
+  variables:
+    GIT_DEPTH: "0"
   script:
-    - gitleaks git --redact --no-banner
+    - >
+      gitleaks detect
+      --source .
+      --redact
+      --no-banner
+      --exit-code 1
 
 frontend_quality:
   stage: validate
