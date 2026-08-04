@@ -17,6 +17,7 @@ venv/
 
 # Only these reviewed, placeholder-only templates may be tracked.
 !backend/.env.example
+backend/app/runtime/opening-stock-imports/
 !backend/.env.docker.example
 !backend/.env.test.example
 !frontend/.env.test.example
