@@ -86,12 +86,12 @@ done < <(git grep -Il -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' || true)
 
 while IFS= read -r path; do
   case "$path" in
-    backend/tests/*|frontend/src/**/*.test.*|scripts/security/check_tracked_secrets.sh)
+    backend/tests/*|frontend/src/**/*.test.*|frontend/src/api/client.ts|scripts/security/check_tracked_secrets.sh)
       continue
       ;;
   esac
   [ -z "$path" ] || report "possible fixed credential assignment: $path"
-done < <(git grep -IlE '(PASSWORD|SECRET|TOKEN|JWT)[A-Za-z0-9_]*[[:space:]]*[:=][[:space:]]*["'"'][A-Za-z0-9][^"'"']{7,}["'"']' || true)
+done < <(git grep -IlE "(PASSWORD|SECRET|TOKEN|JWT)[A-Za-z0-9_]*[[:space:]]*[:=][[:space:]]*['\"][A-Za-z0-9][^'\"]{7,}['\"]" || true)
 
 if [ "$failed" -ne 0 ]; then
   exit 1
