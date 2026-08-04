@@ -19,6 +19,7 @@ import StockAdjustmentPage from "./pages/StockAdjustmentPage";
 import StockScanPage from "./pages/StockScanPage";
 import SecuritySettingsPage from "./pages/SecuritySettingsPage";
 import OpeningStockImportPage from "./pages/OpeningStockImportPage";
+import InventoryIntegrityPage from "./pages/InventoryIntegrityPage";
 
 export default function App() {
   return (
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/stock/scan" element={<StockScanPage />} />
           <Route path="/stock/adjustment" element={<StockAdjustmentPage />} />
           <Route path="/stock/opening-import" element={<OpeningStockImportPage />} />
+          <Route path="/stock/integrity" element={<InventoryIntegrityPage />} />
           <Route path="/stock-adjustment" element={<StockAdjustmentPage />} />
           <Route path="/stock-adjustments" element={<StockAdjustmentPage />} />
           <Route path="/settings/security" element={<SecuritySettingsPage />} />
