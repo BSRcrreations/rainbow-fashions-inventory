@@ -59,3 +59,27 @@ def test_security_check_rejects_unapproved_environment_filename(tmp_path: Path):
 
     assert result.returncode == 1
     assert "not an approved example" in result.stderr
+
+
+def test_security_check_rejects_sensitive_binary_artifacts(tmp_path: Path):
+    repository = _repository_with_allowed_examples(tmp_path)
+    for relative_path in (
+        "backups/release.tar.gz",
+        "backend/app/uploads/invoices/document.pdf",
+        "backend/tests/fixtures/invoice.pdf",
+        "local.sqlite3",
+        "keys/service.p12",
+    ):
+        path = repository / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("placeholder", encoding="utf-8")
+    _run(["git", "add", "."], repository)
+
+    result = subprocess.run([str(SCRIPT)], cwd=repository, text=True, capture_output=True)
+
+    assert result.returncode == 1
+    assert "archive artifact is tracked" in result.stderr
+    assert "runtime upload artifact is tracked" in result.stderr
+    assert "invoice fixture is tracked" in result.stderr
+    assert "database dump is tracked" in result.stderr
+    assert "private-key-like file is tracked" in result.stderr

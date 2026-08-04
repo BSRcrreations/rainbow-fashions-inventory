@@ -46,6 +46,13 @@ tracked_secret_check:
     - apk add --no-cache bash git
     - bash scripts/security/check_tracked_secrets.sh
 
+fixed_password_hash_check:
+  stage: validate
+  image: alpine:3.20
+  script:
+    - apk add --no-cache bash git
+    - bash scripts/security/check_fixed_password_hashes.sh
+
 frontend_quality:
   stage: validate
   image: node:20-alpine
