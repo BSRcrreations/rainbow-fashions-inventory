@@ -45,9 +45,11 @@ Production deployments never seed users or catalog records automatically.
 
 ```bash
 cd frontend
-npm install
+npm ci
 cp .env.example .env
 npm run dev
 ```
 
 Open `http://localhost:5173`.
+
+The mobile application is an Expo scaffold, not a production-ready client.

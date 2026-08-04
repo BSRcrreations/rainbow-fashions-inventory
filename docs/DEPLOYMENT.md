@@ -16,8 +16,13 @@ Before release, run:
 ```bash
 bash scripts/security/check_tracked_secrets.sh
 ```
-
-## Local Docker
+1. Create a protected environment file from a reviewed template and set owner
+   read/write permissions.
+2. Start PostgreSQL and apply Alembic migrations.
+3. Provision the first owner only with the approved bootstrap command; this
+   base requires the pending security-bootstrap merge before that step.
+4. Start backend and frontend, then verify liveness/readiness endpoints.
+5. Verify backup creation and a non-production restore test before release.
 
 For a local-only environment, copy the reviewed example to the ignored backend
 environment path, set values locally, and then run:
@@ -58,3 +63,6 @@ documentation, or Git.
 
 The `shop-inventory` branch is deployed in manual phases through GitLab CI.
 See `docs/CI_CD.md` for required variables, server layout, and release steps.
+
+Backup and restore scripts live under `deployment/scripts/`; their operational
+status requires live verification and must not be inferred from source alone.
