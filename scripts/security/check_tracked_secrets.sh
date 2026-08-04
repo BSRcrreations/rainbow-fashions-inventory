@@ -48,11 +48,23 @@ while IFS= read -r -d '' path; do
   fi
 
   case "$path" in
-    *.pem|*.key|*.p12|*.pfx)
+    *.pem|*.key|*.pk8|*.p12|*.pfx|*.jks|*.keystore|*/id_rsa|*/id_ed25519)
       report "private-key-like file is tracked: $path"
       ;;
-    *.dump|*.backup|*.bak|*.sql.gz)
+    *.dump|*.backup|*.bak|*.sql.gz|*.db|*.db3|*.sqlite|*.sqlite3)
       report "database dump is tracked: $path"
+      ;;
+    *.tar|*.tar.gz|*.tgz|*.zip|*.7z)
+      report "archive artifact is tracked: $path"
+      ;;
+    backend/app/uploads/*|backend/app/test_uploads/*)
+      case "$path" in
+        */.gitkeep) ;;
+        *) report "runtime upload artifact is tracked: $path" ;;
+      esac
+      ;;
+    backend/tests/fixtures/*.pdf)
+      report "invoice fixture is tracked: $path"
       ;;
   esac
 done < <(git ls-files -z)

@@ -39,8 +39,28 @@ build/
 # Database migration artifacts and local configuration
 *.dump
 *.backup
+*.bak
+*.db
+*.db3
+*.sqlite
+*.sqlite3
 database-migration-artifacts/
 scripts/database/database-migration.env
+
+# Sensitive binary artifacts must remain outside source control.
+*.pem
+*.key
+*.pk8
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+backend/tests/fixtures/*.pdf
 
 # IDE
 .vscode/

@@ -17,5 +17,10 @@ bash scripts/security/check_tracked_secrets.sh
 ```
 
 The check reports violating file paths only. It rejects real or oddly named
-environment files, whitespace/control-character filenames, private keys,
-database dumps, and likely hard-coded credential assignments.
+environment files, whitespace/control-character filenames, private-key
+containers, database files and dumps, release archives, runtime uploads, and
+invoice test fixtures. Keep document fixtures generated during tests rather
+than committing real-world files.
+
+CI also runs the fixed-password-hash check. Any credential material needed for
+tests must be generated at runtime and kept in test-only source.
