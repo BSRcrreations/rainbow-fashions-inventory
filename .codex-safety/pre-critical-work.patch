@@ -1,0 +1,969 @@
+diff --git a/.gitlab-ci.yml b/.gitlab-ci.yml
+index 6dff7c5..d7cbbff 100644
+--- a/.gitlab-ci.yml
++++ b/.gitlab-ci.yml
+@@ -15,7 +15,9 @@ workflow:
+ variables:
+   DEPLOY_BRANCH: "shop-inventory"
+   DEPLOY_PATH: "/opt/rainbow-fashions"
+-  DEPLOY_URL: "http://178.238.237.182"
++  DEPLOY_URL: "https://test.rainbow-fashions.in"
++  LOCAL_DEPLOY_URL: "http://127.0.0.1:8080"
++  PUBLIC_DEPLOY_URL: "https://test.rainbow-fashions.in"
+   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+ 
+ default:
+@@ -60,6 +62,25 @@ frontend_quality:
+     paths:
+       - frontend/dist/
+ 
++verify_domain_preflight:
++  stage: validate
++  image: alpine:3.20
++  before_script:
++    - apk add --no-cache bash bind-tools curl python3 whois
++    - chmod +x deployment/scripts/diagnose_domain.sh
++  script:
++    - REPORT_FILE="$CI_PROJECT_DIR/domain-diagnostics/domain-preflight.txt" deployment/scripts/diagnose_domain.sh
++  artifacts:
++    when: always
++    expire_in: 7 days
++    paths:
++      - domain-diagnostics/
++  rules:
++    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH && $CI_PIPELINE_SOURCE == "push"'
++    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH'
++      when: manual
++    - when: never
++
+ docker_compose_build:
+   stage: docker
+   image: docker:27-cli
+@@ -79,6 +100,7 @@ package_release:
+   needs:
+     - backend_tests
+     - frontend_quality
++    - docker_compose_build
+   script:
+     - apk add --no-cache tar
+     - tar -czf /tmp/rainbow-fashions-${CI_COMMIT_SHORT_SHA}.tar.gz --exclude=.git --exclude=frontend/node_modules --exclude=frontend/dist --exclude=backend/.env --exclude=backend/app/uploads .
+@@ -149,50 +171,9 @@ deploy_phase_3_activate:
+       APP_DIR="$DEPLOY_PATH"
+       RELEASE_DIR="$APP_DIR/releases/$CI_COMMIT_SHORT_SHA"
+       ENV_FILE="$APP_DIR/shared/backend.env"
++      apk add --no-cache bash curl openssl
+       test -d "$RELEASE_DIR"
+-      # The first hardened deployment may follow releases that kept their
+-      # runtime environment inside the active release. Move that existing
+-      # secret file to the persistent shared location once. If this is a
+-      # legacy deployment with no secret file, create secrets only on the
+-      # production host and rotate the existing local PostgreSQL role to the
+-      # new generated password. Secrets are never committed or printed.
+-      if [ ! -s "$ENV_FILE" ]; then
+-        PREVIOUS_ENV_FILE="$APP_DIR/current/backend/.env"
+-        if [ -s "$PREVIOUS_ENV_FILE" ]; then
+-          mkdir -p "$APP_DIR/shared"
+-          cp "$PREVIOUS_ENV_FILE" "$ENV_FILE"
+-          chmod 600 "$ENV_FILE"
+-          echo 'Bootstrapped shared production backend.env from the active release.'
+-        else
+-          test -d "$APP_DIR/current" || { echo 'No active release is available for secure environment bootstrap.'; exit 1; }
+-          mkdir -p "$APP_DIR/shared"
+-          umask 077
+-          BOOTSTRAP_POSTGRES_PASSWORD="$(od -An -N48 -tx1 /dev/urandom | tr -d ' \n')"
+-          BOOTSTRAP_JWT_SECRET="$(od -An -N64 -tx1 /dev/urandom | tr -d ' \n')"
+-          BOOTSTRAP_ENV_FILE="$ENV_FILE.bootstrap"
+-          {
+-            printf '%s\n' 'APP_NAME="Rainbow Fashions Inventory"'
+-            printf '%s\n' 'APP_ENV=production' 'DEBUG=false'
+-            printf '%s\n' 'POSTGRES_DB=inventory_db' 'POSTGRES_USER=inventory_user'
+-            printf 'POSTGRES_PASSWORD=%s\n' "$BOOTSTRAP_POSTGRES_PASSWORD"
+-            printf 'DATABASE_URL=postgresql+psycopg://inventory_user:%s@postgres:5432/inventory_db\n' "$BOOTSTRAP_POSTGRES_PASSWORD"
+-            printf 'JWT_SECRET_KEY=%s\n' "$BOOTSTRAP_JWT_SECRET"
+-            printf '%s\n' 'JWT_ALGORITHM=HS256' 'ACCESS_TOKEN_EXPIRE_MINUTES=480'
+-            printf '%s\n' 'CORS_ORIGINS=http://178.238.237.182,https://test.rainbow-fashions.in'
+-            printf '%s\n' 'UPLOAD_DIR=app/uploads' 'INVOICE_UPLOAD_DIR=app/uploads/invoices' 'PRODUCT_UPLOAD_DIR=app/uploads/products' 'MAX_UPLOAD_SIZE_MB=15' 'LOG_LEVEL=INFO'
+-            printf '%s\n' 'OCR_PROVIDER=local' 'DOCUMENT_AI_PROVIDER=mock' 'DOCUMENT_AI_FALLBACK_PROVIDER=mock' 'DOCUMENT_AI_TIMEOUT_SECONDS=90' 'DOCUMENT_AI_MAX_RETRIES=2' 'DOCUMENT_RETENTION_DAYS=365' 'FAILED_UPLOAD_RETENTION_DAYS=7'
+-          } > "$BOOTSTRAP_ENV_FILE"
+-          (
+-            cd "$APP_DIR/current"
+-            docker compose exec -T postgres sh -ec "psql -v ON_ERROR_STOP=1 -U inventory_user -d inventory_db -c \"ALTER ROLE inventory_user WITH PASSWORD '$BOOTSTRAP_POSTGRES_PASSWORD';\""
+-          )
+-          mv "$BOOTSTRAP_ENV_FILE" "$ENV_FILE"
+-          chmod 600 "$ENV_FILE"
+-          unset BOOTSTRAP_ENV_FILE BOOTSTRAP_POSTGRES_PASSWORD BOOTSTRAP_JWT_SECRET
+-          echo 'Generated and stored a secure production backend.env on the deployment host.'
+-        fi
+-        unset PREVIOUS_ENV_FILE
+-      fi
++      test -s "$ENV_FILE" || { echo "$ENV_FILE is required. Create it from deployment/templates/backend.env.production.example on the server."; exit 1; }
+       set -a
+       . "$ENV_FILE"
+       set +a
+@@ -214,8 +195,29 @@ deploy_phase_3_activate:
+       [ "$DATABASE_URL" = "$EXPECTED_DATABASE_URL" ] || { echo 'DATABASE_URL must match the PostgreSQL environment values.'; exit 1; }
+       unset EXPECTED_DATABASE_URL
+       mkdir -p "$APP_DIR/shared"
++      PREVIOUS_RELEASE=""
++      if [ -L "$APP_DIR/current" ]; then PREVIOUS_RELEASE="$(readlink -f "$APP_DIR/current")"; fi
++      printf 'previous_release=%s\nnew_release=%s\nprevious_commit=%s\nnew_commit=%s\nbackup_path=%s\n' "$PREVIOUS_RELEASE" "$RELEASE_DIR" "${CI_COMMIT_BEFORE_SHA:-unknown}" "$CI_COMMIT_SHA" "$APP_DIR/backups" > "$RELEASE_DIR/deployment-metadata.env"
++      rollback() {
++        code="$?"
++        [ "$code" -eq 0 ] && return 0
++        echo "Deployment failed. Attempting application rollback; database migration may already have been applied."
++        mkdir -p "$APP_DIR/failed-releases"
++        docker compose logs --no-color --tail=300 > "$RELEASE_DIR/failed-release.log" 2>&1 || true
++        if [ -n "$PREVIOUS_RELEASE" ] && [ -d "$PREVIOUS_RELEASE" ]; then
++          ln -sfn "$PREVIOUS_RELEASE" "$APP_DIR/current"
++          cp "$ENV_FILE" "$APP_DIR/current/backend/.env"
++          cd "$APP_DIR/current"
++          docker compose up -d
++          ./deployment/scripts/wait_for_application.sh --base-url "$LOCAL_DEPLOY_URL" --timeout 180 || true
++          PUBLIC_BASE_URL="$PUBLIC_DEPLOY_URL" LOCAL_BASE_URL="$LOCAL_DEPLOY_URL" ./deployment/scripts/smoke_test_production.sh || true
++        fi
++        exit "$code"
++      }
++      trap rollback EXIT
+       ln -sfn "$RELEASE_DIR" "$APP_DIR/current"
+       cd "$APP_DIR/current"
++      chmod +x deployment/scripts/wait_for_application.sh deployment/scripts/smoke_test_production.sh
+       cp "$ENV_FILE" backend/.env
+       docker compose config --quiet
+       docker compose build
+@@ -225,26 +227,87 @@ deploy_phase_3_activate:
+       fi
+       docker compose run --rm backend alembic upgrade head
+       docker compose up -d --remove-orphans
++      ./deployment/scripts/wait_for_application.sh --base-url "$LOCAL_DEPLOY_URL" --timeout 180
+       if ! docker compose exec -T backend python -c "from app.database.session import SessionLocal; from app.services.dashboard_service import DashboardService; from app.services.product_service import ProductService; db = SessionLocal(); ProductService(db).list_paginated(); DashboardService(db).summary(); db.close()"; then
+         docker compose logs --tail=200 backend
+         exit 1
+       fi
++      PUBLIC_BASE_URL="$PUBLIC_DEPLOY_URL" LOCAL_BASE_URL="$LOCAL_DEPLOY_URL" ./deployment/scripts/smoke_test_production.sh
+       docker compose ps
++      trap - EXIT
+ 
+ deploy_phase_4_verify:
+   stage: verify
+-  image: curlimages/curl:8.11.1
++  image: alpine:3.20
+   needs:
+     - deploy_phase_3_activate
+   environment:
+     name: production
+     url: $DEPLOY_URL
+   script:
+-    - curl --fail --retry 12 --retry-delay 5 "$DEPLOY_URL/"
+-    - curl --fail --retry 12 --retry-delay 5 "$DEPLOY_URL/health"
++    - apk add --no-cache bash curl openssl
++    - bash deployment/scripts/wait_for_application.sh --base-url "$LOCAL_DEPLOY_URL" --timeout 180
++    - bash deployment/scripts/wait_for_application.sh --base-url "$PUBLIC_DEPLOY_URL" --timeout 180
++    - PUBLIC_BASE_URL="$PUBLIC_DEPLOY_URL" LOCAL_BASE_URL="$LOCAL_DEPLOY_URL" bash deployment/scripts/smoke_test_production.sh
+   rules:
+     - if: $CI_COMMIT_BRANCH == $DEPLOY_BRANCH
+ 
++diagnose_production_availability:
++  extends: .deploy_local
++  stage: verify
++  image: alpine:3.20
++  needs: []
++  environment:
++    name: production-diagnostics
++  when: manual
++  manual_confirmation: "Run read-only production availability diagnostics?"
++  script:
++    - |
++      set -eu
++      apk add --no-cache bash curl docker-cli docker-cli-compose openssl procps util-linux
++      APP_DIR="$DEPLOY_PATH/current"
++      ARTIFACT_DIR="$CI_PROJECT_DIR/availability-diagnostics"
++      mkdir -p "$ARTIFACT_DIR"
++      test -d "$APP_DIR"
++      cd "$APP_DIR"
++      {
++        echo "== docker compose ps =="
++        docker compose ps || true
++        echo "== container health =="
++        docker inspect -f '{{.Name}} {{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' $(docker compose ps -q) || true
++      } > "$ARTIFACT_DIR/docker.txt" 2>&1
++      {
++        systemctl status docker --no-pager || true
++        systemctl status nginx --no-pager || true
++        systemctl status rainbow-fashions --no-pager || true
++      } > "$ARTIFACT_DIR/systemd.txt" 2>&1
++      ss -lntp > "$ARTIFACT_DIR/listening-sockets.txt" 2>&1 || true
++      {
++        curl --silent --show-error --include --connect-timeout 5 --max-time 15 "$LOCAL_DEPLOY_URL/health/live" || true
++        curl --silent --show-error --include --connect-timeout 5 --max-time 15 "$LOCAL_DEPLOY_URL/health/ready" || true
++        curl --silent --show-error --include --connect-timeout 5 --max-time 15 "$PUBLIC_DEPLOY_URL/health/live" || true
++        curl --silent --show-error --include --connect-timeout 5 --max-time 15 "$PUBLIC_DEPLOY_URL/health/ready" || true
++      } > "$ARTIFACT_DIR/health.txt" 2>&1
++      df -h > "$ARTIFACT_DIR/disk-usage.txt" 2>&1 || true
++      df -ih > "$ARTIFACT_DIR/inode-usage.txt" 2>&1 || true
++      docker system df > "$ARTIFACT_DIR/docker-disk.txt" 2>&1 || true
++      host="${PUBLIC_DEPLOY_URL#https://}"; host="${host%%/*}"
++      echo | openssl s_client -connect "$host:443" -servername "$host" 2>/dev/null | openssl x509 -noout -dates > "$ARTIFACT_DIR/certificate.txt" 2>&1 || true
++      docker compose logs --tail=300 --no-color backend > "$ARTIFACT_DIR/backend.log" 2>&1 || true
++      docker compose logs --tail=300 --no-color frontend > "$ARTIFACT_DIR/frontend.log" 2>&1 || true
++      journalctl -u nginx -n 300 --no-pager > "$ARTIFACT_DIR/nginx-journal.log" 2>&1 || true
++      journalctl -u rainbow-fashions -n 300 --no-pager > "$ARTIFACT_DIR/rainbow-fashions-journal.log" 2>&1 || true
++      ls -la "$DEPLOY_PATH" "$DEPLOY_PATH/releases" > "$ARTIFACT_DIR/releases.txt" 2>&1 || true
++  artifacts:
++    when: always
++    expire_in: 1 day
++    paths:
++      - availability-diagnostics/
++  rules:
++    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
++      when: manual
++    - when: never
++
+ # This is deliberately manual and is the only supported way to clear the
+ # production business database. It keeps user accounts, store configuration,
+ # and migration state, but clears all operational records and uploaded files.
+diff --git a/backend/app/schemas/stock_scan.py b/backend/app/schemas/stock_scan.py
+index 9e933fd..ea48b4b 100644
+--- a/backend/app/schemas/stock_scan.py
++++ b/backend/app/schemas/stock_scan.py
+@@ -6,6 +6,7 @@ from typing import Literal, Optional
+ from uuid import UUID
+ 
+ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
++from pydantic_core import PydanticCustomError
+ 
+ from app.models.enums import PricingType, StockScanMode, StockScanQuantityMode, StockScanStatus
+ from app.schemas.common import ORMBaseModel
+@@ -285,16 +286,16 @@ class BarcodeProductOnboarding(BaseModel):
+         if len(set([self.barcode, *optional_barcodes])) != len([self.barcode, *optional_barcodes]):
+             raise ValueError("Each barcode must be unique")
+         if self.action == "EXISTING_VARIANT" and not self.product_variant_id:
+-            raise ValueError("Select the existing variant to assign this barcode")
++            raise PydanticCustomError("EXISTING_VARIANT_REQUIRED", "Select the exact existing variant")
+         if self.action == "NEW_VARIANT" and not self.existing_product_id:
+-            raise ValueError("Select the product for the new variant")
++            raise PydanticCustomError("EXISTING_PRODUCT_REQUIRED", "Select the existing product")
+         if self.action == "NEW_PRODUCT":
+             if not self.product_name:
+-                raise ValueError("Enter a product name")
++                raise PydanticCustomError("PRODUCT_REQUIRED", "Enter a product name")
+             if not self.category_id:
+-                raise ValueError("Select a category")
++                raise PydanticCustomError("CATEGORY_REQUIRED", "Select a category")
+             if not self.brand_id:
+-                raise ValueError("Select a brand or choose Unbranded")
++                raise PydanticCustomError("BRAND_REQUIRED", "Select a brand or choose Unbranded")
+         return self
+ 
+ 
+diff --git a/backend/tests/test_existing_variant_barcode_onboarding.py b/backend/tests/test_existing_variant_barcode_onboarding.py
+index 49a6471..088fd1b 100644
+--- a/backend/tests/test_existing_variant_barcode_onboarding.py
++++ b/backend/tests/test_existing_variant_barcode_onboarding.py
+@@ -129,7 +129,7 @@ def test_new_variant_does_not_require_client_product_category_or_brand_metadata(
+ 
+ 
+ def test_new_product_requires_a_brand_or_unbranded_selection():
+-    with pytest.raises(ValidationError, match="Select a brand or choose Unbranded"):
++    with pytest.raises(ValidationError, match="Select a brand or choose Unbranded") as error:
+         BarcodeProductOnboarding(
+             session_id=uuid4(),
+             action="NEW_PRODUCT",
+@@ -141,6 +141,24 @@ def test_new_product_requires_a_brand_or_unbranded_selection():
+             selling_price=Decimal("395"),
+         )
+ 
++    assert error.value.errors()[0]["type"] == "BRAND_REQUIRED"
++
++
++def test_action_specific_required_ids_use_stable_friendly_validation_codes():
++    with pytest.raises(ValidationError) as existing_variant_error:
++        BarcodeProductOnboarding(session_id=uuid4(), action="EXISTING_VARIANT", barcode="RF-EXISTING")
++    with pytest.raises(ValidationError) as new_variant_error:
++        BarcodeProductOnboarding(
++            session_id=uuid4(),
++            action="NEW_VARIANT",
++            barcode="RF-NEW-VARIANT",
++            purchase_cost=Decimal("250"),
++            selling_price=Decimal("395"),
++        )
++
++    assert existing_variant_error.value.errors()[0]["type"] == "EXISTING_VARIANT_REQUIRED"
++    assert new_variant_error.value.errors()[0]["type"] == "EXISTING_PRODUCT_REQUIRED"
++
+ 
+ def test_existing_variant_creates_a_mapping_and_adds_only_the_draft_line():
+     service, db, _, store_id = configured_service()
+@@ -189,6 +207,45 @@ def test_new_variant_blocks_an_exact_duplicate_variant_before_creating_anything(
+     db.add.assert_not_called()
+ 
+ 
++def test_new_variant_uses_the_selected_store_product_without_overwriting_its_hierarchy():
++    service, _, _, store_id = configured_service()
++    product = SimpleNamespace(
++        id=uuid4(),
++        store_id=store_id,
++        name="Padded Bra",
++        category_id=uuid4(),
++        subcategory_id=uuid4(),
++        brand_id=uuid4(),
++    )
++    hierarchy_before = (product.name, product.category_id, product.subcategory_id, product.brand_id)
++    variant = active_variant(store_id)
++    payload = BarcodeProductOnboarding(
++        session_id=uuid4(),
++        action="NEW_VARIANT",
++        barcode="RF-NEW-SIZE",
++        existing_product_id=product.id,
++        # These deliberately untrusted fields are ignored for NEW_VARIANT.
++        category_id=uuid4(),
++        brand_id=uuid4(),
++        size="36/90 cm",
++        color="all",
++        style_code="SoftA",
++        purchase_cost=Decimal("250"),
++        selling_price=Decimal("395"),
++    )
++    service._barcode_mapping = MagicMock(return_value=None)
++    service._product_for_store = MagicMock(return_value=product)
++    service._matching_variant_for_payload = MagicMock(return_value=None)
++    service._create_variant = MagicMock(return_value=variant)
++    service._add_mapping_to_session = MagicMock()
++
++    service.onboard_product(payload, user(store_id))
++
++    service._product_for_store.assert_called_once_with(product.id, store_id, lock=True)
++    assert service._create_variant.call_args.args[0] is product
++    assert (product.name, product.category_id, product.subcategory_id, product.brand_id) == hierarchy_before
++
++
+ def test_existing_variant_does_not_change_variant_prices_costs_or_stock():
+     service, _, _, store_id = configured_service()
+     variant = active_variant(store_id)
+diff --git a/deployment/nginx/test.rainbow-fashions.in.conf b/deployment/nginx/test.rainbow-fashions.in.conf
+index ec21cf2..ca8c1fa 100644
+--- a/deployment/nginx/test.rainbow-fashions.in.conf
++++ b/deployment/nginx/test.rainbow-fashions.in.conf
+@@ -8,6 +8,8 @@ server {
+     listen 80;
+     listen [::]:80;
+     server_name test.rainbow-fashions.in;
++    access_log /var/log/nginx/test.rainbow-fashions.in.access.log;
++    error_log /var/log/nginx/test.rainbow-fashions.in.error.log warn;
+ 
+     # LetsEncrypt HTTP-01 challenge path. Certbot must be able to write here.
+     location ^~ /.well-known/acme-challenge/ {
+@@ -34,6 +36,8 @@ server {
+ 
+     server_tokens off;
+     client_max_body_size 15m;
++    access_log /var/log/nginx/test.rainbow-fashions.in.access.log;
++    error_log /var/log/nginx/test.rainbow-fashions.in.error.log warn;
+ 
+     add_header Strict-Transport-Security "max-age=31536000" always;
+     add_header X-Content-Type-Options "nosniff" always;
+@@ -46,12 +50,13 @@ server {
+     location / {
+         proxy_pass http://127.0.0.1:8080;
+         proxy_http_version 1.1;
++        proxy_redirect off;
+         proxy_set_header Host $host;
+         proxy_set_header X-Real-IP $remote_addr;
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+         proxy_set_header X-Forwarded-Proto https;
+         proxy_connect_timeout 10s;
+-        proxy_read_timeout 120s;
+-        proxy_send_timeout 120s;
++        proxy_read_timeout 300s;
++        proxy_send_timeout 300s;
+     }
+ }
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 9774472..3060a18 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -10,9 +10,10 @@ services:
+       - ./database/seed.sql:/docker-entrypoint-initdb.d/002_seed.sql:ro
+     healthcheck:
+       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+-      interval: 10s
++      interval: 15s
+       timeout: 5s
+-      retries: 5
++      retries: 10
++      start_period: 30s
+ 
+   backend:
+     build:
+@@ -32,10 +33,10 @@ services:
+       - "8000"
+     healthcheck:
+       test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health/ready', timeout=5).read()"]
+-      interval: 10s
++      interval: 15s
+       timeout: 5s
+-      retries: 5
+-      start_period: 15s
++      retries: 10
++      start_period: 30s
+ 
+   frontend:
+     build:
+@@ -45,15 +46,13 @@ services:
+       backend:
+         condition: service_healthy
+     ports:
+-      # Keep the application reachable until host Nginx and TLS are installed.
+-      # Switch to 127.0.0.1:8080:80 only as the final hostname-rollout step.
+-      - "80:80"
++      - "127.0.0.1:8080:80"
+     healthcheck:
+       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/health/ready"]
+-      interval: 10s
++      interval: 15s
+       timeout: 5s
+-      retries: 5
+-      start_period: 10s
++      retries: 10
++      start_period: 30s
+ 
+ volumes:
+   postgres_data:
+diff --git a/docs/CI_CD.md b/docs/CI_CD.md
+index 4d5f4d9..439ead9 100644
+--- a/docs/CI_CD.md
++++ b/docs/CI_CD.md
+@@ -3,7 +3,7 @@
+ The pipeline deploys the `shop-inventory` branch to:
+ 
+ ```text
+-http://178.238.237.182/
++https://test.rainbow-fashions.in/
+ ```
+ 
+ ## GitLab CI variables
+@@ -13,7 +13,9 @@ Optional overrides can be set in GitLab under **Settings > CI/CD > Variables**:
+ 
+ ```text
+ DEPLOY_PATH=/opt/rainbow-fashions
+-DEPLOY_URL=http://178.238.237.182
++DEPLOY_URL=https://test.rainbow-fashions.in
++LOCAL_DEPLOY_URL=http://127.0.0.1:8080
++PUBLIC_DEPLOY_URL=https://test.rainbow-fashions.in
+ DEPLOY_BRANCH=shop-inventory
+ ```
+ 
+@@ -40,9 +42,12 @@ generation commands, permissions, and validation rules.
+ 
+ The `shop-inventory` deployment runs automatically after validation passes:
+ 
++0. `verify_domain_preflight`: diagnoses registrar delegation, public resolver A records, and port-80 reachability before public HTTPS deployment work.
+ 1. `deploy_phase_1_upload`: uploads and extracts the release bundle.
+ 2. `deploy_phase_2_backup`: backs up the current PostgreSQL database when an existing release is running.
+ 3. `deploy_phase_3_activate`: points `current` at the new release, runs Alembic migrations, and starts Docker Compose.
+-4. `deploy_phase_4_verify`: checks the app URL and backend health endpoint.
++4. `deploy_phase_4_verify`: checks local and public liveness/readiness and runs production smoke tests.
+ 
+ Validation and Docker build jobs run before deployment, so broken backend tests, frontend lint/typecheck/build, or Compose builds stop the release before it reaches the server.
++
++Failed activation restores the previous `current` symlink and restarts the previous release. It does not restore a database backup automatically, so migrations must be backward-compatible with the immediately previous release.
+diff --git a/docs/DEPLOYMENT.md b/docs/DEPLOYMENT.md
+index 230b6a3..fedd8fd 100644
+--- a/docs/DEPLOYMENT.md
++++ b/docs/DEPLOYMENT.md
+@@ -30,6 +30,15 @@ deployment/nginx/rainbow-fashions.conf
+ 
+ In production, place TLS termination in Nginx using Certbot or a managed load balancer.
+ 
++For the hardened `test.rainbow-fashions.in` deployment, use:
++
++```text
++docs/DEPLOYMENT_AVAILABILITY_HARDENING.md
++deployment/nginx/test.rainbow-fashions.in.conf
++deployment/systemd/rainbow-fashions.service
++deployment/systemd/rainbow-health-watch.timer
++```
++
+ ## Backups
+ 
+ Create backup:
+diff --git a/frontend/nginx.conf b/frontend/nginx.conf
+index 83c8127..277b17b 100644
+--- a/frontend/nginx.conf
++++ b/frontend/nginx.conf
+@@ -33,7 +33,7 @@ server {
+         proxy_set_header Host $host;
+         proxy_set_header X-Real-IP $remote_addr;
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+-        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
++        proxy_set_header X-Forwarded-Proto $scheme;
+     }
+ 
+     location ^~ /uploads/ {
+@@ -44,7 +44,7 @@ server {
+         proxy_set_header Host $host;
+         proxy_set_header X-Real-IP $remote_addr;
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+-        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
++        proxy_set_header X-Forwarded-Proto $scheme;
+     }
+ 
+     location = /health {
+@@ -52,7 +52,15 @@ server {
+         proxy_set_header Host $host;
+         proxy_set_header X-Real-IP $remote_addr;
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+-        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
++        proxy_set_header X-Forwarded-Proto $scheme;
++    }
++
++    location = /health/live {
++        proxy_pass http://backend:8000/health/live;
++        proxy_set_header Host $host;
++        proxy_set_header X-Real-IP $remote_addr;
++        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
++        proxy_set_header X-Forwarded-Proto $scheme;
+     }
+ 
+     location = /health/ready {
+@@ -60,6 +68,6 @@ server {
+         proxy_set_header Host $host;
+         proxy_set_header X-Real-IP $remote_addr;
+         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+-        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
++        proxy_set_header X-Forwarded-Proto $scheme;
+     }
+ }
+diff --git a/frontend/src/components/BarcodeOnboardingDialog.tsx b/frontend/src/components/BarcodeOnboardingDialog.tsx
+index cd214e9..e8b021b 100644
+--- a/frontend/src/components/BarcodeOnboardingDialog.tsx
++++ b/frontend/src/components/BarcodeOnboardingDialog.tsx
+@@ -101,6 +101,7 @@ export default function BarcodeOnboardingDialog({
+   const sellingPriceRef = useRef<HTMLInputElement>(null);
+   const mrpRef = useRef<HTMLInputElement>(null);
+   const packageQuantityRef = useRef<HTMLInputElement>(null);
++  const quantityRef = useRef<HTMLInputElement>(null);
+ 
+   const hierarchyQuery = useQuery({
+     queryKey: ["category-hierarchy"],
+@@ -138,6 +139,7 @@ export default function BarcodeOnboardingDialog({
+       field === "selling_price" ? sellingPriceRef.current :
+       field === "mrp" ? mrpRef.current :
+       field === "package_quantity" ? packageQuantityRef.current :
++      field === "quantity" ? quantityRef.current :
+       null;
+     window.requestAnimationFrame(() => {
+       target?.scrollIntoView({ behavior: "smooth", block: "center" });
+@@ -159,8 +161,8 @@ export default function BarcodeOnboardingDialog({
+     if (!variant) return;
+     setForm((current) => ({
+       ...current,
+-      mrp: variant.mrp ? String(variant.mrp) : current.mrp,
+-      selling_price: variant.selling_price ? String(variant.selling_price) : current.selling_price,
++      mrp: variant.mrp === null || variant.mrp === undefined ? current.mrp : String(variant.mrp),
++      selling_price: variant.selling_price === null || variant.selling_price === undefined ? current.selling_price : String(variant.selling_price),
+     }));
+   }
+ 
+@@ -339,9 +341,13 @@ export default function BarcodeOnboardingDialog({
+                     <div className="text-xs font-semibold uppercase tracking-wide text-primary-800">Inherited product</div>
+                     <div className="mt-1 font-semibold text-primary-950">{selectedProduct.name}</div>
+                     <div className="mt-1 text-sm text-primary-900">{[selectedProduct.category_name, selectedProduct.subcategory_name, selectedProduct.brand_name || "Unbranded"].filter(Boolean).join(" · ")}</div>
+-                    {defaultVariant(selectedProduct) ? <div className="mt-1 text-xs text-primary-800">Price copied from {detail(defaultVariant(selectedProduct)!)}.</div> : null}
++                    {defaultVariant(selectedProduct) ? (
++                      <div className="mt-1 text-xs text-primary-800">
++                        Current prices from {detail(defaultVariant(selectedProduct)!)}: MRP ₹{defaultVariant(selectedProduct)!.mrp ?? "—"} · Selling ₹{defaultVariant(selectedProduct)!.selling_price}
++                      </div>
++                    ) : null}
+                   </div>
+-                  <Button type="button" variant="secondary" onClick={() => copyPriceFromVariant(defaultVariant(selectedProduct))}>Copy price</Button>
++                  <Button type="button" variant="secondary" onClick={() => copyPriceFromVariant(defaultVariant(selectedProduct))}>Copy price from existing variant</Button>
+                 </div>
+               ) : (
+                 <p className="text-sm text-muted">Select the existing product first. Category, subcategory, and brand will be inherited from the backend.</p>
+@@ -357,7 +363,7 @@ export default function BarcodeOnboardingDialog({
+               </label>
+               <label className="field-label">
+                 Category
+-                <select ref={categoryRef} className="field-input" value={form.category_id} onChange={(event) => chooseCategory(event.target.value)}>
++                <select ref={categoryRef} className="field-input" value={form.category_id ?? ""} onChange={(event) => chooseCategory(event.target.value)}>
+                   <option value="">Select category</option>
+                   {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                 </select>
+@@ -389,7 +395,7 @@ export default function BarcodeOnboardingDialog({
+               </div>
+               <label className="field-label">
+                 Brand
+-                <select ref={brandRef} className="field-input" disabled={!form.category_id} value={form.brand_id} onChange={(event) => update("brand_id", event.target.value)}>
++                <select ref={brandRef} className="field-input" disabled={!form.category_id} value={form.brand_id ?? ""} onChange={(event) => update("brand_id", event.target.value)}>
+                   <option value="">Select brand</option>
+                   {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+                 </select>
+@@ -427,12 +433,12 @@ export default function BarcodeOnboardingDialog({
+                 </div>
+               ) : <p className="text-sm text-muted">Select the exact size and colour above.</p>}
+               {session.quantity_mode === "QUANTITY_ENTRY" ? (
+-                <label className="field-label max-w-xs">Quantity to add<input className="field-input" min="1" type="number" value={form.quantity} onChange={(event) => update("quantity", event.target.value)} /></label>
++                <label className="field-label max-w-xs">Quantity to add<input ref={quantityRef} className="field-input" min="1" type="number" value={form.quantity} onChange={(event) => update("quantity", event.target.value)} /></label>
+               ) : null}
+             </section>
+           ) : (
+             <section className="grid gap-3 sm:grid-cols-3">
+-              <label className="field-label">Quantity to add<input className="field-input" min="1" type="number" value={form.quantity} onChange={(event) => update("quantity", event.target.value)} /></label>
++              <label className="field-label">Quantity to add<input ref={quantityRef} className="field-input" min="1" type="number" value={form.quantity} onChange={(event) => update("quantity", event.target.value)} /></label>
+               {action === "NEW_PRODUCT" ? (
+                 <>
+                   <label className="field-label">Product date<input className="field-input" type="date" value={form.product_date} onChange={(event) => update("product_date", event.target.value)} /></label>
+diff --git a/frontend/src/components/barcodeOnboardingLogic.test.ts b/frontend/src/components/barcodeOnboardingLogic.test.ts
+index f2abf3f..d721342 100644
+--- a/frontend/src/components/barcodeOnboardingLogic.test.ts
++++ b/frontend/src/components/barcodeOnboardingLogic.test.ts
+@@ -84,6 +84,17 @@ describe("newProductBarcodePayload", () => {
+   it("preserves the scanned barcode as a string with leading zeros", () => {
+     expect(newProductBarcodePayload("session-1", "00008904481711450", form).barcode).toBe("00008904481711450");
+   });
++
++  it("refuses to send blank required UUID strings when validation is bypassed", () => {
++    const invalidForm = {
++      ...form,
++      category_id: " ",
++      subcategory_id: " ",
++      brand_id: " ",
++    };
++
++    expect(() => newProductBarcodePayload("session-1", "8904481711450", invalidForm)).toThrow("Select a category");
++  });
+ });
+ 
+ describe("newVariantBarcodePayload", () => {
+@@ -116,6 +127,20 @@ describe("validateBarcodeOnboarding", () => {
+ 
+     expect(validation).toBeNull();
+   });
++
++  it("rejects an invalid draft quantity instead of silently changing it", () => {
++    expect(validateBarcodeOnboarding("NEW_VARIANT", { ...form, quantity: "0" }, "product-1", "")).toEqual({
++      message: "Enter a quantity of at least 1",
++      field: "quantity",
++    });
++  });
++
++  it("validates quantity before assigning an existing variant", () => {
++    expect(validateBarcodeOnboarding("EXISTING_VARIANT", { ...form, quantity: "0" }, "", "variant-1")).toEqual({
++      message: "Enter a quantity of at least 1",
++      field: "quantity",
++    });
++  });
+ });
+ 
+ describe("barcodeOnboardingErrorMessage", () => {
+diff --git a/frontend/src/components/barcodeOnboardingLogic.ts b/frontend/src/components/barcodeOnboardingLogic.ts
+index fb2f81e..7bd3345 100644
+--- a/frontend/src/components/barcodeOnboardingLogic.ts
++++ b/frontend/src/components/barcodeOnboardingLogic.ts
+@@ -40,7 +40,8 @@ export type BarcodeOnboardingField =
+   | "purchase_cost"
+   | "selling_price"
+   | "mrp"
+-  | "package_quantity";
++  | "package_quantity"
++  | "quantity";
+ 
+ export interface BarcodeOnboardingValidation {
+   message: string;
+@@ -129,8 +130,8 @@ export interface NewProductBarcodePayload {
+   image_url: string | null;
+ }
+ 
+-export function optionalUuid(value: string): string | null {
+-  const normalized = value.trim();
++export function optionalUuid(value: string | null | undefined): string | null {
++  const normalized = value?.trim();
+   return normalized ? normalized : null;
+ }
+ 
+@@ -205,14 +206,16 @@ export function newProductBarcodePayload(
+ ): NewProductBarcodePayload {
+   const categoryId = optionalUuid(form.category_id);
+   const brandId = optionalUuid(form.brand_id);
++  if (!categoryId) throw new Error("Select a category");
++  if (!brandId) throw new Error("Select a brand");
+   return {
+     session_id: sessionId,
+     action: "NEW_PRODUCT",
+     barcode,
+     product_name: form.product_name.trim(),
+-    category_id: categoryId ?? "",
++    category_id: categoryId,
+     subcategory_id: optionalUuid(form.subcategory_id),
+-    brand_id: brandId ?? "",
++    brand_id: brandId,
+     product_code: optionalText(form.product_code),
+     product_date: optionalText(form.product_date),
+     minimum_stock: nonNegativeInt(form.minimum_stock),
+@@ -228,6 +231,11 @@ export function validateBarcodeOnboarding(
+   selectedProductId: string,
+   selectedVariantId: string,
+ ): BarcodeOnboardingValidation | null {
++  const quantity = Number(form.quantity);
++  if (!Number.isInteger(quantity) || quantity < 1) {
++    return { message: "Enter a quantity of at least 1", field: "quantity" };
++  }
++
+   if (action === "EXISTING_VARIANT") {
+     return selectedVariantId ? null : { message: "Select the exact existing variant", field: "selected_variant" };
+   }
+@@ -263,7 +271,11 @@ export function validateBarcodeOnboarding(
+   if (mrp !== null && sellingPrice > mrp) {
+     return { message: "Selling price cannot be greater than MRP", field: "selling_price" };
+   }
+-  if (positiveInt(form.package_quantity) > 1 && form.scan_unit !== "PACK") {
++  const packageQuantity = Number(form.package_quantity);
++  if (!Number.isInteger(packageQuantity) || packageQuantity < 1) {
++    return { message: "Enter pieces per scan", field: "package_quantity" };
++  }
++  if (packageQuantity > 1 && form.scan_unit !== "PACK") {
+     return { message: "Package quantities above one must use Pack as the scan unit", field: "package_quantity" };
+   }
+ 
+diff --git a/frontend/src/pages/NewSalePage.test.tsx b/frontend/src/pages/NewSalePage.test.tsx
+index 3a6b37f..bab268a 100644
+--- a/frontend/src/pages/NewSalePage.test.tsx
++++ b/frontend/src/pages/NewSalePage.test.tsx
+@@ -207,7 +207,8 @@ describe("Current Sale cart panel", () => {
+     expect(markup).not.toContain("Your cart is empty");
+     expect(markup).toContain('data-testid="cart-item-list"');
+     expect(markup).toContain("min-h-[148px]");
+-    expect(markup).toContain("max-h-[40svh]");
++    expect(markup).toContain("flex-1");
++    expect(markup).toContain("overflow-x-hidden");
+     expect(markup).toContain("overflow-y-auto");
+     expect(markup).toContain("Softa Padded Bra");
+     expect(markup).toContain("Brand: WithIn");
+diff --git a/frontend/src/pages/NewSalePage.tsx b/frontend/src/pages/NewSalePage.tsx
+index a32722f..c9af1a9 100644
+--- a/frontend/src/pages/NewSalePage.tsx
++++ b/frontend/src/pages/NewSalePage.tsx
+@@ -102,7 +102,7 @@ export function CartItemRow({ line, onChange, onSetQuantity, onRemove }: { line:
+   return <article className="p-4" data-testid={`cart-line-${line.variant.variant_id}`}>
+     <div className="flex items-start justify-between gap-3">
+       <div className="min-w-0">
+-        <h3 className="truncate font-bold text-slate-950">{line.product.name}</h3>
++        <h3 className="line-clamp-2 break-words font-bold leading-5 text-slate-950">{line.product.name}</h3>
+         <p className="mt-1 text-xs font-bold text-teal-800">Brand: {line.product.brand_name || "Unbranded"}</p>
+         <p className="mt-1 text-xs text-slate-600">{line.product.category_name || "Uncategorised"} · Size: {line.variant.size || "Standard"} · Colour: {line.variant.color || "No colour"}</p>
+         <p className="mt-1 text-xs text-slate-500">{line.variant.barcode ? `Barcode: ${line.variant.barcode}` : `SKU: ${line.variant.sku}`}</p>
+@@ -128,12 +128,12 @@ function SaleTotals({ subtotal, discountType, discountValue, preview, itemCount,
+ 
+ export function CurrentSalePanel({ cart, customerName, paymentMode, discountType, discountValue, subtotal, preview, pending, onCustomer, onPayment, onDiscountType, onDiscountValue, onChangeQuantity, onSetQuantity, onRemove, onClear, onSubmit }: { cart: CartLine[]; customerName: string; paymentMode: PaymentMode; discountType: SaleDiscountType; discountValue: string; subtotal: number; preview: SaleDiscountPreview; pending: boolean; onCustomer: (value: string) => void; onPayment: (value: PaymentMode) => void; onDiscountType: (value: SaleDiscountType) => void; onDiscountValue: (value: string) => void; onChangeQuantity: (variantId: string, delta: number) => void; onSetQuantity: (variantId: string, quantity: number) => void; onRemove: (variantId: string) => void; onClear: () => void; onSubmit: (event: FormEvent) => void }) {
+   const itemCount = cart.reduce((totalItems, line) => totalItems + line.quantity, 0);
+-  return <form onSubmit={onSubmit} className="flex min-h-0 max-h-[calc(100dvh-6rem)] w-full flex-col overflow-y-auto overscroll-contain rounded-2xl border border-slate-200 bg-white shadow-xl">
++  return <form onSubmit={onSubmit} className="flex h-[min(760px,calc(100dvh-6rem))] min-h-0 w-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
+     <header className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 py-4">
+       <div><h2 className="flex items-center gap-2 text-lg font-extrabold text-slate-950"><ShoppingCart size={20} className="text-teal-700" /> Current Sale</h2><p className="mt-1 text-xs font-semibold text-slate-500">{cart.length} line{cart.length === 1 ? "" : "s"} · {itemCount} unit{itemCount === 1 ? "" : "s"}</p></div>
+       {cart.length ? <Button type="button" variant="ghost" size="sm" className="text-rose-700" onClick={onClear}><Trash2 size={15} /> Clear</Button> : null}
+     </header>
+-    <div className="min-h-[148px] max-h-[40svh] shrink-0 overflow-x-visible overflow-y-auto divide-y divide-slate-100" data-testid="cart-item-list">
++    <div className="min-h-[148px] flex-1 overflow-x-hidden overflow-y-auto divide-y divide-slate-100 [scrollbar-gutter:stable]" data-testid="cart-item-list">
+       {cart.length ? cart.map((line) => <CartItemRow key={line.variant.variant_id} line={line} onChange={(delta) => onChangeQuantity(line.variant.variant_id, delta)} onSetQuantity={(quantity) => onSetQuantity(line.variant.variant_id, quantity)} onRemove={() => onRemove(line.variant.variant_id)} />) : <div className="grid min-h-56 place-items-center p-6 text-center"><div><div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-teal-50 text-teal-700"><ShoppingBag size={25} /></div><div className="mt-3 font-bold text-slate-900">Your cart is empty</div><p className="mt-1 max-w-xs text-sm text-slate-500">Search, scan, or choose a product to start the sale.</p><p className="mt-2 text-xs font-semibold text-teal-700">Press F2 to focus product search.</p></div></div>}
+     </div>
+     <div className="shrink-0 space-y-3 border-t border-slate-100 px-4 py-3"><label className="field-label text-xs">Customer <span className="text-slate-400">Optional</span><input className="field-input mt-1 h-10" placeholder="Walk-in customer" value={customerName} onChange={(event) => onCustomer(event.target.value)} /></label><div><div className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Payment method</div><div className="grid grid-cols-4 gap-2">{paymentOptions.map((option) => { const Icon = option.icon; return <button key={option.value} type="button" onClick={() => onPayment(option.value)} className={`grid h-12 place-items-center rounded-xl border text-xs font-bold transition ${paymentMode === option.value ? "border-teal-600 bg-teal-50 text-teal-800 shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-teal-200"}`}><Icon size={17} /><span>{option.label}</span></button>; })}</div></div><div><label className="field-label text-xs" htmlFor="sale-discount-type">Discount type</label><select id="sale-discount-type" aria-label="Discount type" className="field-input mt-1 h-10" value={discountType} onChange={(event) => onDiscountType(event.target.value as SaleDiscountType)}><option value="PERCENTAGE">Percentage (%)</option><option value="FIXED_AMOUNT">Fixed amount (₹)</option></select></div><div><label className="field-label text-xs" htmlFor="sale-discount-value">Discount value</label><div className="relative mt-1"><input id="sale-discount-value" aria-label="Discount value" className="field-input h-10 pr-10" inputMode="decimal" pattern="[0-9]*[.]?[0-9]{0,2}" value={discountValue} onWheel={(event) => event.currentTarget.blur()} onChange={(event) => onDiscountValue(event.target.value)} /><span className="pointer-events-none absolute inset-y-0 right-3 grid place-items-center text-sm font-bold text-slate-500">{discountType === "PERCENTAGE" ? "%" : "₹"}</span></div>{preview.error ? <p role="alert" className="mt-1 text-xs font-medium text-rose-700">{preview.error}</p> : null}</div><div><div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">Quick percentage</div><div className="grid grid-cols-4 gap-2">{[5, 10, 15, 20].map((value) => <button key={value} type="button" className="h-9 rounded-lg border border-teal-200 bg-teal-50 text-xs font-bold text-teal-800 hover:border-teal-400" onClick={() => { onDiscountType("PERCENTAGE"); onDiscountValue(String(value)); }}>{value}%</button>)}</div></div><Button type="button" variant="ghost" size="sm" className="w-full" disabled={discountValue === "0"} onClick={() => onDiscountValue("0")}>Clear discount</Button></div>
+@@ -171,7 +171,7 @@ export default function NewSalePage() {
+         <PosCommandBar searchRef={searchRef} search={search} loading={catalogQuery.isFetching} onSearch={setSearch} onEnter={selectFirstResult} onScan={scanBarcode} brands={brands} categories={categories} brand={brandFilter} category={categoryFilter} stock={stockFilter} onBrand={setBrandFilter} onCategory={setCategoryFilter} onStock={setStockFilter} onClear={() => { setBrandFilter(""); setCategoryFilter(""); setStockFilter("ALL"); }} scanError={scanError} />
+         {catalogQuery.isLoading ? <div className="mt-4"><SkeletonRows rows={6} /></div> : catalogQuery.error ? <div className="mt-4"><ErrorState message={catalogQuery.error instanceof Error ? catalogQuery.error.message : "Unable to load the sellable catalog"} /></div> : <ProductGroupGrid products={filteredProducts} selected={selectedProduct} onChoose={setSelectedProduct} />}
+       </section>
+-      <aside className="hidden xl:block xl:sticky xl:top-20 xl:h-fit"><CurrentSalePanel {...panelProps} /></aside>
++      <aside className="hidden xl:sticky xl:top-20 xl:block xl:h-[calc(100dvh-6rem)] xl:min-h-0"><CurrentSalePanel {...panelProps} /></aside>
+     </div>
+     <MobileCartBar itemCount={itemCount} total={total} onOpen={() => setMobileCartOpen(true)} />
+     <Dialog open={mobileCartOpen} title="Current Sale" description={`${cart.length} product lines · ${itemCount} units`} onClose={() => setMobileCartOpen(false)} maxWidth="lg"><CurrentSalePanel {...panelProps} /></Dialog>
+diff --git a/frontend/src/pages/ProductsPage.tsx b/frontend/src/pages/ProductsPage.tsx
+index ea85667..fa17c92 100644
+--- a/frontend/src/pages/ProductsPage.tsx
++++ b/frontend/src/pages/ProductsPage.tsx
+@@ -1,6 +1,6 @@
+ import { ChangeEvent, DragEvent, FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
+ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+-import { Barcode, ChevronDown, ChevronLeft, ChevronRight, Download, Edit3, FileDown, FileUp, Filter, ImagePlus, PackageOpen, Plus, RefreshCw, Search, Trash2, Wand2, X } from "lucide-react";
++import { Archive, Barcode, ChevronDown, ChevronLeft, ChevronRight, Download, Edit3, FileDown, FileUp, Filter, History, ImagePlus, PackageOpen, Plus, RefreshCw, Search, Trash2, Wand2, X } from "lucide-react";
+ import { useNavigate } from "react-router-dom";
+ import { ApiError, api } from "../api/client";
+ import BarcodeScannerInput from "../components/BarcodeScannerInput";
+@@ -107,18 +107,6 @@ function imageSrc(imageUrl?: string | null) {
+   return `${window.location.protocol}//${window.location.hostname}:8000${imageUrl}`;
+ }
+ 
+-function formatReferenceCounts(references: Record<string, number>) {
+-  const labels: Record<string, string> = {
+-    inventory_transactions: "inventory transactions",
+-    purchase_items: "purchase items",
+-    sale_items: "sale items",
+-    inventory_records: "inventory records",
+-    variants: "variants",
+-  };
+-  const values = Object.entries(references).filter(([, count]) => count > 0).map(([key, count]) => `${count} ${labels[key] ?? key.replace(/_/g, " ")}`);
+-  return values.length ? values.join(", ") : "No business references";
+-}
+-
+ function downloadBlob(blob: Blob, filename: string) {
+   const url = URL.createObjectURL(blob);
+   const anchor = document.createElement("a");
+@@ -244,6 +232,9 @@ export default function ProductsPage() {
+ 
+   function invalidateProducts() {
+     void queryClient.invalidateQueries({ queryKey: ["products"] });
++    void queryClient.invalidateQueries({ queryKey: ["inventory-products"] });
++    void queryClient.invalidateQueries({ queryKey: ["adjustment-products"] });
++    void queryClient.invalidateQueries({ queryKey: ["stock-history"] });
+   }
+ 
+   function validateImage(file: File) {
+@@ -397,6 +388,11 @@ export default function ProductsPage() {
+     setFormOpen(true);
+   }
+ 
++  function openStockAdjustmentForProduct(product: Product | null) {
++    const variantId = product?.variants?.length === 1 ? product.variants[0].id : "";
++    navigate(variantId ? `/stock-adjustment?variant_id=${variantId}` : "/stock-adjustment");
++  }
++
+   async function openPermanentDelete(productIds: string[]) {
+     if (!canPermanentlyDelete) {
+       toast.error("You do not have permission to permanently delete products.");
+@@ -700,8 +696,12 @@ export default function ProductsPage() {
+         </div> : null}
+       </div>
+ 
+-      <Dialog open={formOpen} title={editing ? "Edit product" : "Add product"} description={editing ? `Update ${editing.name} without changing its stock history.` : "Add the essentials now. You can edit details later."} onClose={cancelEdit} maxWidth="xl">
++      <Dialog open={formOpen} title={editing ? "Edit product" : "Add product"} description={editing ? "Changes product information only. Stock quantity is unchanged." : "Add the essentials now. Opening stock is recorded only when the product is created."} onClose={cancelEdit} maxWidth="xl">
+       <form onSubmit={(event: FormEvent) => { event.preventDefault(); saveMutation.mutate({ print: false }); }} className="grid gap-4 sm:grid-cols-2">
++        {editing ? <div className="rounded-lg border border-teal-200 bg-teal-50 p-3 text-sm text-teal-900 sm:col-span-2">
++          <div className="font-semibold">Product editing updates catalogue details only.</div>
++          <p className="mt-1">Use this form for product name, category, brand, barcode, price, image, low-stock alert, and active status. Use Stock Adjustment to correct current physical stock.</p>
++        </div> : null}
+         <label className="field-label">Category<span>*</span>
+         <select autoFocus className="field-input" value={form.category_id} onChange={(event) => setForm({ ...form, category_id: event.target.value, subcategory_id: "", brand_id: "" })} disabled={saveMutation.isPending}>
+           <option value="">Category</option>
+@@ -757,7 +757,7 @@ export default function ProductsPage() {
+           <option value="MRP">MRP</option>
+         </select></label>
+         <label className="field-label">MRP<input className="field-input" placeholder="Optional" type="number" min="0" step="0.01" value={form.mrp} onChange={(event) => setForm({ ...form, mrp: event.target.value })} disabled={saveMutation.isPending} /></label>
+-        <div className="field-label"><span>{editing ? "Current stock" : "Opening stock"}</span><input className="field-input mt-1" type="number" min="0" value={form.current_stock} onChange={(event) => setForm({ ...form, current_stock: event.target.value })} disabled={saveMutation.isPending || Boolean(editing)} />{editing ? <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs font-medium text-slate-500"><span>Current stock cannot be edited directly. Use Stock Adjustment.</span><Button type="button" variant="secondary" size="sm" onClick={() => { const variantId = editing.variants?.length === 1 ? editing.variants[0].id : ""; navigate(variantId ? `/stock-adjustment?variant_id=${variantId}` : "/stock-adjustment"); }}><span>Adjust stock</span></Button></div> : null}</div>
++        <div className="field-label"><span>{editing ? "Current stock" : "Opening stock"}</span><input className="field-input mt-1" type="number" min="0" value={form.current_stock} onChange={(event) => setForm({ ...form, current_stock: event.target.value })} disabled={saveMutation.isPending || Boolean(editing)} />{editing ? <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-950"><p>Current stock is transaction-controlled and cannot be edited as a product field.</p><Button type="button" variant="secondary" size="sm" className="mt-2" onClick={() => openStockAdjustmentForProduct(editing)}><span>Open Stock Adjustment</span></Button></div> : null}</div>
+         <label className="field-label">Low stock alert<input className="field-input" type="number" min="0" value={form.minimum_stock} onChange={(event) => setForm({ ...form, minimum_stock: event.target.value })} disabled={saveMutation.isPending} /></label>
+         <label className="flex h-10 items-center gap-2 rounded-md border border-line px-3 text-sm text-slate-600 sm:col-span-2">
+           <input type="checkbox" checked={form.is_active} onChange={(event) => setForm({ ...form, is_active: event.target.checked })} disabled={saveMutation.isPending} />
+@@ -899,7 +899,7 @@ export default function ProductsPage() {
+                         </div>
+                       </td>
+                     </tr>
+-                    {expanded ? <tr className="bg-slate-50/60"><td className="px-4 py-4" colSpan={9}><div className="overflow-x-auto rounded-md border border-line bg-white"><table className="min-w-[920px] w-full text-left text-xs"><thead className="bg-slate-50 uppercase text-slate-500"><tr><th className="px-3 py-2">Size</th><th className="px-3 py-2">Colour</th><th className="px-3 py-2">Barcode</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2 text-right">MRP</th><th className="px-3 py-2 text-right">Selling</th><th className="px-3 py-2 text-right">Cost</th><th className="px-3 py-2 text-right">Stock</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Actions</th></tr></thead><tbody className="divide-y divide-line">{product.variants.map((variant) => <tr key={variant.id}><td className="px-3 py-2 font-semibold">{variant.size || "Standard"}</td><td className="px-3 py-2">{variant.color || "-"}</td><td className="px-3 py-2 font-mono">{variant.barcode}</td><td className="px-3 py-2 font-mono">{variant.internal_sku}</td><td className="px-3 py-2 text-right">{variant.mrp ? money(variant.mrp) : "-"}</td><td className="px-3 py-2 text-right font-semibold">{money(variant.selling_price)}</td><td className="px-3 py-2 text-right">{money(variant.average_cost || variant.last_purchase_cost)}</td><td className="px-3 py-2 text-right font-bold">{variant.current_stock}</td><td className="px-3 py-2"><span className={`rounded px-2 py-1 font-medium ${variant.is_active ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-600"}`}>{variant.is_active ? "Active" : "Inactive"}</span></td><td className="px-3 py-2"><div className="flex gap-1"><Button type="button" variant="secondary" size="sm" onClick={() => navigate(`/stock-adjustment?variant_id=${variant.id}`)}>Stock</Button><Button type="button" variant="ghost" size="icon" title="Print variant barcode" onClick={() => printVariantLabel(product, variant)}><Barcode size={15} /></Button></div></td></tr>)}</tbody></table></div></td></tr> : null}
++                    {expanded ? <tr className="bg-slate-50/60"><td className="px-4 py-4" colSpan={9}><div className="overflow-x-auto rounded-md border border-line bg-white"><table className="min-w-[920px] w-full text-left text-xs"><thead className="bg-slate-50 uppercase text-slate-500"><tr><th className="px-3 py-2">Size</th><th className="px-3 py-2">Colour</th><th className="px-3 py-2">Barcode</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2 text-right">MRP</th><th className="px-3 py-2 text-right">Selling</th><th className="px-3 py-2 text-right">Cost</th><th className="px-3 py-2 text-right">Stock</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Actions</th></tr></thead><tbody className="divide-y divide-line">{product.variants.map((variant) => <tr key={variant.id}><td className="px-3 py-2 font-semibold">{variant.size || "Standard"}</td><td className="px-3 py-2">{variant.color || "-"}</td><td className="px-3 py-2 font-mono">{variant.barcode}</td><td className="px-3 py-2 font-mono">{variant.internal_sku}</td><td className="px-3 py-2 text-right">{variant.mrp ? money(variant.mrp) : "-"}</td><td className="px-3 py-2 text-right font-semibold">{money(variant.selling_price)}</td><td className="px-3 py-2 text-right">{money(variant.average_cost || variant.last_purchase_cost)}</td><td className="px-3 py-2 text-right font-bold">{variant.current_stock}</td><td className="px-3 py-2"><span className={`rounded px-2 py-1 font-medium ${variant.is_active ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-600"}`}>{variant.is_active ? "Active" : "Inactive"}</span></td><td className="px-3 py-2"><div className="flex gap-1"><Button type="button" variant="secondary" size="sm" onClick={() => navigate(`/stock-adjustment?variant_id=${variant.id}`)}>Adjust stock</Button><Button type="button" variant="ghost" size="icon" title="Print variant barcode" onClick={() => printVariantLabel(product, variant)}><Barcode size={15} /></Button></div></td></tr>)}</tbody></table></div></td></tr> : null}
+                   </Fragment>
+                 );
+               })}
+@@ -932,7 +932,7 @@ export default function ProductsPage() {
+       <Dialog open={deleteDialogOpen} title={`Permanently delete ${deleteCheck ? deleteCheck.deletable.length + deleteCheck.blocked.length : selectedCount} product${(deleteCheck ? deleteCheck.deletable.length + deleteCheck.blocked.length : selectedCount) === 1 ? "" : "s"}?`} description="This action cannot be undone." onClose={() => setDeleteDialogOpen(false)} maxWidth="lg">
+         {!deleteCheck ? <SkeletonRows rows={3} /> : <div className="space-y-5">
+           {deleteCheck.deletable.length ? <section><h3 className="text-sm font-semibold text-foreground">Eligible for permanent deletion</h3><p className="mt-1 text-sm text-muted">The following products and their unused variants will be permanently removed.</p><ul className="mt-3 space-y-1 text-sm text-foreground">{deleteCheck.deletable.map((item) => <li key={item.product_id}>- {item.product_name}</li>)}</ul></section> : null}
+-          {deleteCheck.blocked.length ? <section className="rounded-lg border border-amber-200 bg-amber-50 p-4"><h3 className="text-sm font-semibold text-amber-950">Blocked products</h3><ul className="mt-2 space-y-2 text-sm text-amber-900">{deleteCheck.blocked.map((item) => <li key={item.product_id}><div className="font-medium">{item.product_name}</div><div>{item.reason}</div><div className="mt-1 text-xs">{formatReferenceCounts(item.references)}</div></li>)}</ul></section> : null}
++          {deleteCheck.blocked.length ? <section className="rounded-lg border border-amber-200 bg-amber-50 p-4"><h3 className="text-sm font-semibold text-amber-950">Blocked products</h3><p className="mt-1 text-sm text-amber-900">Product cannot be deleted because it has stock or transaction history.</p><ul className="mt-3 space-y-3 text-sm text-amber-900">{deleteCheck.blocked.map((item) => { const product = products.find((candidate) => candidate.id === item.product_id); const currentStock = product?.variants.reduce((sum, variant) => sum + variant.current_stock, 0) ?? 0; return <li key={item.product_id} className="rounded-lg bg-white/60 p-3"><div className="font-medium">{item.product_name}</div><div className="mt-1 text-xs">{item.reason}</div><div className="mt-2 grid gap-1 text-xs sm:grid-cols-2"><span>Current stock: {currentStock}</span><span>Variant count: {item.references.variants ?? product?.variants.length ?? 0}</span><span>Inventory transaction count: {item.references.inventory_transactions ?? 0}</span><span>Sales dependencies: {item.references.sale_items ?? 0}</span><span>Purchase dependencies: {item.references.purchase_items ?? 0}</span></div><div className="mt-3 flex flex-wrap gap-2"><Button type="button" size="sm" variant="secondary" onClick={() => openStockAdjustmentForProduct(product ?? null)}>Correct stock</Button><Button type="button" size="sm" variant="secondary" onClick={() => { if (product) void api.post(`/products/${product.id}/archive`).then(() => { toast.success("Product archived"); invalidateProducts(); setDeleteDialogOpen(false); }).catch((cause: unknown) => toast.error(cause instanceof Error ? cause.message : "Unable to archive product")); }}><Archive size={14} /> Archive product</Button><Button type="button" size="sm" variant="secondary" onClick={() => navigate(`/stock?product_id=${item.product_id}`)}><History size={14} /> View history</Button></div></li>; })}</ul></section> : null}
+           {deleteCheck.deletable.length ? <section className="rounded-lg border border-rose-200 bg-rose-50 p-4"><label className="field-label text-rose-950">Type DELETE to continue<input className="field-input mt-2" autoFocus value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><div className="mt-4 flex flex-wrap justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button><Button type="button" variant="destructive" disabled={deleteConfirmation !== "DELETE"} onClick={() => void confirmPermanentDelete()}>Permanently delete eligible</Button></div></section> : <div className="flex justify-end"><Button type="button" variant="secondary" onClick={() => setDeleteDialogOpen(false)}>Close</Button></div>}
+           {canPermanentlyDelete && Array.from(selectedIds).some((id) => products.find((product) => product.id === id)?.is_test_data) ? <section className="border-t border-border pt-5"><h3 className="text-sm font-semibold text-foreground">Purge selected test products</h3><p className="mt-1 text-sm text-muted">Only explicitly marked test products can use this owner-only workflow.</p><label className="field-label mt-3">Type PURGE TEST DATA to continue<input className="field-input mt-2" value={purgeConfirmation} onChange={(event) => setPurgeConfirmation(event.target.value)} /></label><div className="mt-3 flex justify-end"><Button type="button" variant="destructive" disabled={purgeConfirmation !== "PURGE TEST DATA"} onClick={() => void purgeSelectedTestProducts()}>Purge selected test products</Button></div></section> : null}
+         </div>}
+diff --git a/frontend/src/pages/StockAdjustmentPage.tsx b/frontend/src/pages/StockAdjustmentPage.tsx
+index 24ec1ae..819d3ff 100644
+--- a/frontend/src/pages/StockAdjustmentPage.tsx
++++ b/frontend/src/pages/StockAdjustmentPage.tsx
+@@ -78,5 +78,5 @@ export default function StockAdjustmentPage() {
+     onError: (cause) => { const message = cause instanceof Error ? cause.message : "Unable to adjust stock"; setError(message); toast.error(message); },
+   });
+ 
+-  return <><PageHeader title="Stock Adjustment" subtitle="Owner-controlled corrections by exact size, colour, barcode, and SKU" /><div className="grid gap-6 xl:grid-cols-[minmax(0,760px)_minmax(280px,1fr)]"><section className="space-y-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><BarcodeScannerInput label="Scan adjustment barcode" placeholder="Scan an exact variant barcode" onScan={scanAdjustment} /><div className="grid gap-3 sm:grid-cols-2"><label className="field-label">Category<select className="field-input mt-1" value={categoryFilter} onChange={(event) => { setCategoryFilter(event.target.value); setBrandFilter(""); }}><option value="">All categories</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label><label className="field-label">Brand<select className="field-input mt-1" value={brandFilter} onChange={(event) => setBrandFilter(event.target.value)}><option value="">All brands</option>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label></div><label className="field-label">Search variants<div className="field-input mt-1 flex items-center gap-2"><Search size={16} className="text-slate-400" /><input className="min-w-0 flex-1 border-0 bg-transparent outline-none" placeholder="Product, size, colour, SKU, barcode" value={search} onChange={(event) => setSearch(event.target.value)} /></div></label><label className="field-label">Exact variant<span>*</span><select className="field-input" value={variantId} onChange={(event) => setVariantId(event.target.value)}><option value="">Select exact variant</option>{filteredVariants.map((row) => <option key={row.variant.id} value={row.variant.id}>{row.product.name} / {detail(row)} / {row.variant.barcode} / {row.variant.current_stock} in stock</option>)}</select></label>{selected ? <div className="rounded-lg bg-primary-50 p-3 text-sm text-primary-900"><strong>{selected.product.name}</strong><div>{detail(selected)}</div><div>Barcode: {selected.variant.barcode} · SKU: {selected.variant.internal_sku}</div><div>MRP: {selected.variant.mrp ? money(selected.variant.mrp) : "-"} · Selling: {money(selected.variant.selling_price)}</div></div> : null}<div><div className="mb-2 text-sm font-semibold text-slate-700">Adjustment type</div><div className="grid gap-3 sm:grid-cols-3"><button type="button" onClick={() => setAdjustmentType("ADD_STOCK")} className={`flex h-12 items-center justify-center gap-2 rounded-lg border font-semibold ${adjustmentType === "ADD_STOCK" ? "border-emerald-600 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-500"}`}><ArrowUp size={18} /> Add</button><button type="button" onClick={() => setAdjustmentType("REMOVE_STOCK")} className={`flex h-12 items-center justify-center gap-2 rounded-lg border font-semibold ${adjustmentType === "REMOVE_STOCK" ? "border-red-500 bg-red-50 text-red-700" : "border-slate-200 text-slate-500"}`}><ArrowDown size={18} /> Remove</button><button type="button" onClick={() => setAdjustmentType("SET_COUNTED_QUANTITY")} className={`h-12 rounded-lg border font-semibold ${adjustmentType === "SET_COUNTED_QUANTITY" ? "border-teal-600 bg-teal-50 text-teal-800" : "border-slate-200 text-slate-500"}`}>Set counted</button></div></div><label className="field-label">{adjustmentType === "SET_COUNTED_QUANTITY" ? "Counted quantity" : "Quantity"}<span>*</span><input className="field-input" type="number" min={adjustmentType === "SET_COUNTED_QUANTITY" ? 0 : 1} step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label className="field-label">Adjustment reason<span>*</span><input className="field-input" placeholder="Physical count, shelf correction, damaged item, owner correction" value={reference} onChange={(event) => setReference(event.target.value)} /></label>{error ? <ErrorState message={error} /> : null}<div className="flex justify-end border-t border-slate-100 pt-5"><Button type="button" disabled={mutation.isPending} onClick={() => mutation.mutate()}><ClipboardPenLine size={17} /> {mutation.isPending ? "Recording" : "Record Movement"}</Button></div></section><aside className="h-fit rounded-lg border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-lg font-semibold">Stock Preview</h2>{selected ? <div className="mt-4 space-y-3"><div><div className="font-semibold">{selected.product.name}</div><div className="text-sm text-slate-500">{detail(selected)}</div></div><div className="grid grid-cols-3 gap-3"><div className="rounded-lg bg-slate-50 p-4"><div className="text-xs text-slate-500">Current</div><div className="mt-1 text-2xl font-bold">{selected.variant.current_stock}</div></div><div className="rounded-lg bg-slate-50 p-4"><div className="text-xs text-slate-500">Change</div><div className={`mt-1 text-2xl font-bold ${delta < 0 ? "text-red-700" : "text-emerald-700"}`}>{delta > 0 ? "+" : ""}{delta}</div></div><div className={`rounded-lg p-4 ${resultingStock !== null && resultingStock < 0 ? "bg-red-50" : "bg-teal-50"}`}><div className="text-xs text-slate-500">After</div><div className={`mt-1 text-2xl font-bold ${resultingStock !== null && resultingStock < 0 ? "text-red-700" : "text-teal-800"}`}>{resultingStock}</div></div></div>{resultingStock !== null && resultingStock < 0 ? <div className="flex gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700"><AlertTriangle size={17} className="shrink-0" /> This adjustment would make stock negative.</div> : null}</div> : <p className="mt-3 text-sm text-slate-500">Select or scan an exact variant to preview the resulting stock level.</p>}</aside></div></>;
++  return <><PageHeader title="Stock Adjustment" subtitle="Use this to correct current physical stock by exact size, colour, barcode, and SKU" /><div className="grid gap-6 xl:grid-cols-[minmax(0,760px)_minmax(280px,1fr)]"><section className="space-y-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><div className="rounded-lg border border-teal-200 bg-teal-50 p-3 text-sm text-teal-950"><div className="font-semibold">Use this to correct current physical stock.</div><p className="mt-1">This records a stock movement with before and after quantities. Product details, variant details, and barcode assignments remain separate catalogue actions.</p></div><BarcodeScannerInput label="Scan adjustment barcode" placeholder="Scan an exact variant barcode" onScan={scanAdjustment} /><div className="grid gap-3 sm:grid-cols-2"><label className="field-label">Category<select className="field-input mt-1" value={categoryFilter} onChange={(event) => { setCategoryFilter(event.target.value); setBrandFilter(""); }}><option value="">All categories</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label><label className="field-label">Brand<select className="field-input mt-1" value={brandFilter} onChange={(event) => setBrandFilter(event.target.value)}><option value="">All brands</option>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label></div><label className="field-label">Search variants<div className="field-input mt-1 flex items-center gap-2"><Search size={16} className="text-slate-400" /><input className="min-w-0 flex-1 border-0 bg-transparent outline-none" placeholder="Product, size, colour, SKU, barcode" value={search} onChange={(event) => setSearch(event.target.value)} /></div></label><label className="field-label">Exact variant<span>*</span><select className="field-input" value={variantId} onChange={(event) => setVariantId(event.target.value)}><option value="">Select exact variant</option>{filteredVariants.map((row) => <option key={row.variant.id} value={row.variant.id}>{row.product.name} / {detail(row)} / {row.variant.barcode} / {row.variant.current_stock} in stock</option>)}</select></label>{selected ? <div className="rounded-lg bg-primary-50 p-3 text-sm text-primary-900"><strong>{selected.product.name}</strong><div>{detail(selected)}</div><div>Barcode: {selected.variant.barcode} · SKU: {selected.variant.internal_sku}</div><div>MRP: {selected.variant.mrp ? money(selected.variant.mrp) : "-"} · Selling: {money(selected.variant.selling_price)}</div></div> : null}<div><div className="mb-2 text-sm font-semibold text-slate-700">Adjustment type</div><div className="grid gap-3 sm:grid-cols-3"><button type="button" onClick={() => setAdjustmentType("ADD_STOCK")} className={`flex h-12 items-center justify-center gap-2 rounded-lg border font-semibold ${adjustmentType === "ADD_STOCK" ? "border-emerald-600 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-500"}`}><ArrowUp size={18} /> Add</button><button type="button" onClick={() => setAdjustmentType("REMOVE_STOCK")} className={`flex h-12 items-center justify-center gap-2 rounded-lg border font-semibold ${adjustmentType === "REMOVE_STOCK" ? "border-red-500 bg-red-50 text-red-700" : "border-slate-200 text-slate-500"}`}><ArrowDown size={18} /> Remove</button><button type="button" onClick={() => setAdjustmentType("SET_COUNTED_QUANTITY")} className={`h-12 rounded-lg border font-semibold ${adjustmentType === "SET_COUNTED_QUANTITY" ? "border-teal-600 bg-teal-50 text-teal-800" : "border-slate-200 text-slate-500"}`}>Set counted</button></div></div><label className="field-label">{adjustmentType === "SET_COUNTED_QUANTITY" ? "Counted quantity" : "Quantity"}<span>*</span><input className="field-input" type="number" min={adjustmentType === "SET_COUNTED_QUANTITY" ? 0 : 1} step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label className="field-label">Adjustment reason<span>*</span><input className="field-input" placeholder="Physical count, shelf correction, damaged item, owner correction" value={reference} onChange={(event) => setReference(event.target.value)} /></label>{error ? <ErrorState message={error} /> : null}<div className="flex justify-end border-t border-slate-100 pt-5"><Button type="button" disabled={mutation.isPending} onClick={() => mutation.mutate()}><ClipboardPenLine size={17} /> {mutation.isPending ? "Recording" : "Record Movement"}</Button></div></section><aside className="h-fit rounded-lg border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-lg font-semibold">Stock Preview</h2>{selected ? <div className="mt-4 space-y-3"><div><div className="font-semibold">{selected.product.name}</div><div className="text-sm text-slate-500">{detail(selected)}</div></div><div className="grid grid-cols-3 gap-3"><div className="rounded-lg bg-slate-50 p-4"><div className="text-xs text-slate-500">Current</div><div className="mt-1 text-2xl font-bold">{selected.variant.current_stock}</div></div><div className="rounded-lg bg-slate-50 p-4"><div className="text-xs text-slate-500">Change</div><div className={`mt-1 text-2xl font-bold ${delta < 0 ? "text-red-700" : "text-emerald-700"}`}>{delta > 0 ? "+" : ""}{delta}</div></div><div className={`rounded-lg p-4 ${resultingStock !== null && resultingStock < 0 ? "bg-red-50" : "bg-teal-50"}`}><div className="text-xs text-slate-500">After</div><div className={`mt-1 text-2xl font-bold ${resultingStock !== null && resultingStock < 0 ? "text-red-700" : "text-teal-800"}`}>{resultingStock}</div></div></div>{resultingStock !== null && resultingStock < 0 ? <div className="flex gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700"><AlertTriangle size={17} className="shrink-0" /> This adjustment would make stock negative.</div> : null}</div> : <p className="mt-3 text-sm text-slate-500">Select or scan an exact variant to preview the resulting stock level.</p>}</aside></div></>;
+ }
+diff --git a/frontend/src/pages/StockPage.tsx b/frontend/src/pages/StockPage.tsx
+index 9c8f30e..8753c9e 100644
+--- a/frontend/src/pages/StockPage.tsx
++++ b/frontend/src/pages/StockPage.tsx
+@@ -135,6 +135,10 @@ export default function StockPage() {
+   return (
+     <>
+       <PageHeader title="Inventory" subtitle="Variant-level stock, corrections, and owner reset controls" actions={<div className="flex flex-wrap gap-2">{canReset ? <Button type="button" variant="destructive" onClick={openReset}><RotateCcw size={16} /> Reset Existing Stock</Button> : null}<Button type="button" variant="secondary" onClick={() => void exportCsv()} disabled={exporting}><Download size={16} /> {exporting ? "Exporting" : "Export CSV"}</Button></div>} />
++      <section className="mb-6 rounded-lg border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-950">
++        <div className="font-semibold">Current stock is transaction-controlled.</div>
++        <p className="mt-1">Use Stock Adjustment to correct current physical stock. Confirmed records are locked; create a correction transaction to fix a mistake while preserving audit history.</p>
++      </section>
+       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Physical Stock" value={`${totalStock.toLocaleString("en-IN")} Units`} tone="teal" icon={Boxes} /><StatCard label="Inventory Value" value={money(inventoryValue)} tone="slate" icon={IndianRupee} /><StatCard label="Low Variants" value={lowStock} tone="amber" icon={AlertTriangle} /><StatCard label="Out of Stock" value={outOfStock} tone="rose" icon={PackageX} /></div>
+ 
+       <section className="mb-6 overflow-hidden rounded-lg border border-slate-200 bg-white">
+diff --git a/frontend/src/pages/productEditLogic.test.ts b/frontend/src/pages/productEditLogic.test.ts
+index 9692623..a92d6d7 100644
+--- a/frontend/src/pages/productEditLogic.test.ts
++++ b/frontend/src/pages/productEditLogic.test.ts
+@@ -30,5 +30,21 @@ describe("product edit payload", () => {
+   it("uses actionable structured update errors", () => {
+     expect(productUpdateErrorMessage("PRODUCT_ALREADY_EXISTS")).toBe("A product with this name and brand already exists.");
+     expect(productUpdateErrorMessage("BARCODE_ALREADY_ASSIGNED")).toBe("This barcode is already assigned to another variant.");
++    expect(productUpdateErrorMessage("STOCK_FIELDS_READ_ONLY")).toContain("transaction-controlled");
++    expect(productUpdateErrorMessage(undefined, "category_id: Input should be a valid UUID")).toBe("Select a category.");
++  });
++
++  it("normalizes optional IDs, barcodes, and decimal fields before submitting", () => {
++    const payload = productPayload({ ...form, category_id: " ", subcategory_id: "", brand_id: "brand-1", barcode: "  000123  ", mrp: "" });
++
++    expect(payload).toMatchObject({
++      category_id: null,
++      subcategory_id: null,
++      brand_id: "brand-1",
++      barcode: "000123",
++      mrp: null,
++      purchase_price: 220,
++      selling_price: 395,
++    });
+   });
+ });
+diff --git a/frontend/src/pages/productEditLogic.ts b/frontend/src/pages/productEditLogic.ts
+index eb5f431..191155c 100644
+--- a/frontend/src/pages/productEditLogic.ts
++++ b/frontend/src/pages/productEditLogic.ts
+@@ -1,4 +1,5 @@
+ import type { PricingType, Product } from "../types";
++import { friendlyFieldError, normalizeBarcode, normalizeDecimal, normalizeOptionalUuid } from "../utils/apiPayload";
+ 
+ export interface ProductEditFormState {
+   category_id: string;
+@@ -44,16 +45,16 @@ export function productPayload(form: ProductEditFormState, editing?: Product | n
+   const sizes = normalizedValues(form.sizes, form.has_sizes);
+   const colors = normalizedValues(form.colors, form.has_colors);
+   const payload = {
+-    category_id: form.category_id,
+-    subcategory_id: form.subcategory_id,
+-    brand_id: form.brand_id,
++    category_id: normalizeOptionalUuid(form.category_id),
++    subcategory_id: normalizeOptionalUuid(form.subcategory_id),
++    brand_id: normalizeOptionalUuid(form.brand_id),
+     sku: form.sku.trim() || null,
+     name: form.name.trim(),
+-    purchase_price: Number(form.purchase_price),
+-    selling_price: Number(form.selling_price),
+-    mrp: form.mrp ? Number(form.mrp) : null,
++    purchase_price: normalizeDecimal(form.purchase_price),
++    selling_price: normalizeDecimal(form.selling_price),
++    mrp: normalizeDecimal(form.mrp),
+     minimum_stock: Number(form.minimum_stock),
+-    barcode: form.barcode.trim() || null,
++    barcode: normalizeBarcode(form.barcode),
+     product_date: form.product_date,
+     description: form.description.trim() || null,
+     hsn_sac: form.hsn_sac.trim() || null,
+@@ -79,8 +80,8 @@ export function productUpdateErrorMessage(code?: string, fallback?: string) {
+     PRODUCT_ALREADY_EXISTS: "A product with this name and brand already exists.",
+     BARCODE_ALREADY_ASSIGNED: "This barcode is already assigned to another variant.",
+     VARIANT_ALREADY_EXISTS: "This size and colour variant already exists.",
+-    STOCK_FIELDS_READ_ONLY: "Current stock cannot be edited directly. Use Stock Adjustment.",
++    STOCK_FIELDS_READ_ONLY: "Current stock is transaction-controlled and cannot be edited as a product field. Open Stock Adjustment to correct stock.",
+     PRODUCT_UPDATE_FAILED: "The product could not be updated.",
+   };
+-  return code && messages[code] ? messages[code] : fallback || "The product could not be updated.";
++  return code && messages[code] ? messages[code] : friendlyFieldError(fallback || "The product could not be updated.");
+ }

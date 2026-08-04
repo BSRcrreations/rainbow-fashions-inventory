@@ -34,7 +34,7 @@ The deploy jobs create and use this layout on the server:
 
 `shared/backend.env` is required for production secrets and runtime settings.
 Create it at `/opt/rainbow-fashions/shared/backend.env` from the safe template
-at `deployment/templates/backend.env.production.example`. Never commit the
+at `deployment/templates/backend.production.template`. Never commit the
 real file. See `deployment/templates/README.md` for the required secret
 generation commands, permissions, and validation rules.
 

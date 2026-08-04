@@ -12,7 +12,11 @@ from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.staticfiles import StaticFiles
 
+<<<<<<< HEAD
 from app.api.routes import auth, brands, categories, customers, dashboard, expenses, products, purchases, reports, sales, security, stock, stock_imports, stock_scan, subcategories, suppliers, purchase_documents
+=======
+from app.api.routes import auth, brands, categories, customers, dashboard, expenses, inventory_reconciliation, opening_stock_imports, products, purchases, reports, sales, security, stock, stock_scan, subcategories, suppliers, purchase_documents
+>>>>>>> origin/main
 from app.core.config import get_settings
 from app.core.exceptions import error_payload
 from app.core.logging import configure_logging
@@ -117,6 +121,8 @@ app.include_router(stock_scan.router, prefix=settings.api_v1_prefix)
 app.include_router(stock_scan.variants_router, prefix=settings.api_v1_prefix)
 app.include_router(stock_scan.barcodes_router, prefix=settings.api_v1_prefix)
 app.include_router(security.router, prefix=settings.api_v1_prefix)
+app.include_router(opening_stock_imports.router, prefix=settings.api_v1_prefix)
+app.include_router(inventory_reconciliation.router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/health", tags=["System"])

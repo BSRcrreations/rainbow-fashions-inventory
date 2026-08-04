@@ -1,0 +1,34 @@
+ M .gitlab-ci.yml
+ M backend/app/schemas/stock_scan.py
+ M backend/tests/test_existing_variant_barcode_onboarding.py
+ M deployment/nginx/test.rainbow-fashions.in.conf
+ M docker-compose.yml
+ M docs/CI_CD.md
+ M docs/DEPLOYMENT.md
+ M frontend/nginx.conf
+ M frontend/src/components/BarcodeOnboardingDialog.tsx
+ M frontend/src/components/barcodeOnboardingLogic.test.ts
+ M frontend/src/components/barcodeOnboardingLogic.ts
+ M frontend/src/pages/NewSalePage.test.tsx
+ M frontend/src/pages/NewSalePage.tsx
+ M frontend/src/pages/ProductsPage.tsx
+ M frontend/src/pages/StockAdjustmentPage.tsx
+ M frontend/src/pages/StockPage.tsx
+ M frontend/src/pages/productEditLogic.test.ts
+ M frontend/src/pages/productEditLogic.ts
+?? .codex-safety/
+?? deployment/logrotate/
+?? deployment/scripts/check_application_health.sh
+?? deployment/scripts/configure_firewall_ufw.sh
+?? deployment/scripts/diagnose_domain.sh
+?? deployment/scripts/smoke_test_production.sh
+?? deployment/scripts/wait_for_application.sh
+?? deployment/systemd/rainbow-fashions.service
+?? deployment/systemd/rainbow-health-watch.service
+?? deployment/systemd/rainbow-health-watch.timer
+?? deployment/templates/availability-alerts.env.example
+?? deployment/tests/
+?? docs/DEPLOYMENT_AVAILABILITY_HARDENING.md
+?? docs/critical-production-fixes.md
+?? docs/live-feature-verification.md
+?? frontend/src/utils/apiPayload.ts

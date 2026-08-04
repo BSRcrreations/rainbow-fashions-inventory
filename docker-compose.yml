@@ -6,8 +6,6 @@ services:
       - ./backend/.env
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
-      - ./database/seed.sql:/docker-entrypoint-initdb.d/002_seed.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 15s
@@ -27,6 +25,8 @@ services:
     volumes:
       # A host bind mount lets the host backup service archive all uploads.
       - ${UPLOADS_HOST_PATH:-./runtime/uploads}:/app/app/uploads
+      # Uploaded opening-stock evidence is private operational data, never a Git asset.
+      - ${OPENING_STOCK_IMPORTS_HOST_PATH:-./runtime/opening-stock-imports}:/app/app/runtime/opening-stock-imports
       # Status is operational metadata only and is displayed to owners by API.
       - ${BACKUP_STATUS_HOST_PATH:-./runtime/backups/status}:/backup-status:ro
     expose:
