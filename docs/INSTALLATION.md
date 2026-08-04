@@ -11,11 +11,11 @@ cp .env.example .env
 ```
 
 Set the required values in the local `.env` file. Do not commit it. Create the
-PostgreSQL database and schema:
+PostgreSQL database and migrate it with the authoritative Alembic history:
 
 ```bash
 createdb inventory_db
-psql inventory_db -f ../database/schema.sql
+alembic upgrade head
 ```
 
 Create the first owner exactly once. These values are placeholders; replace
@@ -40,6 +40,7 @@ Run the API:
 uvicorn app.main:app --reload
 ```
 
+Production deployments never seed users or catalog records automatically.
 ## Frontend
 
 ```bash
