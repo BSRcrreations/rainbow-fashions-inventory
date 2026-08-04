@@ -26,6 +26,7 @@ default:
 backend_tests:
   stage: validate
   image: python:3.12-slim
+  tags: [rainbow-ci]
   cache:
     key: backend-pip
     paths:
@@ -38,12 +39,15 @@ backend_tests:
     - pip install -r backend/requirements.txt
   script:
     - cd backend
+    - python -m compileall -q app
     - pytest
     - test "$(alembic heads | grep -c '(head)')" -eq 1
+    - python -c "from app.main import app; assert app.openapi().get('openapi')"
 
 tracked_secret_check:
   stage: validate
   image: alpine:3.20
+  tags: [rainbow-ci]
   script:
     - apk add --no-cache bash git
     - bash scripts/security/check_tracked_secrets.sh
@@ -51,13 +55,30 @@ tracked_secret_check:
 fixed_password_hash_check:
   stage: validate
   image: alpine:3.20
+  tags: [rainbow-ci]
   script:
     - apk add --no-cache bash git
     - bash scripts/security/check_fixed_password_hashes.sh
 
+repository_artifact_check:
+  stage: validate
+  image: alpine:3.20
+  tags: [rainbow-ci]
+  script:
+    - apk add --no-cache bash git
+    - bash scripts/security/check_repository_artifacts.sh
+
+gitleaks_check:
+  stage: validate
+  image: zricethezav/gitleaks:v8.24.2
+  tags: [rainbow-ci]
+  script:
+    - gitleaks git --redact --no-banner
+
 frontend_quality:
   stage: validate
   image: node:20-alpine
+  tags: [rainbow-ci]
   cache:
     key:
       files:
@@ -68,9 +89,18 @@ frontend_quality:
     - cd frontend
     - npm ci --cache .npm --prefer-offline
   script:
+    - npm test -- --run
     - npm run lint
     - npm run typecheck
     - npm run build
+    - |
+      if ! npm audit --omit=dev --audit-level=high; then
+        if [ "${NPM_AUDIT_ALLOW_HIGH_AND_CRITICAL:-false}" != "true" ]; then
+          echo 'npm audit found high or critical production dependency advisories. Set the protected exception variable only after a reviewed, time-bound approval.'
+          exit 1
+        fi
+        echo 'npm audit high/critical exception accepted by protected CI variable.'
+      fi
   artifacts:
     expire_in: 1 week
     paths:
@@ -79,11 +109,12 @@ frontend_quality:
 verify_domain_preflight:
   stage: validate
   image: alpine:3.20
+  tags: [rainbow-ci]
   before_script:
     - apk add --no-cache bash bind-tools curl python3 whois
     - chmod +x deployment/scripts/diagnose_domain.sh
   script:
-    - REPORT_FILE="$CI_PROJECT_DIR/domain-diagnostics/domain-preflight.txt" deployment/scripts/diagnose_domain.sh
+    - DNS_ONLY=true ROOT_DOMAIN=rainbow-fashions.in APP_DOMAIN=test.rainbow-fashions.in EXPECTED_IPV4=178.238.237.182 REPORT_FILE="$CI_PROJECT_DIR/domain-diagnostics/domain-preflight.txt" deployment/scripts/diagnose_domain.sh
   artifacts:
     when: always
     expire_in: 7 days
@@ -98,6 +129,7 @@ verify_domain_preflight:
 docker_compose_build:
   stage: docker
   image: docker:27-cli
+  tags: [rainbow-ci]
   before_script:
     - docker version
     - docker compose version
@@ -111,6 +143,7 @@ docker_compose_build:
 package_release:
   stage: package
   image: alpine:3.20
+  tags: [rainbow-ci]
   needs:
     - backend_tests
     - frontend_quality
@@ -126,17 +159,18 @@ package_release:
   rules:
     - if: $CI_COMMIT_BRANCH == $DEPLOY_BRANCH
 
-.deploy_local:
-  image: alpine:3.20
+.deploy_production:
+  tags: [rainbow-production]
+  resource_group: rainbow-fashions-production
   rules:
-    - if: $CI_COMMIT_BRANCH == $DEPLOY_BRANCH
+    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+    - when: never
 
 deploy_phase_1_upload:
-  extends: .deploy_local
+  extends: .deploy_production
   stage: deploy
   needs:
     - package_release
-  resource_group: rainbow-fashions-production
   environment:
     name: production
     url: $DEPLOY_URL
@@ -145,13 +179,22 @@ deploy_phase_1_upload:
     - mkdir -p "$RELEASE_DIR"
     - tar -xzf "rainbow-fashions-${CI_COMMIT_SHORT_SHA}.tar.gz" -C "$RELEASE_DIR"
 
-deploy_phase_2_backup:
-  extends: .deploy_local
-  image: docker:27-cli
+production_runner_preflight:
+  extends: .deploy_production
   stage: deploy
   needs:
     - deploy_phase_1_upload
-  resource_group: rainbow-fashions-production
+  environment:
+    name: production
+    url: $DEPLOY_URL
+  script:
+    - bash deployment/scripts/verify_production_runner.sh
+
+deploy_phase_2_backup:
+  extends: .deploy_production
+  stage: deploy
+  needs:
+    - production_runner_preflight
   environment:
     name: production
     url: $DEPLOY_URL
@@ -161,21 +204,19 @@ deploy_phase_2_backup:
       APP_DIR="$DEPLOY_PATH"
       BACKUP_DIR="$APP_DIR/backups"
       mkdir -p "$BACKUP_DIR"
-      if [ -d "$APP_DIR/current" ]; then
-        cd "$APP_DIR/current"
-        docker compose ps postgres >/dev/null 2>&1
-        docker compose exec -T postgres sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$BACKUP_DIR/postgres_${CI_COMMIT_SHORT_SHA}_$(date +%Y%m%d_%H%M%S).sql"
-      else
-        echo 'No current release found; skipping database backup.'
-      fi
+      test -d "$APP_DIR/current" || { echo 'No active release is available for a verified pre-deployment backup.'; exit 1; }
+      cd "$APP_DIR/current"
+      . "$APP_DIR/shared/backend.env"
+      backup_file="$BACKUP_DIR/postgres_${CI_COMMIT_SHORT_SHA}_$(date +%Y%m%d_%H%M%S).sql"
+      docker compose ps postgres >/dev/null 2>&1
+      docker compose exec -T postgres sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup_file"
+      test -s "$backup_file" || { echo 'Pre-deployment PostgreSQL backup is empty.'; rm -f "$backup_file"; exit 1; }
 
 deploy_phase_3_activate:
-  extends: .deploy_local
-  image: docker:27-cli
+  extends: .deploy_production
   stage: deploy
   needs:
     - deploy_phase_2_backup
-  resource_group: rainbow-fashions-production
   environment:
     name: production
     url: $DEPLOY_URL
@@ -185,7 +226,6 @@ deploy_phase_3_activate:
       APP_DIR="$DEPLOY_PATH"
       RELEASE_DIR="$APP_DIR/releases/$CI_COMMIT_SHORT_SHA"
       ENV_FILE="$APP_DIR/shared/backend.env"
-      apk add --no-cache bash curl openssl
       test -d "$RELEASE_DIR"
       test -s "$ENV_FILE" || { echo "$ENV_FILE is required. Create it from deployment/templates/backend.env.production.example on the server."; exit 1; }
       set -a
@@ -236,8 +276,10 @@ deploy_phase_3_activate:
       docker compose config --quiet
       docker compose build
       docker compose up -d postgres
-      if docker compose exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select 1 from information_schema.columns where table_name = '\''products'\'' and column_name = '\''sku'\''"' | grep -q 1 && ! docker compose exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select to_regclass('\''public.alembic_version'\'')"' | grep -q alembic_version; then
-        docker compose run --rm backend alembic stamp head
+      legacy_schema="$(docker compose exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select to_regclass('\''public.products'\''), to_regclass('\''public.alembic_version'\'');"')"
+      if printf '%s' "$legacy_schema" | grep -q 'products|' && ! printf '%s' "$legacy_schema" | grep -q 'alembic_version'; then
+        echo 'Legacy database has application tables but no alembic_version. Run the separate reviewed schema-baseline procedure.'
+        exit 1
       fi
       docker compose run --rm backend alembic upgrade head
       docker compose up -d --remove-orphans
@@ -251,25 +293,20 @@ deploy_phase_3_activate:
       trap - EXIT
 
 deploy_phase_4_verify:
+  extends: .deploy_production
   stage: verify
-  image: alpine:3.20
   needs:
     - deploy_phase_3_activate
   environment:
     name: production
     url: $DEPLOY_URL
   script:
-    - apk add --no-cache bash curl openssl
     - bash deployment/scripts/wait_for_application.sh --base-url "$LOCAL_DEPLOY_URL" --timeout 180
     - bash deployment/scripts/wait_for_application.sh --base-url "$PUBLIC_DEPLOY_URL" --timeout 180
     - PUBLIC_BASE_URL="$PUBLIC_DEPLOY_URL" LOCAL_BASE_URL="$LOCAL_DEPLOY_URL" bash deployment/scripts/smoke_test_production.sh
-  rules:
-    - if: $CI_COMMIT_BRANCH == $DEPLOY_BRANCH
-
 diagnose_production_availability:
-  extends: .deploy_local
+  extends: .deploy_production
   stage: verify
-  image: alpine:3.20
   needs: []
   environment:
     name: production-diagnostics
@@ -281,7 +318,6 @@ diagnose_production_availability:
   script:
     - |
       set -eu
-      apk add --no-cache bash curl docker-cli docker-cli-compose openssl procps util-linux
       APP_DIR="$DEPLOY_PATH/current"
       ARTIFACT_DIR="$CI_PROJECT_DIR/availability-diagnostics"
       mkdir -p "$ARTIFACT_DIR"
@@ -329,12 +365,10 @@ diagnose_production_availability:
 # production business database. It keeps user accounts, store configuration,
 # and migration state, but clears all operational records and uploaded files.
 database_reset_production:
-  extends: .deploy_local
-  image: docker:27-cli
+  extends: .deploy_production
   stage: verify
   needs:
     - deploy_phase_4_verify
-  resource_group: rainbow-fashions-production
   environment:
     name: production
     url: $DEPLOY_URL
@@ -347,18 +381,21 @@ database_reset_production:
   script:
     - chmod +x scripts/database/clear_production_data.sh
     - DEPLOY_PATH="$DEPLOY_PATH" scripts/database/clear_production_data.sh --confirm-clear-production-data
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+    - when: never
 
 # Temporary, read-only production diagnostic. This GitLab instance does not
 # offer protected environments, so access is constrained by the protected
 # deployment branch and the job remains intentionally manual.
 diagnose_barcode_assignment_production:
-  extends: .deploy_local
+  extends: .deploy_production
   stage: verify
   # This read-only job does not consume build artifacts. Schedule it
   # independently so an unrelated optional manual deployment job cannot cause
   # the diagnostic to be skipped.
   needs: []
-  image: docker:27-cli
   environment:
     name: production-diagnostics
   when: manual
@@ -407,7 +444,7 @@ diagnose_barcode_assignment_production:
     paths:
       - production-diagnostics/
   rules:
-    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH'
+    - if: '$CI_COMMIT_BRANCH == $DEPLOY_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
       when: manual
     - when: never
 
@@ -416,9 +453,8 @@ diagnose_barcode_assignment_production:
 # variable in GitLab before enabling it. No database dump is stored as a CI
 # artifact; it must first be staged by scripts/database/upload_database_dump.sh.
 database_import_production:
+  extends: .deploy_production
   stage: deploy
-  image: alpine:3.20
-  resource_group: rainbow-fashions-production
   environment:
     name: production-database-import
   when: manual
@@ -427,7 +463,6 @@ database_import_production:
   # ordinary application deployments when no import is requested.
   allow_failure: true
   before_script:
-    - apk add --no-cache bash openssh-client
     - chmod +x scripts/database/*.sh
   script:
     - test -n "${DATABASE_MIGRATION_ENV_FILE:-}"
@@ -441,10 +476,9 @@ database_import_production:
 # Read-only operational proof. Configure the production environment as protected
 # in GitLab so only authorized operators can run this job.
 verify_production_backup_recovery:
-  extends: .deploy_local
+  extends: .deploy_production
   stage: verify
   needs: []
-  resource_group: rainbow-fashions-production
   environment:
     name: production-backup-verification
   when: manual

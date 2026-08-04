@@ -147,6 +147,13 @@ class DiagnoseDomainTests(unittest.TestCase):
     def test_dns_success_with_http_refused(self) -> None:
         self.assert_state("http_refused", "DNS_OK_HTTP_UNREACHABLE")
 
+    def test_dns_only_success_ignores_http_refusal(self) -> None:
+        result = self.run_scenario("http_refused", {"DNS_ONLY": "true"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("dns_only=true", result.stdout)
+        self.assertIn("state=DNS_OK", result.stdout)
+        self.assertNotIn("http_port_80_status", result.stdout)
+
     def test_dns_and_http_success(self) -> None:
         self.assert_state("ok", "DNS_OK", exit_code=0)
 
