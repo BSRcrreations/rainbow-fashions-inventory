@@ -198,6 +198,7 @@ production_runner_preflight:
     name: production
     url: $DEPLOY_URL
   script:
+    - apk add --no-cache bash
     - bash deployment/scripts/verify_production_runner.sh
 
 deploy_phase_2_backup:
