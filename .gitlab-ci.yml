@@ -13,6 +13,9 @@ workflow:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "shop-inventory"'
 
 variables:
+  # Every job must start from a fresh checkout. This prevents stale Git locks
+  # (for example .git/shallow.lock) left by a previous runner workspace.
+  GIT_STRATEGY: "clone"
   DEPLOY_BRANCH: "shop-inventory"
   DEPLOY_PATH: "/opt/rainbow-fashions"
   DEPLOY_URL: "https://test.rainbow-fashions.in"
@@ -89,20 +92,18 @@ frontend_quality:
   stage: validate
   image: node:20-alpine
   tags: [rainbow-ci]
-  cache:
-    key:
-      files:
-        - frontend/package-lock.json
-      prefix: "frontend-node20"
-    paths:
-      - frontend/.npm/
+  # Do not share a writable npm cache between concurrent runner jobs. npm's
+  # content-addressed cache is not a safe cross-job workspace cache here.
+  cache: []
   before_script:
     - cd frontend
     - node --version
     - npm --version
     - npm config get omit
     - npm config get production
-    - npm ci --include=dev --cache .npm --prefer-offline
+    - rm -rf node_modules
+    - export npm_config_cache="/tmp/npm-cache-${CI_JOB_ID}"
+    - npm ci --include=dev --prefer-online --no-audit --no-fund
     - npm ls typescript vite eslint vitest --depth=0
     - test -x node_modules/.bin/tsc
     - test -x node_modules/.bin/vite
