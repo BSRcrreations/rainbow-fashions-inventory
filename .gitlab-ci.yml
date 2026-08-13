@@ -300,6 +300,21 @@ deploy_phase_3_activate:
       docker compose config --quiet
       docker compose build
       docker compose up -d postgres
+      postgres_ready=false
+      for attempt in $(seq 1 36); do
+        if docker compose exec -T postgres sh -ec 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
+          postgres_ready=true
+          break
+        fi
+        echo "Waiting for PostgreSQL readiness (${attempt}/36)..."
+        sleep 5
+      done
+      if [ "$postgres_ready" != true ]; then
+        echo 'PostgreSQL did not become ready before migration; no migration was run.'
+        docker compose ps
+        docker compose logs --tail=200 postgres
+        exit 1
+      fi
       legacy_schema="$(docker compose exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select to_regclass('\''public.products'\''), to_regclass('\''public.alembic_version'\'');"')"
       if printf '%s' "$legacy_schema" | grep -q 'products|' && ! printf '%s' "$legacy_schema" | grep -q 'alembic_version'; then
         echo 'Legacy database has application tables but no alembic_version. Run the separate reviewed schema-baseline procedure.'
