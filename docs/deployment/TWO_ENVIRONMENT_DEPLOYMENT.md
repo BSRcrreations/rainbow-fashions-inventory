@@ -43,8 +43,9 @@ future production volume or intentionally retired under an approved plan.
    `rainbow-production`; it must not carry the test tag.
 4. Add the root-owned, mode-`0644` marker files required by preflight:
    `/etc/rainbow-fashions-test-runner` and
-   `/etc/rainbow-fashions-production-runner`, each containing only
-   `RAINBOW_DEPLOYMENT_RUNNER=1`.
+   `/etc/rainbow-fashions-production-runner`. Each must include
+   `RAINBOW_DEPLOYMENT_RUNNER=1`; the test marker also identifies the test
+   runner and the production marker identifies the production runner.
 5. Verify the `gitlab-runner` account can use Docker without `sudo`, and that
    it can write only the intended deployment root.
 
@@ -119,3 +120,28 @@ backups are required, create distinct `rainbow-test-*` units with
 7. Leave the previous release available for rollback. Never use
    `docker compose down -v` on production and never run a database reset as
    part of this migration.
+
+## Server migration status — 2026-08-13
+
+The Contabo deployment host was identified as `vmi3385071`. The legacy
+production Compose project is `current`, with its PostgreSQL service using the
+Docker-managed volume `current_postgres_data`. That volume and the running
+legacy production containers were left unchanged.
+
+A verified pre-migration PostgreSQL backup was created under
+`/opt/rainbow-migration-backup/` with root-only permissions. The separate test
+and production directory trees, runner markers, and protected environment-file
+locations were created. Test uses unique newly generated credentials; the
+production environment file preserves the legacy production database
+relationship without changing database credentials.
+
+Host Nginx, Certbot, and DNS tooling are installed but Nginx remains inactive:
+the legacy frontend is still the process bound to public port 80. All three
+required A records resolve to the Contabo host and no AAAA records were found.
+
+The existing Docker CI runner and production Shell runner are present. Docker
+and Compose access work for the `gitlab-runner` account. Test deployment is
+blocked until a protected project runner named **Rainbow Test Shell Runner**
+with tag `rainbow-test` is created in GitLab and registered interactively on
+the server. Until then, do not move port 80, start Nginx, request certificates,
+merge this branch, or deploy either environment.
