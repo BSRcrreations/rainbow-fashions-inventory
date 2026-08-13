@@ -283,7 +283,11 @@ deploy_phase_3_activate:
         mkdir -p "$APP_DIR/failed-releases"
         docker compose logs --no-color --tail=300 > "$RELEASE_DIR/failed-release.log" 2>&1 || true
         if [ -n "$PREVIOUS_RELEASE" ] && [ -d "$PREVIOUS_RELEASE" ]; then
-          ln -sfn "$PREVIOUS_RELEASE" "$APP_DIR/current"
+          # `ln -sfn target current` follows an existing directory symlink on
+          # GNU coreutils, creating `current/<basename(target)>` instead of
+          # switching releases. Remove only the release-pointer symlink first.
+          rm -f "$APP_DIR/current"
+          ln -s "$PREVIOUS_RELEASE" "$APP_DIR/current"
           cp "$ENV_FILE" "$APP_DIR/current/backend/.env"
           cd "$APP_DIR/current"
           docker compose up -d
@@ -293,7 +297,9 @@ deploy_phase_3_activate:
         exit "$code"
       }
       trap rollback EXIT
-      ln -sfn "$RELEASE_DIR" "$APP_DIR/current"
+      # Replace the release-pointer symlink explicitly; do not follow it.
+      rm -f "$APP_DIR/current"
+      ln -s "$RELEASE_DIR" "$APP_DIR/current"
       cd "$APP_DIR/current"
       chmod +x deployment/scripts/wait_for_application.sh deployment/scripts/smoke_test_production.sh
       cp "$ENV_FILE" backend/.env
