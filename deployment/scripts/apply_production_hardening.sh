@@ -2,12 +2,13 @@
 # Apply the checked production environment without recreating the database.
 set -Eeuo pipefail
 
-APP_ROOT="/opt/rainbow-fashions"
+APP_ROOT="${APP_ROOT:-/opt/rainbow-fashions-prod}"
 CURRENT_RELEASE="$APP_ROOT/current"
 SHARED_ENV_FILE="$APP_ROOT/shared/backend.env"
-RUNTIME_ENV_FILE="$CURRENT_RELEASE/backend/.env"
 BACKUP_DIR="$APP_ROOT/backups/manual-hardening"
-HEALTH_URL="http://127.0.0.1/health"
+HEALTH_URL="http://127.0.0.1:8080/health/ready"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-rainbow_prod}"
+COMPOSE_OVERRIDE="${COMPOSE_OVERRIDE:-docker-compose.prod.yml}"
 POSTGRES_READY_ATTEMPTS=30
 HEALTH_READY_ATTEMPTS=30
 RETRY_DELAY_SECONDS=2
@@ -21,14 +22,18 @@ die() {
   exit 1
 }
 
+compose() {
+  docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f "$COMPOSE_OVERRIDE" "$@"
+}
+
 print_diagnostics() {
   log "Docker Compose status:"
-  docker compose ps || true
+  compose ps || true
 
   local service
   for service in backend frontend postgres; do
     log "Last 200 lines for ${service}:"
-    docker compose logs --tail=200 "$service" || true
+    compose logs --tail=200 "$service" || true
   done
 }
 
@@ -53,7 +58,7 @@ wait_for_postgres() {
   local attempt
 
   for ((attempt = 1; attempt <= POSTGRES_READY_ATTEMPTS; attempt++)); do
-    if docker compose exec -T postgres sh -ec 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
+    if compose exec -T postgres sh -ec 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
       log "PostgreSQL is ready."
       return 0
     fi
@@ -94,7 +99,7 @@ create_backup() {
   chmod 600 "$backup_file"
 
   log "Creating PostgreSQL custom-format backup: ${backup_file}"
-  docker compose exec -T postgres sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > "$backup_file"
+  compose exec -T postgres sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > "$backup_file"
   [[ -s "$backup_file" ]] || die "Backup command completed without producing a backup file."
   log "PostgreSQL backup completed."
 }
@@ -102,26 +107,30 @@ create_backup() {
 synchronize_postgres_role_password() {
   log "Synchronizing the PostgreSQL role password."
   printf 'ALTER ROLE "%s" WITH PASSWORD '\''%s'\'';\n' "$POSTGRES_USER" "$POSTGRES_PASSWORD" \
-    | docker compose exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null
+    | compose exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null
   log "PostgreSQL role password synchronized."
 }
 
 trap on_error ERR
 
 [[ -d "$APP_ROOT" ]] || die "Application directory does not exist: ${APP_ROOT}"
+[[ "$APP_ROOT" == "/opt/rainbow-fashions-prod" ]] || die "APP_ROOT must be /opt/rainbow-fashions-prod."
+[[ "$COMPOSE_PROJECT_NAME" == "rainbow_prod" ]] || die "COMPOSE_PROJECT_NAME must be rainbow_prod."
+[[ "$COMPOSE_OVERRIDE" == "docker-compose.prod.yml" ]] || die "COMPOSE_OVERRIDE must be docker-compose.prod.yml."
 [[ -d "$CURRENT_RELEASE" ]] || die "Current release does not exist: ${CURRENT_RELEASE}"
 [[ -s "$SHARED_ENV_FILE" ]] || die "Shared environment file is missing or empty: ${SHARED_ENV_FILE}"
 [[ -d "$CURRENT_RELEASE/backend" ]] || die "Backend directory does not exist in the current release."
 command -v docker >/dev/null 2>&1 || die "docker is required."
 command -v curl >/dev/null 2>&1 || die "curl is required."
 
-cp "$SHARED_ENV_FILE" "$RUNTIME_ENV_FILE"
-chmod 600 "$RUNTIME_ENV_FILE"
-
 set -a
 # shellcheck disable=SC1090
-source "$RUNTIME_ENV_FILE"
+source "$SHARED_ENV_FILE"
 set +a
+export BACKEND_ENV_FILE="$SHARED_ENV_FILE"
+export UPLOADS_HOST_PATH="$APP_ROOT/runtime/uploads"
+export OPENING_STOCK_IMPORTS_HOST_PATH="$APP_ROOT/runtime/opening-stock-imports"
+export BACKUP_STATUS_HOST_PATH="$APP_ROOT/runtime/backups/status"
 
 [[ "${APP_ENV:-}" == "production" ]] || die "APP_ENV must equal production."
 [[ "${DEBUG:-}" == "false" ]] || die "DEBUG must equal false."
@@ -146,24 +155,24 @@ expected_database_url="postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD
 unset expected_database_url
 
 cd "$CURRENT_RELEASE"
-docker compose config --quiet
+compose config --quiet
 
 log "Starting PostgreSQL."
-docker compose up -d postgres
+compose up -d postgres
 wait_for_postgres
 
 create_backup
 synchronize_postgres_role_password
 
 log "Building application images."
-docker compose build
+compose build
 
 log "Running Alembic migrations."
-docker compose run --rm backend alembic upgrade head
+compose run --rm backend alembic upgrade head
 
 log "Starting all application services."
-docker compose up -d --remove-orphans
+compose up -d --remove-orphans
 wait_for_application_health
 
-docker compose ps
+compose ps
 log "Production hardening completed successfully."

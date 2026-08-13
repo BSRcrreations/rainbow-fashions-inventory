@@ -6,5 +6,6 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=root
-Environment=RAINBOW_APP_ROOT=/opt/rainbow-fashions
-ExecStart=/opt/rainbow-fashions/current/deployment/scripts/check_backup_health.sh
+Environment=RAINBOW_APP_ROOT=/opt/rainbow-fashions-prod
+Environment=RAINBOW_COMPOSE_PROJECT=rainbow_prod
+ExecStart=/opt/rainbow-fashions-prod/current/deployment/scripts/check_backup_health.sh

@@ -1,0 +1,24 @@
+# Copy this template to /opt/rainbow-fashions-test/shared/backend.env on the
+# server. Replace every CHANGE_ME value with credentials dedicated to TEST.
+# Never copy a production value or commit the resulting file.
+APP_NAME="Rainbow Fashions Inventory"
+APP_ENV=staging
+DEBUG=false
+
+POSTGRES_DB=CHANGE_ME_TEST_DATABASE_NAME
+POSTGRES_USER=CHANGE_ME_TEST_DATABASE_USER
+POSTGRES_PASSWORD=CHANGE_ME_TEST_DATABASE_PASSWORD
+DATABASE_URL=postgresql+psycopg://CHANGE_ME_TEST_DATABASE_USER:CHANGE_ME_TEST_DATABASE_PASSWORD@postgres:5432/CHANGE_ME_TEST_DATABASE_NAME
+
+JWT_SECRET_KEY=CHANGE_ME_TEST_JWT_SECRET_AT_LEAST_64_CHARACTERS
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=480
+CORS_ORIGINS=https://test.rainbow-fashions.in
+
+UPLOAD_DIR=app/uploads
+INVOICE_UPLOAD_DIR=app/uploads/invoices
+PRODUCT_UPLOAD_DIR=app/uploads/products
+OPENING_STOCK_IMPORT_DIR=app/runtime/opening-stock-imports
+BACKUP_STATUS_DIR=/backup-status
+MAX_UPLOAD_SIZE_MB=15
+LOG_LEVEL=INFO

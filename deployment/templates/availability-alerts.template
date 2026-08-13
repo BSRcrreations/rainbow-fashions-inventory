@@ -1,4 +1,4 @@
-# Copy to /opt/rainbow-fashions/shared/availability-alerts.env and chmod 600.
+# Copy to /opt/rainbow-fashions-prod/shared/availability-alerts.env and chmod 600.
 # Do not commit the real file.
 
 APP_ENVIRONMENT=production

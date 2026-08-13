@@ -2,7 +2,7 @@
 # Verify the production shell-runner host without printing runtime configuration.
 set -Eeuo pipefail
 
-deploy_path="${DEPLOY_PATH:-/opt/rainbow-fashions}"
+deploy_path="${DEPLOY_PATH:-/opt/rainbow-fashions-prod}"
 environment_file="$deploy_path/shared/backend.env"
 deployment_user="${DEPLOYMENT_USER:-$(id -un)}"
 production_runner_marker="/etc/rainbow-fashions-production-runner"
@@ -61,7 +61,7 @@ if [[ -s "$environment_file" ]]; then
   grep -q '^DEBUG=false$' "$environment_file" || fail 'production DEBUG is not configured'
   awk -F= '$1 == "POSTGRES_PASSWORD" { found=1; if (length($2) < 32) exit 1 } END { exit found ? 0 : 1 }' "$environment_file" || fail 'PostgreSQL password does not meet the minimum length policy'
   awk -F= '$1 == "JWT_SECRET_KEY" { found=1; if (length($2) < 64) exit 1 } END { exit found ? 0 : 1 }' "$environment_file" || fail 'JWT secret does not meet the minimum length policy'
-  for origin in https://test.rainbow-fashions.in https://rainbow-fashions.in https://www.rainbow-fashions.in; do
+  for origin in https://rainbow-fashions.in https://www.rainbow-fashions.in; do
     grep -Fq "$origin" "$environment_file" || fail "required CORS origin missing: $origin"
   done
   if grep -Ev '^[[:space:]]*(#|$)' "$environment_file" | grep -Eqi 'replace-this|change-me|example'; then

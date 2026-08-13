@@ -1,4 +1,4 @@
-# Protected production file: /opt/rainbow-fashions/shared/backup-alerts.env
+# Protected production file: /opt/rainbow-fashions-prod/shared/backup-alerts.env
 # Never commit the real value. A generic Slack/Teams-compatible webhook works.
 BACKUP_ALERT_WEBHOOK_URL=
 ALERT_SUPPRESSION_MINUTES=60

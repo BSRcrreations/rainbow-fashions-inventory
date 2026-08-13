@@ -7,11 +7,16 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/opt/rainbow-fashions/current
-ExecStartPre=/usr/bin/test -s /opt/rainbow-fashions/shared/backend.env
-ExecStartPre=/usr/bin/test -f /opt/rainbow-fashions/current/docker-compose.yml
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose stop
+WorkingDirectory=/opt/rainbow-fashions-prod/current
+Environment=COMPOSE_PROJECT_NAME=rainbow_prod
+Environment=BACKEND_ENV_FILE=/opt/rainbow-fashions-prod/shared/backend.env
+Environment=UPLOADS_HOST_PATH=/opt/rainbow-fashions-prod/runtime/uploads
+Environment=OPENING_STOCK_IMPORTS_HOST_PATH=/opt/rainbow-fashions-prod/runtime/opening-stock-imports
+Environment=BACKUP_STATUS_HOST_PATH=/opt/rainbow-fashions-prod/runtime/backups/status
+ExecStartPre=/usr/bin/test -s /opt/rainbow-fashions-prod/shared/backend.env
+ExecStartPre=/usr/bin/test -f /opt/rainbow-fashions-prod/current/docker-compose.yml
+ExecStart=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+ExecStop=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml stop
 TimeoutStartSec=600
 TimeoutStopSec=180
 

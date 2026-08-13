@@ -1,7 +1,7 @@
 # Encrypted Offsite Backup Setup
 
 Use Restic with a repository dedicated to Rainbow Fashions backups. Create
-`/opt/rainbow-fashions/shared/backup-offsite.env` from the adjacent example,
+`/opt/rainbow-fashions-prod/shared/backup-offsite.env` from the adjacent example,
 set its mode to `0600`, and never copy it into a release or CI artifact.
 
 The nightly uploader accepts only verified local database dumps with matching
@@ -13,8 +13,8 @@ Before enabling the offsite timer, initialise and test the intended repository
 as an operator on the production host:
 
 ```bash
-chmod 600 /opt/rainbow-fashions/shared/backup-offsite.env
-source /opt/rainbow-fashions/shared/backup-offsite.env
+chmod 600 /opt/rainbow-fashions-prod/shared/backup-offsite.env
+source /opt/rainbow-fashions-prod/shared/backup-offsite.env
 restic init
 restic snapshots
 ```
