@@ -326,7 +326,10 @@ deploy_phase_3_activate:
         echo 'Legacy database has application tables but no alembic_version. Run the separate reviewed schema-baseline procedure.'
         exit 1
       fi
-      docker compose run --rm backend alembic upgrade head
+      # The backend image normally runs Alembic in its entrypoint. Disable that
+      # hook for this explicit migration command so it runs exactly once on the
+      # Compose network selected for the release.
+      docker compose run --rm -e RUN_MIGRATIONS_ON_STARTUP=false backend alembic upgrade head
       docker compose up -d --remove-orphans
       # The frontend is bound to 127.0.0.1:8080 by the Compose release. This
       # frees public port 80 for host Nginx, which terminates HTTPS and proxies
