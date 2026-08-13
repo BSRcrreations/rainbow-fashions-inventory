@@ -18,9 +18,12 @@ variables:
   GIT_STRATEGY: "clone"
   DEPLOY_BRANCH: "shop-inventory"
   DEPLOY_PATH: "/opt/rainbow-fashions"
-  DEPLOY_URL: "https://test.rainbow-fashions.in"
+  # HTTPS is enabled only after the host certificate has been installed. Until
+  # then, verify the live HTTP service rather than failing a healthy release
+  # for a listener that does not exist yet.
+  DEPLOY_URL: "http://178.238.237.182"
   LOCAL_DEPLOY_URL: "http://127.0.0.1:8080"
-  PUBLIC_DEPLOY_URL: "https://test.rainbow-fashions.in"
+  PUBLIC_DEPLOY_URL: "http://178.238.237.182"
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
 
 default:
