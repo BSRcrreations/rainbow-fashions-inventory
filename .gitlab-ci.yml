@@ -307,6 +307,12 @@ deploy_phase_3_activate:
       fi
       docker compose run --rm backend alembic upgrade head
       docker compose up -d --remove-orphans
+      # The frontend is bound to 127.0.0.1:8080 by the Compose release. This
+      # frees public port 80 for host Nginx, which terminates HTTPS and proxies
+      # traffic to the frontend. The runner is granted only this command via a
+      # root-managed sudoers rule on the production host.
+      sudo -n systemctl start nginx
+      sudo -n systemctl is-active --quiet nginx
       ./deployment/scripts/wait_for_application.sh --base-url "$LOCAL_DEPLOY_URL" --timeout 180
       if ! docker compose exec -T backend python -c "from app.database.session import SessionLocal; from app.services.dashboard_service import DashboardService; from app.services.product_service import ProductService; db = SessionLocal(); ProductService(db).list_paginated(); DashboardService(db).summary(); db.close()"; then
         docker compose logs --tail=200 backend

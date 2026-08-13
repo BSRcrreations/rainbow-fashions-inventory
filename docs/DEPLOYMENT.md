@@ -50,6 +50,23 @@ Do not commit real secrets, connection strings, passwords, or generated dumps.
 ## HTTPS
 
 Use the reverse proxy configuration in `deployment/nginx/rainbow-fashions.conf`.
+
+### One-time production runner Nginx permission
+
+The Docker frontend binds only to `127.0.0.1:8080`; host Nginx owns public
+ports 80 and 443. During the first migration from the legacy Docker port-80
+binding, Nginx can be inactive before deployment because Docker still owns
+port 80. The activation job starts Nginx only after Compose releases that
+port. As root on the server, install the narrowly scoped rule:
+
+```bash
+visudo -cf /opt/rainbow-fashions/current/deployment/templates/gitlab-runner-nginx.sudoers
+install -o root -g root -m 440 /opt/rainbow-fashions/current/deployment/templates/gitlab-runner-nginx.sudoers /etc/sudoers.d/gitlab-runner-rainbow-nginx
+sudo -u gitlab-runner sudo -n /usr/bin/systemctl is-active nginx || true
+```
+
+Do not grant the runner unrestricted sudo access. Once the deployment has
+recreated the frontend, verify `systemctl is-active nginx` reports `active`.
 Terminate TLS with Certbot, a managed load balancer, or an equivalent approved
 service.
 

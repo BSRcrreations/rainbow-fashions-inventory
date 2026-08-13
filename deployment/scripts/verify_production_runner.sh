@@ -25,14 +25,26 @@ marker_owner="$(stat -c '%U' "$production_runner_marker")"
 
 [[ -d /run/systemd/system ]] || fail 'systemd host environment is unavailable'
 
-for command in bash curl openssl docker nginx certbot gitlab-runner df; do
+for command in bash curl openssl docker nginx certbot gitlab-runner df ss sudo; do
   command -v "$command" >/dev/null 2>&1 || fail "required command missing: $command"
 done
 
 command -v systemctl >/dev/null 2>&1 || fail 'systemctl is unavailable'
-for service in gitlab-runner docker nginx; do
+for service in gitlab-runner docker; do
   systemctl is-active --quiet "$service" || fail "required host service is not active: $service"
 done
+
+# The legacy Docker frontend may still temporarily own public port 80 before
+# this deployment recreates it on 127.0.0.1:8080. Nginx must therefore have a
+# valid configuration, but need not be active until the activation phase.
+nginx -t >/dev/null 2>&1 || fail 'host Nginx configuration is invalid'
+if systemctl is-active --quiet nginx; then
+  printf 'production runner preflight: host Nginx is active\n'
+elif ss -ltnp 2>/dev/null | grep -Eq '(^|[[:space:]])(0\.0\.0\.0|\[::\]):80[[:space:]].*docker-proxy'; then
+  printf 'production runner preflight: host Nginx is inactive while the legacy Docker frontend owns port 80; activation will release the port and start Nginx\n'
+else
+  printf 'production runner preflight: host Nginx is inactive; activation will start it after Docker is updated\n'
+fi
 
 [[ -S /var/run/docker.sock ]] || fail 'host Docker socket is unavailable'
 docker compose version >/dev/null 2>&1 || fail 'Docker Compose plugin is unavailable'
