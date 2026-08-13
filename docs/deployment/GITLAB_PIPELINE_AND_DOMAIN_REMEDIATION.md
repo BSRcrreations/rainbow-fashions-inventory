@@ -40,6 +40,33 @@ gitlab-runner register --url https://vmi3446054.contaboserver.net \
 Do not give the CI Docker runner access to the production Docker socket, the
 production filesystem, or the production environment file.
 
+### GitLab runner UI configuration (project Owner/Maintainer action)
+
+Runner tags and protection are stored by GitLab and cannot be established by
+editing `.gitlab-ci.yml` or the runner's local `config.toml`. In **Settings →
+CI/CD → Runners**, confirm the following configuration before allowing a
+deployment pipeline to run:
+
+| Runner | Executor | Tags | Run untagged | Protected | Locked to project |
+| --- | --- | --- | --- | --- | --- |
+| Rainbow CI Docker Runner | Docker | `rainbow-ci` only | Off | Off (unless required by project policy) | On |
+| Rainbow Production Shell Runner | Shell on `178.238.237.182` | `rainbow-production` only | Off | On | On |
+
+Remove `rainbow-production` and the obsolete
+`rainbow-fashions-prod-runner` tag from the Docker runner. Never assign both
+tags to one runner. The production runner must be registered on Contabo, not
+on a developer workstation, and must be online before a deployment pipeline is
+started. `shop-inventory` must remain a protected branch.
+
+The decisive job-log evidence is:
+
+```text
+Preparing the "shell" executor
+```
+
+If a job tagged `rainbow-production` reports a Docker executor, cancel it and
+correct GitLab's runner configuration; do not add host packages to a CI image.
+
 ## Domain preflight and DNS
 
 `verify_domain_preflight` now uses `DNS_ONLY=true`. It validates registration,
@@ -88,6 +115,17 @@ The shell-runner preflight requires the host-level environment file at
 deployment user, free of placeholders, configured for production, and to
 contain the required CORS origins. It checks properties only and never prints
 file contents. The preflight also requires at least 5 GiB free space.
+
+It additionally requires this root-owned, non-secret host marker:
+
+```text
+/etc/rainbow-fashions-production-runner
+RAINBOW_PRODUCTION_RUNNER=1
+```
+
+Create it with mode `644`. Its absence deliberately fails the preflight with
+`this job is not running on the approved production shell runner`, preventing a
+Docker CI container from being mistaken for the deployment host.
 
 ## Safe deployment sequence
 

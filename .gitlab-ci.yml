@@ -189,6 +189,7 @@ package_release:
 deploy_phase_1_upload:
   extends: .deploy_production
   stage: deploy
+  tags: [rainbow-production]
   needs:
     - package_release
   environment:
@@ -202,22 +203,19 @@ deploy_phase_1_upload:
 production_runner_preflight:
   extends: .deploy_production
   stage: deploy
-  # This production-tagged runner uses the Docker executor with Alpine as its
-  # default image, so install the interpreter required by the preflight script.
-  image: alpine:3.20
+  tags: [rainbow-production]
   needs:
     - deploy_phase_1_upload
   environment:
     name: production
     url: $DEPLOY_URL
-  before_script:
-    - apk add --no-cache bash
   script:
     - bash deployment/scripts/verify_production_runner.sh
 
 deploy_phase_2_backup:
   extends: .deploy_production
   stage: deploy
+  tags: [rainbow-production]
   needs:
     - production_runner_preflight
   environment:
@@ -240,6 +238,7 @@ deploy_phase_2_backup:
 deploy_phase_3_activate:
   extends: .deploy_production
   stage: deploy
+  tags: [rainbow-production]
   needs:
     - deploy_phase_2_backup
   environment:
@@ -320,6 +319,7 @@ deploy_phase_3_activate:
 deploy_phase_4_verify:
   extends: .deploy_production
   stage: verify
+  tags: [rainbow-production]
   needs:
     - deploy_phase_3_activate
   environment:
@@ -332,6 +332,7 @@ deploy_phase_4_verify:
 diagnose_production_availability:
   extends: .deploy_production
   stage: verify
+  tags: [rainbow-production]
   needs: []
   environment:
     name: production-diagnostics
@@ -392,6 +393,7 @@ diagnose_production_availability:
 database_reset_production:
   extends: .deploy_production
   stage: verify
+  tags: [rainbow-production]
   needs:
     - deploy_phase_4_verify
   environment:
@@ -417,6 +419,7 @@ database_reset_production:
 diagnose_barcode_assignment_production:
   extends: .deploy_production
   stage: verify
+  tags: [rainbow-production]
   # This read-only job does not consume build artifacts. Schedule it
   # independently so an unrelated optional manual deployment job cannot cause
   # the diagnostic to be skipped.
@@ -480,6 +483,7 @@ diagnose_barcode_assignment_production:
 database_import_production:
   extends: .deploy_production
   stage: deploy
+  tags: [rainbow-production]
   environment:
     name: production-database-import
   when: manual
@@ -503,6 +507,7 @@ database_import_production:
 verify_production_backup_recovery:
   extends: .deploy_production
   stage: verify
+  tags: [rainbow-production]
   needs: []
   environment:
     name: production-backup-verification
