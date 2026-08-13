@@ -13,6 +13,7 @@ case "$DEPLOY_ENVIRONMENT" in
     expected_path=/opt/rainbow-fashions-test
     expected_project=rainbow_test
     expected_marker=/etc/rainbow-fashions-test-runner
+    expected_marker_value=RAINBOW_TEST_RUNNER=1
     expected_tag=rainbow-test
     expected_origin=https://test.rainbow-fashions.in
     ;;
@@ -20,6 +21,7 @@ case "$DEPLOY_ENVIRONMENT" in
     expected_path=/opt/rainbow-fashions-prod
     expected_project=rainbow_prod
     expected_marker=/etc/rainbow-fashions-production-runner
+    expected_marker_value=RAINBOW_PRODUCTION_RUNNER=1
     expected_tag=rainbow-production
     expected_origin=https://rainbow-fashions.in
     ;;
@@ -31,7 +33,7 @@ fail() { printf 'deployment preflight: %s\n' "$1" >&2; exit 1; }
 [[ "$DEPLOY_PATH" == "$expected_path" ]] || fail 'deployment path does not match the requested environment'
 [[ "$COMPOSE_PROJECT_NAME" == "$expected_project" ]] || fail 'Compose project does not match the requested environment'
 [[ "$BACKEND_ENV_FILE" == "$DEPLOY_PATH/shared/backend.env" ]] || fail 'environment file is outside the requested deployment root'
-[[ -f "$expected_marker" ]] && grep -Fxq 'RAINBOW_DEPLOYMENT_RUNNER=1' "$expected_marker" || fail 'approved deployment-runner marker is missing'
+[[ -f "$expected_marker" ]] && grep -Fxq "$expected_marker_value" "$expected_marker" || fail 'approved deployment-runner marker is missing'
 [[ "$(stat -c '%a' "$expected_marker")" == 644 ]] || fail 'deployment-runner marker mode must be 644'
 [[ "$(stat -c '%U' "$expected_marker")" == root ]] || fail 'deployment-runner marker must be root-owned'
 

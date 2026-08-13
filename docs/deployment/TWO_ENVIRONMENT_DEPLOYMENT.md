@@ -42,10 +42,10 @@ future production volume or intentionally retired under an approved plan.
    separate protected **Rainbow Production Shell Runner** tagged
    `rainbow-production`; it must not carry the test tag.
 4. Add the root-owned, mode-`0644` marker files required by preflight:
-   `/etc/rainbow-fashions-test-runner` and
-   `/etc/rainbow-fashions-production-runner`. Each must include
-   `RAINBOW_DEPLOYMENT_RUNNER=1`; the test marker also identifies the test
-   runner and the production marker identifies the production runner.
+   `/etc/rainbow-fashions-test-runner`, containing only
+   `RAINBOW_TEST_RUNNER=1`, and
+   `/etc/rainbow-fashions-production-runner`, containing only
+   `RAINBOW_PRODUCTION_RUNNER=1`.
 5. Verify the `gitlab-runner` account can use Docker without `sudo`, and that
    it can write only the intended deployment root.
 
