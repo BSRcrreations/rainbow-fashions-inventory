@@ -53,22 +53,22 @@ schema_state="$("${compose[@]}" exec -T postgres sh -ec 'psql -U "$POSTGRES_USER
 case "$schema_state" in
   empty\|*)
     echo 'deployment activation: bootstrapping empty isolated database at the Alembic head'
-    "${compose[@]}" run --rm backend python -c 'from app import models; from app.database.base import Base; from app.database.session import engine; Base.metadata.create_all(bind=engine)'
-    "${compose[@]}" run --rm backend alembic stamp head
+    "${compose[@]}" run --rm -e RUN_MIGRATIONS_ON_STARTUP=false backend python -c 'from app import models; from app.database.base import Base; from app.database.session import engine; Base.metadata.create_all(bind=engine)'
+    "${compose[@]}" run --rm -e RUN_MIGRATIONS_ON_STARTUP=false backend alembic stamp head
     ;;
   nonempty\|unstamped)
     echo 'deployment activation: legacy database contains application tables but has no Alembic version; a separate reviewed baseline is required' >&2
     exit 1
     ;;
   nonempty\|stamped)
-    "${compose[@]}" run --rm backend alembic upgrade head
+    "${compose[@]}" run --rm -e RUN_MIGRATIONS_ON_STARTUP=false backend alembic upgrade head
     ;;
   *)
     echo 'deployment activation: could not determine database migration state' >&2
     exit 1
     ;;
 esac
-test "$("${compose[@]}" run --rm backend alembic heads | grep -c '(head)')" -eq 1
+test "$("${compose[@]}" run --rm -e RUN_MIGRATIONS_ON_STARTUP=false backend alembic heads | grep -c '(head)')" -eq 1
 "${compose[@]}" up -d --remove-orphans
 "$script_dir/wait_for_application.sh" --base-url "$LOCAL_DEPLOY_URL" --timeout 180
 
