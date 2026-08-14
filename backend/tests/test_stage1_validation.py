@@ -126,6 +126,39 @@ class Stage1ValidationTests(unittest.TestCase):
         self.assertEqual(context.exception.status_code, 400)
         db.commit.assert_not_called()
 
+    def test_checkout_idempotency_returns_the_same_sale_without_reapplying_stock(self) -> None:
+        store_id, variant_id, user_id, sale_id = uuid4(), uuid4(), uuid4(), uuid4()
+        user = SimpleNamespace(id=user_id, store_id=store_id, role="OWNER")
+        sale = SimpleNamespace(id=sale_id, invoice_number="RF-20260814-ABC123")
+        payload = SaleCreate(payment_mode="CASH", items=[{"product_variant_id": variant_id, "quantity": 1}])
+        db = MagicMock()
+        db.query.return_value.filter_by.return_value.first.return_value = None
+        service = SaleService.__new__(SaleService)
+        service.db = db
+        service.repo = MagicMock()
+        service._store_id = MagicMock(return_value=store_id)
+        service._generate_invoice_number = MagicMock(return_value=sale.invoice_number)
+        service._create = MagicMock(return_value=sale)
+
+        first = service.create(payload, user, idempotency_key="checkout-once")
+        record = db.add.call_args.args[0]
+        db.query.return_value.filter_by.return_value.first.return_value = record
+        service.repo.get_by_invoice.return_value = sale
+        service.repo.get_detail.return_value = sale
+        second = service.create(payload, user, idempotency_key="checkout-once")
+
+        self.assertIs(first, sale)
+        self.assertIs(second, sale)
+        service._create.assert_called_once()
+        self.assertEqual(db.commit.call_count, 1)
+
+    def test_checkout_accepts_every_supported_tender_type(self) -> None:
+        variant_id = uuid4()
+        for payment_mode in ("CASH", "UPI", "CARD", "BANK"):
+            payload = SaleCreate(payment_mode=payment_mode, discount_type="FIXED_AMOUNT", discount_value="10", items=[{"product_variant_id": variant_id, "quantity": 1}])
+            self.assertEqual(payload.payment_mode, payment_mode)
+            self.assertEqual(payload.discount_value, Decimal("10"))
+
     def test_mapped_barcode_lookup_is_explicitly_store_scoped(self) -> None:
         source = inspect.getsource(StockScanService.resolve_barcode)
 

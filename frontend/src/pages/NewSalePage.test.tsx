@@ -206,7 +206,7 @@ describe("Current Sale cart panel", () => {
 
     expect(markup).not.toContain("Your cart is empty");
     expect(markup).toContain('data-testid="cart-item-list"');
-    expect(markup).toContain("min-h-[148px]");
+    expect(markup).toContain("min-h-0");
     expect(markup).toContain("flex-1");
     expect(markup).toContain("overflow-x-hidden");
     expect(markup).toContain("overflow-y-auto");
@@ -225,5 +225,11 @@ describe("Current Sale cart panel", () => {
     expect(markup.indexOf("Customer")).toBeLessThan(markup.indexOf("Payment method"));
     expect(markup.indexOf("Payment method")).toBeLessThan(markup.indexOf("Discount type"));
     expect(markup.indexOf("Discount type")).toBeLessThan(markup.indexOf("Subtotal"));
+    expect(markup).toContain('data-testid="checkout-footer"');
+    expect(markup).toContain("sticky bottom-0");
+    expect(markup).toContain("Grand Total");
+    expect(markup).toContain("Complete Sale");
+    expect(markup).toContain("Save Bill");
+    expect(markup).toContain("Save &amp; Print Bill");
   });
 });

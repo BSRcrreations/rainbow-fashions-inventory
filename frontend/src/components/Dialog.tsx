@@ -10,6 +10,8 @@ interface DialogProps {
   children: ReactNode;
   onClose: () => void;
   maxWidth?: "md" | "lg" | "xl";
+  contentClassName?: string;
+  fullHeight?: boolean;
 }
 
 const widths = {
@@ -50,7 +52,7 @@ const focusableSelector = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
-export default function Dialog({ open, title, description, children, onClose, maxWidth = "lg" }: DialogProps) {
+export default function Dialog({ open, title, description, children, onClose, maxWidth = "lg", contentClassName, fullHeight = false }: DialogProps) {
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLElement>(null);
@@ -111,7 +113,7 @@ export default function Dialog({ open, title, description, children, onClose, ma
         aria-describedby={description ? descriptionId : undefined}
         aria-labelledby={titleId}
         aria-modal="true"
-        className={`ds-dialog flex max-h-[calc(100svh-1rem)] w-full flex-col overflow-hidden sm:max-h-[min(88svh,52rem)] ${widths[maxWidth]}`}
+        className={`ds-dialog flex w-full flex-col overflow-hidden ${fullHeight ? "h-[calc(100svh-1rem)] sm:h-[min(88svh,52rem)]" : "max-h-[calc(100svh-1rem)] sm:max-h-[min(88svh,52rem)]"} ${widths[maxWidth]}`}
         role="dialog"
         tabIndex={-1}
       >
@@ -124,7 +126,7 @@ export default function Dialog({ open, title, description, children, onClose, ma
             <X size={18} />
           </Button>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain break-words px-4 py-5 [scrollbar-gutter:stable] sm:px-6">{children}</div>
+        <div className={contentClassName ?? "min-h-0 flex-1 overflow-y-auto overscroll-contain break-words px-4 py-5 [scrollbar-gutter:stable] sm:px-6"}>{children}</div>
       </section>
     </div>,
     document.body
