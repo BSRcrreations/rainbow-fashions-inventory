@@ -1,6 +1,6 @@
 /var/log/rainbow-fashions/health-watch.log
 /var/log/rainbow-fashions/deploy*.log
-/var/log/nginx/test.rainbow-fashions.in.*.log {
+/var/log/nginx/test.rainbow-fashions.in.*.log /var/log/nginx/rainbow-fashions.in.*.log {
     weekly
     rotate 8
     compress

@@ -1,4 +1,4 @@
-# Copy this template to /opt/rainbow-fashions/shared/backend.env on the server.
+# Copy this template to /opt/rainbow-fashions-prod/shared/backend.env on the server.
 # Replace every CHANGE_ME value before deployment. Never commit the real file.
 APP_NAME="Rainbow Fashions Inventory"
 APP_ENV=production
@@ -14,7 +14,7 @@ JWT_SECRET_KEY=CHANGE_ME_OUTPUT_OF_OPENSSL_RAND_HEX_64
 JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=480
 
-CORS_ORIGINS=https://test.rainbow-fashions.in
+CORS_ORIGINS=https://rainbow-fashions.in,https://www.rainbow-fashions.in
 
 UPLOAD_DIR=app/uploads
 INVOICE_UPLOAD_DIR=app/uploads/invoices

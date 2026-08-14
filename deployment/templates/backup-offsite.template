@@ -1,4 +1,4 @@
-# Copy to /opt/rainbow-fashions/shared/backup-offsite.env and chmod 600.
+# Copy to /opt/rainbow-fashions-prod/shared/backup-offsite.env and chmod 600.
 # This file must remain outside Git and outside release directories.
 RESTIC_REPOSITORY=s3:https://OBJECT_STORAGE_ENDPOINT/BUCKET/rainbow-fashions
 RESTIC_PASSWORD=CHANGE_ME
