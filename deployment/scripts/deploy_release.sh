@@ -70,7 +70,14 @@ case "$schema_state" in
 esac
 test "$("${compose[@]}" run --rm -e RUN_MIGRATIONS_ON_STARTUP=false backend alembic heads | grep -c '(head)')" -eq 1
 "${compose[@]}" up -d --remove-orphans
-"$script_dir/wait_for_application.sh" --base-url "$LOCAL_DEPLOY_URL" --timeout 180
+# A first TEST build can spend several minutes applying the isolated schema and
+# starting cold containers.  Production retains the existing three-minute
+# guard; TEST gets a longer bounded readiness window without altering it.
+local_health_timeout=180
+if [[ "$DEPLOY_ENVIRONMENT" == test ]]; then
+  local_health_timeout=360
+fi
+"$script_dir/wait_for_application.sh" --base-url "$LOCAL_DEPLOY_URL" --timeout "$local_health_timeout"
 
 # TEST is activated behind a deliberately closed Nginx vhost. Its public
 # proxy and certificate are configured only after loopback health succeeds,
