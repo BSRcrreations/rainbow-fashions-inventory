@@ -22,13 +22,15 @@ done
 
 deadline=$((SECONDS + TIMEOUT_SECONDS))
 attempt=0
+curl_error_file="$(mktemp /tmp/rainbow-wait-curl.XXXXXX)"
+trap 'rm -f "$curl_error_file"' EXIT
 
 check_path() {
   local path="$1"
   local url="${BASE_URL%/}${path}"
   local started status duration
   started="$(date +%s)"
-  status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --connect-timeout 5 --max-time 10 "$url" 2>/tmp/rainbow-wait-curl.err || true)"
+  status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --connect-timeout 5 --max-time 10 "$url" 2>"$curl_error_file" || true)"
   duration=$(( $(date +%s) - started ))
   printf 'wait_for_application attempt=%s url=%s status=%s duration=%ss\n' "$attempt" "$url" "${status:-000}" "$duration"
   [[ "$status" == "200" ]]
