@@ -43,7 +43,31 @@ cd "$RELEASE_DIR"
 "${compose[@]}" config --quiet
 "${compose[@]}" build
 "${compose[@]}" up -d postgres
-"${compose[@]}" run --rm backend alembic upgrade head
+
+# The historical Alembic chain begins with a change to an already-existing
+# legacy schema. A brand-new, isolated TEST database therefore cannot replay
+# that chain from revision zero. Bootstrap only an empty database from the
+# current SQLAlchemy metadata and stamp it at the single Alembic head. Never
+# use this path for a database that already contains application tables.
+schema_state="$("${compose[@]}" exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = '\''public'\'' AND tablename <> '\''alembic_version'\'') THEN '\''nonempty'\'' ELSE '\''empty'\'' END, CASE WHEN to_regclass('\''public.alembic_version'\'') IS NULL THEN '\''unstamped'\'' ELSE '\''stamped'\'' END"')"
+case "$schema_state" in
+  empty\|*)
+    echo 'deployment activation: bootstrapping empty isolated database at the Alembic head'
+    "${compose[@]}" run --rm backend python -c 'from app import models; from app.database.base import Base; from app.database.session import engine; Base.metadata.create_all(bind=engine)'
+    "${compose[@]}" run --rm backend alembic stamp head
+    ;;
+  nonempty\|unstamped)
+    echo 'deployment activation: legacy database contains application tables but has no Alembic version; a separate reviewed baseline is required' >&2
+    exit 1
+    ;;
+  nonempty\|stamped)
+    "${compose[@]}" run --rm backend alembic upgrade head
+    ;;
+  *)
+    echo 'deployment activation: could not determine database migration state' >&2
+    exit 1
+    ;;
+esac
 test "$("${compose[@]}" run --rm backend alembic heads | grep -c '(head)')" -eq 1
 "${compose[@]}" up -d --remove-orphans
 "$script_dir/wait_for_application.sh" --base-url "$LOCAL_DEPLOY_URL" --timeout 180
