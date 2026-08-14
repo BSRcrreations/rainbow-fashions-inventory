@@ -37,8 +37,17 @@ fail() { printf 'deployment preflight: %s\n' "$1" >&2; exit 1; }
 [[ "$(stat -c '%a' "$expected_marker")" == 644 ]] || fail 'deployment-runner marker mode must be 644'
 [[ "$(stat -c '%U' "$expected_marker")" == root ]] || fail 'deployment-runner marker must be root-owned'
 
-if [[ -n "${CI_RUNNER_TAGS:-}" ]] && [[ ",${CI_RUNNER_TAGS// /}," != *",${expected_tag},"* ]]; then
-  fail 'runner does not have the required environment tag'
+if [[ -n "${CI_RUNNER_TAGS:-}" ]]; then
+  # GitLab exposes CI_RUNNER_TAGS as a JSON-style list (for example,
+  # ["rainbow-test"]), while manually-run preflight checks may use a simple
+  # comma-separated list. Accept either representation, but require the exact
+  # tag so a test job cannot run on the production runner.
+  compact_runner_tags="${CI_RUNNER_TAGS//[[:space:]]/}"
+  if [[ "$compact_runner_tags" != *"\"${expected_tag}\""* ]] && \
+     [[ ",$compact_runner_tags," != *",${expected_tag},"* ]]; then
+    fail 'runner does not have the required environment tag'
+  fi
+  unset compact_runner_tags
 fi
 
 for command in docker gitlab-runner nginx curl openssl; do
