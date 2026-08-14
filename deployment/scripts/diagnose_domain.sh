@@ -7,6 +7,7 @@ EXPECTED_IPV4="${EXPECTED_IPV4:-178.238.237.182}"
 EXPECTED_NAMESERVERS="${EXPECTED_NAMESERVERS:-}"
 HTTP_TIMEOUT_SECONDS="${HTTP_TIMEOUT_SECONDS:-8}"
 REPORT_FILE="${REPORT_FILE:-}"
+DNS_ONLY="${DNS_ONLY:-false}"
 
 STATE="UNKNOWN"
 FAILURE_DETAIL=""
@@ -116,6 +117,7 @@ emit "Rainbow Fashions domain diagnostic"
 emit "root_domain=$ROOT_DOMAIN"
 emit "app_domain=$APP_DOMAIN"
 emit "expected_ipv4=$EXPECTED_IPV4"
+emit "dns_only=$DNS_ONLY"
 
 whois_status=""
 whois_registrar=""
@@ -229,6 +231,12 @@ while IFS= read -r line; do
   [[ -n "$line" ]] && emit "$line"
 done <<< "$trace_output"
 emit "dns_trace_tail_end"
+
+if [[ "$DNS_ONLY" == "true" ]]; then
+  STATE="DNS_OK"
+  emit "state=$STATE"
+  finish 0
+fi
 
 http_status="$(curl_status "http://${APP_DOMAIN}/health/live")"
 emit "http_port_80_status=${http_status:-000}"

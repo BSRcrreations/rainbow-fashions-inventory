@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from hashlib import sha256
 from io import BytesIO
+import json
 from math import ceil
 from typing import Literal, Optional
 from uuid import UUID, uuid4
@@ -10,12 +12,14 @@ from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.core.exceptions import bad_request, conflict, error_payload, not_found
 from app.models.brand import Brand
 from app.models.category import Category
 from app.models.customer import Customer
+from app.models.destructive_action import DestructiveIdempotencyRecord
 from app.models.enums import SaleStatus, StockMovementType, UserRole
 from app.models.product import Product
 from app.models.product_barcode import ProductBarcode
@@ -38,7 +42,64 @@ class SaleService:
         self.db = db
         self.repo = SaleRepository(db)
 
-    def create(self, payload: SaleCreate, current_user: User, request_id: str | None = None) -> Sale:
+    def create(self, payload: SaleCreate, current_user: User, request_id: str | None = None, idempotency_key: str | None = None) -> Sale:
+        """Create one sale transaction and, when supplied, make checkout retries safe.
+
+        The POS sends the same key for a single button action.  Reserving that key
+        before taking inventory locks means a repeated click cannot create a second
+        sale or apply another stock movement.
+        """
+        checkout_key = (idempotency_key or "").strip()
+        if not checkout_key:
+            return self._create(payload, current_user, request_id)
+        if len(checkout_key) > 120:
+            raise bad_request("Checkout request key is invalid")
+
+        store_id = self._store_id(current_user)
+        request_hash = self._checkout_request_hash(payload)
+        existing = self.db.query(DestructiveIdempotencyRecord).filter_by(
+            store_id=store_id,
+            user_id=current_user.id,
+            action="SALE_CHECKOUT",
+            idempotency_key=checkout_key,
+        ).first()
+        if existing:
+            return self._idempotent_checkout(existing, request_hash, current_user)
+
+        invoice_number = payload.invoice_number or self._generate_invoice_number()
+        record = DestructiveIdempotencyRecord(
+            store_id=store_id,
+            user_id=current_user.id,
+            action="SALE_CHECKOUT",
+            idempotency_key=checkout_key,
+            request_hash=request_hash,
+            # Store the generated invoice before the sale commits so a concurrent
+            # retry can return the completed transaction instead of reprocessing it.
+            response_snapshot={"invoice_number": invoice_number},
+        )
+        self.db.add(record)
+        try:
+            self.db.flush()
+        except IntegrityError:
+            # Another request with this key won the unique constraint. Its commit
+            # includes the sale and stock movements, so re-read and return it.
+            self.db.rollback()
+            existing = self.db.query(DestructiveIdempotencyRecord).filter_by(
+                store_id=store_id,
+                user_id=current_user.id,
+                action="SALE_CHECKOUT",
+                idempotency_key=checkout_key,
+            ).first()
+            if existing:
+                return self._idempotent_checkout(existing, request_hash, current_user)
+            raise
+
+        sale = self._create(payload.model_copy(update={"invoice_number": invoice_number}), current_user, request_id)
+        record.response_snapshot = {"invoice_number": sale.invoice_number, "sale_id": str(sale.id)}
+        self.db.commit()
+        return sale
+
+    def _create(self, payload: SaleCreate, current_user: User, request_id: str | None = None) -> Sale:
         if all(item.product_variant_id is not None for item in payload.items):
             return self._create_variant_sale(payload, current_user, request_id)
         store_id = self._store_id(current_user)
@@ -91,6 +152,22 @@ class SaleService:
         if price_overrides:
             self.db.add(SaleAudit(sale_id=sale.id, action="PRICE_OVERRIDE", reason=None, performed_by=current_user.id, before_data=None, after_data={"price_overrides": price_overrides}))
         self.db.commit()
+        return self.get(sale.id, current_user)
+
+    @staticmethod
+    def _checkout_request_hash(payload: SaleCreate) -> str:
+        body = json.dumps(payload.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), default=str)
+        return sha256(body.encode("utf-8")).hexdigest()
+
+    def _idempotent_checkout(self, record: DestructiveIdempotencyRecord, request_hash: str, current_user: User) -> Sale:
+        if record.request_hash != request_hash:
+            raise conflict("This checkout request key was already used for a different sale")
+        invoice_number = record.response_snapshot.get("invoice_number")
+        if not invoice_number:
+            raise conflict("This checkout is still being processed. Please wait a moment.")
+        sale = self.repo.get_by_invoice(invoice_number, self._store_id(current_user))
+        if not sale:
+            raise conflict("This checkout is still being processed. Please wait a moment.")
         return self.get(sale.id, current_user)
 
     def catalog(self, search: Optional[str], current_user: User) -> list[SaleCatalogProduct]:

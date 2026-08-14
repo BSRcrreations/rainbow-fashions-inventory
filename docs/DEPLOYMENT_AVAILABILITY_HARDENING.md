@@ -157,7 +157,7 @@ Use expand-and-contract practices:
 Copy and protect the alert configuration:
 
 ```bash
-sudo cp deployment/templates/availability-alerts.env.example /opt/rainbow-fashions/shared/availability-alerts.env
+sudo cp deployment/templates/availability-alerts.template /opt/rainbow-fashions/shared/availability-alerts.env
 sudo chmod 600 /opt/rainbow-fashions/shared/availability-alerts.env
 ```
 

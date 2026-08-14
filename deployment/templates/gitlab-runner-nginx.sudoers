@@ -1,0 +1,6 @@
+# Install with: visudo -cf deployment/templates/gitlab-runner-nginx.sudoers
+# Then copy to /etc/sudoers.d/gitlab-runner-rainbow-nginx as root (mode 440).
+# This gives the production shell runner no general root access: only host
+# Nginx lifecycle operations required after the Docker frontend releases port
+# 80 during a deployment.
+gitlab-runner ALL=(root) NOPASSWD: /usr/bin/systemctl start nginx, /usr/bin/systemctl restart nginx, /usr/bin/systemctl reload nginx, /usr/bin/systemctl is-active nginx

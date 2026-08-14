@@ -4,7 +4,7 @@ from datetime import date
 from typing import Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -99,8 +99,14 @@ def list_sales(
 
 
 @router.post("", response_model=SaleRead, status_code=status.HTTP_201_CREATED)
-def create_sale(payload: SaleCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return SaleService(db).create(payload, current_user, request.state.request_id)
+def create_sale(
+    payload: SaleCreate,
+    request: Request,
+    idempotency_key: str = Header(default="", alias="Idempotency-Key"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return SaleService(db).create(payload, current_user, request.state.request_id, idempotency_key)
 
 
 @router.get("/{sale_id}", response_model=SaleRead)

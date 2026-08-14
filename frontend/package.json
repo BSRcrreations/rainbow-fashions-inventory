@@ -9,7 +9,7 @@
     "test": "vitest run",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
-    "build": "tsc && vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -24,7 +24,6 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2",
     "tailwind-merge": "^2.6.1",
-    "typescript": "^5.6.2",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
@@ -39,6 +38,7 @@
     "globals": "^17.4.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
+    "typescript": "^5.6.2",
     "typescript-eslint": "^8.56.1",
     "vite": "^8.1.5",
     "vitest": "^3.2.4"
