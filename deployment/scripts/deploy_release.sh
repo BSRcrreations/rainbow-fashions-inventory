@@ -47,9 +47,17 @@ cd "$RELEASE_DIR"
 test "$("${compose[@]}" run --rm backend alembic heads | grep -c '(head)')" -eq 1
 "${compose[@]}" up -d --remove-orphans
 "$script_dir/wait_for_application.sh" --base-url "$LOCAL_DEPLOY_URL" --timeout 180
-"$script_dir/wait_for_application.sh" --base-url "$PUBLIC_DEPLOY_URL" --timeout 180
-PUBLIC_BASE_URL="$PUBLIC_DEPLOY_URL" LOCAL_BASE_URL="$LOCAL_DEPLOY_URL" \
-  HTTP_BASE_URL="${PUBLIC_DEPLOY_URL/https:/http:}" "$script_dir/smoke_test_production.sh"
+
+# TEST is activated behind a deliberately closed Nginx vhost. Its public
+# proxy and certificate are configured only after loopback health succeeds,
+# so public HTTPS verification is deferred to the TEST proxy/TLS phase.
+if [[ "$DEPLOY_ENVIRONMENT" == production ]]; then
+  "$script_dir/wait_for_application.sh" --base-url "$PUBLIC_DEPLOY_URL" --timeout 180
+  PUBLIC_BASE_URL="$PUBLIC_DEPLOY_URL" LOCAL_BASE_URL="$LOCAL_DEPLOY_URL" \
+    HTTP_BASE_URL="${PUBLIC_DEPLOY_URL/https:/http:}" "$script_dir/smoke_test_production.sh"
+else
+  echo 'test activation: loopback health passed; public verification is deferred to the TEST proxy/TLS phase'
+fi
 
 trap - EXIT
 printf 'deployment activation: PASS (%s)\n' "$DEPLOY_ENVIRONMENT"
