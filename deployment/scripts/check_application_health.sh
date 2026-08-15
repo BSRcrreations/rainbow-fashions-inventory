@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-APP_DIR="${APP_DIR:-/opt/rainbow-fashions/current}"
-STATE_DIR="${STATE_DIR:-/opt/rainbow-fashions/monitoring/state}"
+APP_DIR="${APP_DIR:-/opt/rainbow-fashions-prod/current}"
+STATE_DIR="${STATE_DIR:-/opt/rainbow-fashions-prod/monitoring/state}"
 LOG_FILE="${LOG_FILE:-/var/log/rainbow-fashions/health-watch.log}"
-ALERT_ENV_FILE="${ALERT_ENV_FILE:-/opt/rainbow-fashions/shared/availability-alerts.env}"
+ALERT_ENV_FILE="${ALERT_ENV_FILE:-/opt/rainbow-fashions-prod/shared/availability-alerts.env}"
 LOCAL_BASE_URL="${LOCAL_BASE_URL:-http://127.0.0.1:8080}"
-PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://test.rainbow-fashions.in}"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://rainbow-fashions.in}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-rainbow_prod}"
+COMPOSE_OVERRIDE="${COMPOSE_OVERRIDE:-docker-compose.prod.yml}"
 ROOT_DISK_WARN_PERCENT="${ROOT_DISK_WARN_PERCENT:-85}"
 CERT_WARN_DAYS="${CERT_WARN_DAYS:-14}"
 RESTART_COOLDOWN_SECONDS="${RESTART_COOLDOWN_SECONDS:-900}"
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"
 touch "$LOG_FILE"
+
+compose() {
+  docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f "$COMPOSE_OVERRIDE" "$@"
+}
 
 log() {
   printf '%s health-watch %s\n' "$(date --iso-8601=seconds 2>/dev/null || date)" "$*" | tee -a "$LOG_FILE" >&2
@@ -60,8 +66,8 @@ attempt_recovery_once() {
   fi
   echo "$now" > "$STATE_DIR/last-restart-at"
   log "Attempting controlled docker compose up -d recovery."
-  (cd "$APP_DIR" && docker compose logs --tail=200 --no-color > "$STATE_DIR/container-logs-before-recovery.log" 2>&1 || true)
-  (cd "$APP_DIR" && docker compose up -d)
+  (cd "$APP_DIR" && compose logs --tail=200 --no-color > "$STATE_DIR/container-logs-before-recovery.log" 2>&1 || true)
+  (cd "$APP_DIR" && compose up -d)
 }
 
 failures=()
@@ -70,10 +76,10 @@ check_service_active docker || failures+=("docker_stopped")
 check_service_active nginx || failures+=("nginx_stopped")
 
 if [[ -d "$APP_DIR" ]]; then
-  if ! (cd "$APP_DIR" && docker compose ps --services --filter status=running | grep -q .); then
+  if ! (cd "$APP_DIR" && compose ps --services --filter status=running | grep -q .); then
     failures+=("containers_not_running")
   fi
-  unhealthy="$(cd "$APP_DIR" && docker inspect -f '{{.Name}} {{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' $(docker compose ps -q) 2>/dev/null | awk '$2=="unhealthy"{print $1}' || true)"
+  unhealthy="$(cd "$APP_DIR" && docker inspect -f '{{.Name}} {{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' $(compose ps -q) 2>/dev/null | awk '$2=="unhealthy"{print $1}' || true)"
   [[ -z "$unhealthy" ]] || failures+=("container_unhealthy")
 else
   failures+=("app_dir_missing")

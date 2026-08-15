@@ -4,17 +4,29 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG = ROOT / "deployment" / "nginx" / "test.rainbow-fashions.in.conf"
+TEST_CONFIG = ROOT / "deployment" / "nginx" / "test.rainbow-fashions.in.conf"
+PRODUCTION_CONFIG = ROOT / "deployment" / "nginx" / "rainbow-fashions.in.conf"
 
 
-def test_public_nginx_configuration_covers_all_required_hosts_and_proxy_safety() -> None:
-    config = CONFIG.read_text(encoding="utf-8")
+def test_test_nginx_configuration_is_isolated_and_proxies_loopback_test_port() -> None:
+    config = TEST_CONFIG.read_text(encoding="utf-8")
 
-    for hostname in ("test.rainbow-fashions.in", "rainbow-fashions.in", "www.rainbow-fashions.in"):
-        assert hostname in config
+    assert "test.rainbow-fashions.in" in config
+    assert "rainbow-fashions.in www.rainbow-fashions.in" not in config
     assert "listen 80;" in config
     assert "listen 443 ssl http2;" in config
+    assert "proxy_pass http://127.0.0.1:8081;" in config
+    assert "proxy_pass http://127.0.0.1:8000" not in config
+
+
+def test_production_nginx_configuration_is_isolated_and_proxies_loopback_production_port() -> None:
+    config = PRODUCTION_CONFIG.read_text(encoding="utf-8")
+
+    for hostname in ("rainbow-fashions.in", "www.rainbow-fashions.in"):
+        assert hostname in config
+    assert "test.rainbow-fashions.in" not in config
     assert "proxy_pass http://127.0.0.1:8080;" in config
+    assert "proxy_pass http://127.0.0.1:8000" not in config
     assert "proxy_set_header Host $host;" in config
     assert "proxy_set_header X-Real-IP $remote_addr;" in config
     assert "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;" in config

@@ -1,0 +1,5 @@
+# Production-only public entry point.  Host Nginx is the sole public listener.
+services:
+  frontend:
+    ports:
+      - "127.0.0.1:8080:80"

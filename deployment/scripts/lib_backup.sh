@@ -3,7 +3,10 @@
 # this directory deliberately source only protected files outside the release.
 set -Eeuo pipefail
 
-RAINBOW_APP_ROOT="${RAINBOW_APP_ROOT:-/opt/rainbow-fashions}"
+## A backup operation must always declare the environment it serves.  A
+## default here could accidentally make a test maintenance job operate on the
+## production backup root after the two-environment split.
+RAINBOW_APP_ROOT="${RAINBOW_APP_ROOT:?RAINBOW_APP_ROOT must name the test or production deployment root}"
 RAINBOW_CURRENT_DIR="${RAINBOW_CURRENT_DIR:-${RAINBOW_APP_ROOT}/current}"
 RAINBOW_SHARED_DIR="${RAINBOW_SHARED_DIR:-${RAINBOW_APP_ROOT}/shared}"
 RAINBOW_BACKEND_ENV="${RAINBOW_BACKEND_ENV:-${RAINBOW_SHARED_DIR}/backend.env}"

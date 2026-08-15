@@ -1,9 +1,18 @@
+# Common services for the isolated test and production environments.  Always
+# start this file with exactly one environment override and a project name:
+#
+#   docker compose -p rainbow_test -f docker-compose.yml -f docker-compose.test.yml …
+#   docker compose -p rainbow_prod -f docker-compose.yml -f docker-compose.prod.yml …
+#
+# The project name scopes the network and the named PostgreSQL volume.  The
+# three bind mounts and backend environment file must be supplied by the
+# deployment job; no environment file is stored in a release checkout.
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     env_file:
-      - ./backend/.env
+      - ${BACKEND_ENV_FILE:?BACKEND_ENV_FILE must point to the protected environment file}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -18,17 +27,14 @@ services:
       context: ./backend
     restart: unless-stopped
     env_file:
-      - ./backend/.env
+      - ${BACKEND_ENV_FILE:?BACKEND_ENV_FILE must point to the protected environment file}
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
-      # A host bind mount lets the host backup service archive all uploads.
-      - ${UPLOADS_HOST_PATH:-./runtime/uploads}:/app/app/uploads
-      # Uploaded opening-stock evidence is private operational data, never a Git asset.
-      - ${OPENING_STOCK_IMPORTS_HOST_PATH:-./runtime/opening-stock-imports}:/app/app/runtime/opening-stock-imports
-      # Status is operational metadata only and is displayed to owners by API.
-      - ${BACKUP_STATUS_HOST_PATH:-./runtime/backups/status}:/backup-status:ro
+      - ${UPLOADS_HOST_PATH:?UPLOADS_HOST_PATH must be set}:/app/app/uploads
+      - ${OPENING_STOCK_IMPORTS_HOST_PATH:?OPENING_STOCK_IMPORTS_HOST_PATH must be set}:/app/app/runtime/opening-stock-imports
+      - ${BACKUP_STATUS_HOST_PATH:?BACKUP_STATUS_HOST_PATH must be set}:/backup-status:ro
     expose:
       - "8000"
     healthcheck:
@@ -45,8 +51,6 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    ports:
-      - "127.0.0.1:8080:80"
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/health/ready"]
       interval: 15s
@@ -55,4 +59,6 @@ services:
       start_period: 30s
 
 volumes:
+  # Docker prefixes this volume with the Compose project name.  It becomes
+  # rainbow_test_postgres_data or rainbow_prod_postgres_data in deployment.
   postgres_data:
