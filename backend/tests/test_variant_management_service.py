@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.schemas.product import ProductVariantUpdate
+from app.schemas.product import ProductVariantDetailsCreate, ProductVariantUpdate
 from app.services.variant_management_service import VariantManagementService
 
 
@@ -17,6 +17,23 @@ def test_variant_update_schema_accepts_pack_scan_configuration():
 def test_variant_update_schema_rejects_zero_pack_conversion():
     with pytest.raises(Exception):
         ProductVariantUpdate(scan_unit="PACK", pieces_per_pack=0)
+
+
+def test_add_details_schema_requires_reviewed_product_identity_but_never_stock_quantity():
+    payload = ProductVariantDetailsCreate(
+        product_id=uuid4(), barcode="NEW-DETAILS-1", internal_sku="NEW-DETAILS-1",
+        selling_price=549, purchase_cost=390, scan_unit="PACK", pieces_per_pack=6,
+    )
+    assert payload.product_id is not None
+    assert payload.pieces_per_pack == 6
+    assert "current_stock" not in payload.model_dump()
+
+
+def test_add_details_schema_rejects_incomplete_new_product_and_invalid_pack():
+    with pytest.raises(Exception):
+        ProductVariantDetailsCreate(barcode="NEW", internal_sku="NEW", selling_price=1, purchase_cost=1)
+    with pytest.raises(Exception):
+        ProductVariantDetailsCreate(product_id=uuid4(), barcode="NEW", internal_sku="NEW", selling_price=1, purchase_cost=1, scan_unit="PACK", pieces_per_pack=1)
 
 
 def test_variant_identity_is_scoped_to_the_variant_and_catalogue_attributes():

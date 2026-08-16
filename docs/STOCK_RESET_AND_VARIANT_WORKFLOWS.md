@@ -101,6 +101,19 @@ rewritten or recreated.
 - Every update, archive/restore, blocked deletion, and deletion attempt writes
   an immutable variant snapshot to the existing product deletion audit stream.
 
+### Barcode details workflow
+
+On **Products**, scanning a barcode is a lookup only. A known barcode opens
+**EDIT VARIANT** for its exact variant; an unknown barcode opens **NEW VARIANT /
+BARCODE DETAILS**. Neither action writes to the database, maps a barcode, or
+changes stock. The only management writes are the explicit **Save Changes** and
+**Add Details** buttons.
+
+The management `POST /product-variants/details` endpoint creates a product
+variant and barcode mapping with a zero stock balance. It is deliberately
+separate from Stock Scan's barcode onboarding endpoint, which stages a stock
+line and remains subject to the stock-session confirmation workflow.
+
 ### Piece and pack barcode scans
 
 Inventory remains in individual pieces. A variant's primary barcode can be

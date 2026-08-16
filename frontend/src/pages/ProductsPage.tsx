@@ -6,6 +6,7 @@ import { ApiError, api } from "../api/client";
 import BarcodeScannerInput from "../components/BarcodeScannerInput";
 import BarcodeLabelDialog from "../components/BarcodeLabelDialog";
 import VariantManagementDialog from "../components/VariantManagementDialog";
+import ProductBarcodeDetailsDialog from "../components/ProductBarcodeDetailsDialog";
 import Dialog from "../components/Dialog";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
@@ -152,6 +153,7 @@ export default function ProductsPage() {
   const [deleteResult, setDeleteResult] = useState<BulkDeleteResult | null>(null);
   const [printTarget, setPrintTarget] = useState<Product | null>(null);
   const [managedVariant, setManagedVariant] = useState<{ product: Product; variant: ProductVariant } | null>(null);
+  const [newBarcode, setNewBarcode] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -499,15 +501,16 @@ export default function ProductsPage() {
 
   async function scanProduct(barcode: string, signal: AbortSignal) {
     try {
-      const variant = await api.get<ProductVariantBarcode>(`/product-variants/by-barcode/${encodeURIComponent(barcode)}`, { signal });
-      const product = await api.get<Product>(`/products/${variant.product_id}`, { signal });
-      beginEdit(product);
-      toast.success(`${product.name} opened (${variant.size || variant.color || "standard"})`);
+      const lookup = await api.get<ProductVariantBarcode>(`/product-variants/by-barcode/${encodeURIComponent(barcode)}`, { signal });
+      const product = await api.get<Product>(`/products/${lookup.product_id}`, { signal });
+      const variant = product.variants.find((candidate) => candidate.id === lookup.variant_id);
+      if (!variant) throw new Error("The barcode resolved, but its variant details could not be loaded.");
+      setManagedVariant({ product, variant });
+      toast.success(`${product.name} details loaded. Review and Save Changes to update.`);
     } catch (cause) {
-      if (cause instanceof ApiError && cause.status === 404) {
-        beginCreate();
-        setForm((current) => ({ ...current, barcode }));
-        toast.success("Barcode not registered. Complete the product form to create it.");
+      if (cause instanceof ApiError && (cause.status === 404 || cause.code === "BARCODE_NOT_FOUND")) {
+        setNewBarcode(barcode);
+        toast.success("Barcode is not registered. Add details when you are ready; nothing has been saved.");
         return;
       }
       throw cause;
@@ -634,7 +637,7 @@ export default function ProductsPage() {
       />
 
       <div className="sticky top-[65px] z-[5] mb-4 rounded-md border border-line bg-white p-3 shadow-sm">
-        <div className="mb-3"><BarcodeScannerInput label="Scan product" placeholder="Scan a known barcode to open it, or scan a new barcode to create a product" onScan={scanProduct} /></div>
+        <div className="mb-3"><BarcodeScannerInput label="Scan product or variant barcode" placeholder="Scan to load editable details. Nothing is saved until you choose Add Details or Save Changes." onScan={scanProduct} /></div>
         <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 sm:flex">
           <div className="col-span-2 flex h-10 min-w-0 flex-1 items-center rounded-md border border-line bg-white px-3 sm:col-span-1">
           <Search size={16} className="shrink-0 text-slate-400" />
@@ -935,7 +938,8 @@ export default function ProductsPage() {
       )}
 
       <BarcodeLabelDialog open={Boolean(printTarget)} product={printTarget} onClose={() => setPrintTarget(null)} />
-      {managedVariant ? <VariantManagementDialog key={managedVariant.variant.id} open product={managedVariant.product} variant={managedVariant.variant} canPermanentlyDelete={canPermanentlyDelete} onClose={() => setManagedVariant(null)} onSaved={invalidateProducts} /> : null}
+      {managedVariant ? <VariantManagementDialog key={managedVariant.variant.id} open product={managedVariant.product} variant={managedVariant.variant} canPermanentlyDelete={canPermanentlyDelete} onClose={() => setManagedVariant(null)} onSaved={invalidateProducts} onEditProduct={() => { const product = managedVariant.product; setManagedVariant(null); beginEdit(product); }} /> : null}
+      {newBarcode ? <ProductBarcodeDetailsDialog key={newBarcode} open barcode={newBarcode} onClose={() => setNewBarcode("")} onCreated={async (productId, variantId) => { invalidateProducts(); const product = await api.get<Product>(`/products/${productId}`); const variant = product.variants.find((candidate) => candidate.id === variantId); setNewBarcode(""); if (variant) setManagedVariant({ product, variant }); toast.success("Details added. No stock was created."); }} /> : null}
       <Dialog open={deleteDialogOpen} title={`Permanently delete ${deleteCheck ? deleteCheck.deletable.length + deleteCheck.blocked.length : selectedCount} product${(deleteCheck ? deleteCheck.deletable.length + deleteCheck.blocked.length : selectedCount) === 1 ? "" : "s"}?`} description="This action cannot be undone." onClose={() => setDeleteDialogOpen(false)} maxWidth="lg">
         {!deleteCheck ? <SkeletonRows rows={3} /> : <div className="space-y-5">
           {deleteCheck.deletable.length ? <section><h3 className="text-sm font-semibold text-foreground">Eligible for permanent deletion</h3><p className="mt-1 text-sm text-muted">The following products and their unused variants will be permanently removed.</p><ul className="mt-3 space-y-1 text-sm text-foreground">{deleteCheck.deletable.map((item) => <li key={item.product_id}>- {item.product_name}</li>)}</ul></section> : null}

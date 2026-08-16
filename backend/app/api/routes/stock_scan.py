@@ -30,7 +30,7 @@ from app.schemas.stock_scan import (
     StockScanValidationRead,
 )
 from app.schemas.stock import StockHistoryRead
-from app.schemas.product import ProductVariantDeleteRequest, ProductVariantRead, ProductVariantUpdate
+from app.schemas.product import ProductVariantDeleteRequest, ProductVariantDetailsCreate, ProductVariantRead, ProductVariantUpdate
 from app.services.stock_scan_service import StockScanService
 from app.services.variant_management_service import VariantManagementService
 
@@ -43,6 +43,11 @@ barcodes_router = APIRouter(prefix="/barcodes", tags=["Barcodes"])
 @variants_router.get("/by-barcode/{barcode}", response_model=ProductVariantBarcodeRead)
 def variant_by_barcode(barcode: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> ProductVariantBarcodeRead:
     return StockScanService(db).resolve_barcode(barcode, current_user)
+
+
+@variants_router.post("/details", response_model=ProductVariantRead, status_code=status.HTTP_201_CREATED)
+def add_variant_details(payload: ProductVariantDetailsCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+    return VariantManagementService(db).create_details(payload, current_user, request.state.request_id)
 
 
 @variants_router.patch("/{variant_id}", response_model=ProductVariantRead)

@@ -26,6 +26,7 @@ Environment: isolated `rainbow_inventory_test` only. This checklist records the
 | UAT-019 | Variant API scan configuration | Isolated owner and seeded variant | Set a variant to Pack × 6; resolve its barcode; restore Piece | API retains Pack × 6 and barcode resolves to six base pieces | Pack configuration persisted; barcode returned `package_quantity=6`; restored Piece | PASS | Isolated UAT API | No production data touched |
 | UAT-020 | Variant management UI | Owner, desktop and narrow viewport | Open Manage, edit/archive/restore/delete preflight | Only selected variant changes; confirmation and blocked-state copy are clear | NOT VERIFIED | NOT VERIFIED | N/A | Requires browser walkthrough with resettable fixture |
 | UAT-021 | Historic pack scan preservation | Owner, staged pack scan | Change future conversion, then inspect prior session item | Existing `package_quantity` and `base_quantity` remain unchanged | NOT VERIFIED | NOT VERIFIED | N/A | Model and service preserve fields; full workflow needs manual run |
+| UAT-022 | Product management scan is populate-only | Owner, known and unknown barcode | Scan, review editable form, cancel, reload | No mapping/product/variant/stock write before explicit action | API path verified; browser walkthrough pending deployment | PARTIAL | Isolated UAT API | Add Details is the only management create mutation |
 
 Use a new UAT row for every repeat run. Do not reuse invoice numbers or request
 IDs as proof after resetting the test database.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_
@@ -10,6 +10,7 @@ from app.core.exceptions import bad_request, conflict, not_found
 from app.models.opening_stock_import import OpeningStockImportRow
 from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit
 from app.models.product_deletion_audit import ProductDeletionAudit
+from app.models.product import Product
 from app.models.product_variant import InventoryCostLot, ProductVariant
 from app.models.purchase_item import PurchaseItem
 from app.models.sale import SaleItem
@@ -18,7 +19,9 @@ from app.models.stock_history import StockHistory
 from app.models.stock_import import StockImportRow
 from app.models.stock_scan import StockScanSessionItem
 from app.models.user import User
-from app.schemas.product import ProductVariantUpdate
+from app.models.enums import PricingType
+from app.schemas.product import ProductVariantDetailsCreate, ProductVariantUpdate
+from app.services.product_service import ProductService
 
 
 class VariantManagementService:
@@ -38,7 +41,7 @@ class VariantManagementService:
         if not sku:
             raise bad_request("SKU is required for every variant.", "VARIANT_SKU_REQUIRED")
         self._validate_unique(variant, barcode, sku, values.get("size", variant.size), values.get("color", variant.color))
-        for field, source in (("size", "size"), ("color", "color"), ("mrp", "mrp"), ("selling_price", "selling_price"), ("internal_sku", "internal_sku"), ("is_active", "is_active")):
+        for field, source in (("size", "size"), ("color", "color"), ("style_code", "style_code"), ("manufacturer_sku", "manufacturer_sku"), ("mrp", "mrp"), ("selling_price", "selling_price"), ("internal_sku", "internal_sku"), ("is_active", "is_active")):
             if source in values:
                 setattr(variant, field, values[source])
         if "purchase_cost" in values:
@@ -61,6 +64,50 @@ class VariantManagementService:
         self._audit(variant, current_user, request_id, "VARIANT_UPDATED", "UPDATE", before, self._snapshot(variant))
         self.db.commit()
         return self._variant(variant_id, current_user)
+
+    def create_details(self, payload: ProductVariantDetailsCreate, current_user: User, request_id: str) -> ProductVariant:
+        """Commit a reviewed product/variant/barcode mapping without inventory side effects."""
+        if not current_user.store_id:
+            raise not_found("Current store")
+        try:
+            product = self._existing_product(payload.product_id, current_user) if payload.product_id else self._new_product(payload, current_user)
+            variant = ProductVariant(
+                id=uuid4(),
+                store_id=current_user.store_id,
+                product_id=product.id,
+                size=payload.size,
+                color=payload.color,
+                style_code=payload.style_code,
+                manufacturer_sku=payload.manufacturer_sku,
+                internal_sku=payload.internal_sku,
+                barcode=payload.barcode,
+                identity_key="pending",
+                mrp=payload.mrp,
+                selling_price=payload.selling_price,
+                last_purchase_cost=payload.purchase_cost,
+                average_cost=payload.purchase_cost,
+                current_stock=0,
+                is_active=True,
+            )
+            self._validate_unique(variant, payload.barcode, payload.internal_sku, payload.size, payload.color)
+            variant.identity_key = self._identity(variant)
+            self.db.add(variant)
+            self.db.flush()
+            mapping = ProductBarcode(
+                store_id=current_user.store_id, product_id=product.id, product_variant_id=variant.id, barcode=payload.barcode,
+                barcode_type="AUTO", manufacturer_barcode=True, package_quantity=payload.pieces_per_pack if payload.scan_unit == "PACK" else 1,
+                scan_unit=payload.scan_unit, inventory_unit="PIECE", base_unit_conversion=payload.pieces_per_pack if payload.scan_unit == "PACK" else 1,
+                sale_mode="PACK_ONLY" if payload.scan_unit == "PACK" else "PIECE_ONLY", mrp=payload.mrp, default_selling_price=payload.selling_price,
+                active=True,
+            )
+            self.db.add(mapping)
+            self.db.add(ProductBarcodeAudit(store_id=current_user.store_id, barcode=payload.barcode, old_product_variant_id=None, new_product_variant_id=variant.id, action="DETAILS_CONFIRMED", reason="MANAGEMENT_ADD_DETAILS", changed_by=current_user.id, request_id=request_id))
+            self._audit(variant, current_user, request_id, "VARIANT_DETAILS_CREATED", "CREATE", {}, self._snapshot(variant))
+            self.db.commit()
+            return self._variant(variant.id, current_user)
+        except Exception:
+            self.db.rollback()
+            raise
 
     def archive(self, variant_id: UUID, current_user: User, request_id: str, active: bool = False) -> ProductVariant:
         variant = self._variant(variant_id, current_user, lock=True)
@@ -106,16 +153,41 @@ class VariantManagementService:
         return variant
 
     def _validate_unique(self, variant: ProductVariant, barcode: str, sku: str, size: str | None, color: str | None) -> None:
-        base = self.db.query(ProductVariant).filter(ProductVariant.store_id == variant.store_id, ProductVariant.id != variant.id)
+        base = self.db.query(ProductVariant).filter(ProductVariant.store_id == variant.store_id)
+        if variant.id:
+            base = base.filter(ProductVariant.id != variant.id)
         if base.filter(func.lower(ProductVariant.barcode) == barcode.lower()).first():
             raise conflict("This barcode is already used by another variant.", "VARIANT_BARCODE_CONFLICT")
-        if self.db.query(ProductBarcode).filter(ProductBarcode.store_id == variant.store_id, func.lower(ProductBarcode.barcode) == barcode.lower(), ProductBarcode.product_variant_id != variant.id).first():
+        barcode_query = self.db.query(ProductBarcode).filter(ProductBarcode.store_id == variant.store_id, func.lower(ProductBarcode.barcode) == barcode.lower())
+        if variant.id:
+            barcode_query = barcode_query.filter(ProductBarcode.product_variant_id != variant.id)
+        if barcode_query.first():
             raise conflict("This barcode is already assigned to another variant.", "BARCODE_ALREADY_ASSIGNED")
         if base.filter(func.lower(ProductVariant.internal_sku) == sku.lower()).first():
             raise conflict("This SKU is already used by another variant.", "VARIANT_SKU_CONFLICT")
         duplicate = base.filter(ProductVariant.product_id == variant.product_id, func.coalesce(func.lower(ProductVariant.size), "") == (size or "").lower(), func.coalesce(func.lower(ProductVariant.color), "") == (color or "").lower(), func.coalesce(func.lower(ProductVariant.style_code), "") == (variant.style_code or "").lower()).first()
         if duplicate:
             raise conflict("A sibling variant already uses this size and colour combination.", "VARIANT_ALREADY_EXISTS")
+
+    def _existing_product(self, product_id: UUID | None, current_user: User) -> Product:
+        product = self.db.query(Product).filter(Product.id == product_id, Product.store_id == current_user.store_id).with_for_update().first()
+        if not product:
+            raise not_found("Product")
+        return product
+
+    def _new_product(self, payload: ProductVariantDetailsCreate, current_user: User) -> Product:
+        service = ProductService(self.db)
+        service._ensure_hierarchy(payload.category_id, payload.subcategory_id, payload.brand_id)  # type: ignore[arg-type]
+        service._validate_unique_product(payload.category_id, payload.subcategory_id, payload.brand_id, payload.product_name or "", store_id=current_user.store_id)  # type: ignore[arg-type]
+        product = Product(
+            store_id=current_user.store_id, category_id=payload.category_id, subcategory_id=payload.subcategory_id, brand_id=payload.brand_id,
+            name=payload.product_name or "", sku=None, size=payload.size, color=payload.color, purchase_price=payload.purchase_cost,
+            selling_price=payload.selling_price, pricing_type=PricingType.OWN_PRICE, mrp=payload.mrp, current_stock=0, minimum_stock=0,
+            barcode=None, description=payload.description, unit="Each", is_active=True,
+        )
+        self.db.add(product)
+        self.db.flush()
+        return product
 
     def _sync_primary_mapping(self, variant: ProductVariant, barcode: str, scan_unit: str, pieces: int, current_user: User, request_id: str) -> None:
         current = next((item for item in variant.barcode_mappings if item.barcode.lower() == variant.barcode.lower()), None)
