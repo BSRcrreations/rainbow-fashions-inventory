@@ -18,7 +18,7 @@ from app.models.brand import Brand
 from app.models.category import Category
 from app.models.enums import PricingType, PurchaseStatus, SaleStatus, StockMovementType, StockScanMode, StockScanStatus, UserRole
 from app.models.product import Product
-from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit
+from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit, ProductBarcodeVariantTarget
 from app.models.product_inventory import ProductInventory
 from app.models.product_variant import InventoryCostLot, ProductVariant
 from app.models.purchase import Purchase
@@ -47,6 +47,8 @@ from app.schemas.stock_scan import (
     StockScanConfirmRequest,
     StockScanItemUpdate,
     StockScanRequest,
+    VariantStockStageRequest,
+    SharedBarcodeTargetRead,
     StockScanSessionCreate,
     StockScanSessionUpdate,
 )
@@ -83,6 +85,66 @@ class StockScanService:
 
     def assign_barcode(self, variant_id: UUID, payload: BarcodeAssignment, current_user: User) -> ProductVariantBarcodeRead:
         return self.onboard_barcode(BarcodeOnboarding(product_variant_id=variant_id, barcode=payload.barcode), current_user)
+
+    def stage_selected_variant(self, session_id: UUID, payload: VariantStockStageRequest, current_user: User, request_id: Optional[str] = None) -> StockScanSession:
+        """Stage a consciously selected exact variant without changing inventory.
+
+        A barcode may be shared only by variants of the same product and colour.
+        The owner must explicitly approve adding a new size to such a group.
+        """
+        store_id = self._store_id(current_user)
+        try:
+            session = self._editable_session(session_id, current_user)
+            variant = self._variant_for_store(payload.product_variant_id, store_id, lock=True)
+            barcode = payload.barcode.strip()
+            self._validate_barcode(barcode)
+            mapping = self._barcode_mapping(barcode, store_id, lock=True, include_inactive=True)
+            if not mapping:
+                mapping = ProductBarcode(
+                    store_id=store_id, product_id=variant.product_id, product_variant_id=variant.id, barcode=barcode,
+                    barcode_type=self._barcode_type(barcode, "AUTO"), manufacturer_barcode=True, package_quantity=1,
+                    scan_unit="PIECE", inventory_unit="PIECE", base_unit_conversion=1, sale_mode="PIECE_ONLY",
+                    mrp=variant.mrp, default_selling_price=variant.selling_price, active=True, verified=True,
+                    verified_by=current_user.id, verified_at=datetime.now(timezone.utc),
+                )
+                self.db.add(mapping)
+                self.db.flush()
+                self._ensure_barcode_target(mapping, variant, current_user.id)
+                self.db.add(ProductBarcodeAudit(store_id=store_id, barcode=barcode, old_product_variant_id=None, new_product_variant_id=variant.id, action="ASSIGNED", reason="SELECT_PRODUCT_FIRST", changed_by=current_user.id, request_id=request_id))
+            else:
+                targets = self._barcode_targets(mapping, store_id, lock=True)
+                target_ids = {target.id for target in targets}
+                if variant.id not in target_ids:
+                    if mapping.product_id != variant.product_id or any((target.color or "").casefold() != (variant.color or "").casefold() for target in targets):
+                        source = targets[0] if targets else self._variant_for_store(mapping.product_variant_id, store_id, lock=True)
+                        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                            "message": "Barcode belongs to another product.", "code": "BARCODE_PRODUCT_CONFLICT",
+                            "existing": self._shared_target_read(source).model_dump(mode="json"),
+                        })
+                    if not payload.confirm_shared_barcode:
+                        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                            "message": "Shared barcode detected.", "code": "SHARED_BARCODE_CONFIRMATION_REQUIRED",
+                            "barcode": mapping.barcode,
+                            "product_name": variant.product.name,
+                            "color": variant.color,
+                            "existing_sizes": [target.size or "Standard" for target in targets],
+                        })
+                    self._ensure_barcode_target(mapping, variant, current_user.id)
+                    self.db.add(ProductBarcodeAudit(store_id=store_id, barcode=barcode, old_product_variant_id=mapping.product_variant_id, new_product_variant_id=variant.id, action="SHARED_TARGET_ADDED", reason="SELECT_PRODUCT_FIRST", changed_by=current_user.id, request_id=request_id))
+                mapping.active = True
+            self._add_mapping_to_session(session, mapping, variant, payload.quantity, variant.last_purchase_cost, "SELLABLE")
+            self.db.commit()
+            return self.get_session(session.id, current_user)
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def shared_barcode_targets(self, barcode: str, current_user: User) -> list[SharedBarcodeTargetRead]:
+        store_id = self._store_id(current_user)
+        mapping = self._barcode_mapping(barcode.strip(), store_id)
+        if not mapping:
+            return []
+        return [self._shared_target_read(target) for target in self._barcode_targets(mapping, store_id)]
 
     def remove_barcode(self, barcode_id: UUID, current_user: User, request_id: Optional[str] = None) -> None:
         store_id = self._store_id(current_user)
@@ -493,6 +555,15 @@ class StockScanService:
     def scan(self, session_id: UUID, payload: StockScanRequest, current_user: User) -> StockScanSession:
         session = self._editable_session(session_id, current_user)
         mapping = self._barcode_mapping(payload.barcode, session.store_id, lock=True)
+        if mapping:
+            targets = self._barcode_targets(mapping, session.store_id, lock=True)
+            if len(targets) > 1:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                    "message": "Shared barcode detected. Choose the exact size before staging stock.",
+                    "code": "SHARED_BARCODE_SIZE_REQUIRED",
+                    "barcode": mapping.barcode,
+                    "targets": [self._shared_target_read(target).model_dump(mode="json") for target in targets],
+                })
         variant = self._locked_variant_by_barcode(payload.barcode, session.store_id) if not mapping else self.db.query(ProductVariant).options(joinedload(ProductVariant.product)).filter(ProductVariant.id == mapping.product_variant_id).with_for_update(of=ProductVariant).first()
         if not variant:
             raise bad_request("This barcode is not assigned to a product.", "BARCODE_NOT_FOUND")
@@ -780,7 +851,7 @@ class StockScanService:
         expected = self._expected_quantity(session, variant.id)
         item = (
             self.db.query(StockScanSessionItem)
-            .filter(StockScanSessionItem.session_id == session.id, StockScanSessionItem.barcode == mapping.barcode)
+            .filter(StockScanSessionItem.session_id == session.id, StockScanSessionItem.barcode == mapping.barcode, StockScanSessionItem.product_variant_id == variant.id)
             .with_for_update()
             .first()
         )
@@ -1291,6 +1362,46 @@ class StockScanService:
         if not include_inactive:
             query = query.filter(ProductBarcode.active.is_(True))
         return query.with_for_update().first() if lock else query.first()
+
+    def _barcode_targets(self, mapping: ProductBarcode, store_id: UUID, lock: bool = False) -> list[ProductVariant]:
+        query = (
+            self.db.query(ProductVariant)
+            .join(ProductBarcodeVariantTarget, ProductBarcodeVariantTarget.product_variant_id == ProductVariant.id)
+            .options(joinedload(ProductVariant.product).joinedload(Product.brand))
+            .filter(ProductBarcodeVariantTarget.product_barcode_id == mapping.id, ProductBarcodeVariantTarget.store_id == store_id)
+        )
+        targets = query.with_for_update(of=ProductVariant).all() if lock else query.all()
+        # Keep the mapping's original exact variant available as a target too.
+        # This also safely bridges mappings created before target links existed.
+        if not any(target.id == mapping.product_variant_id for target in targets):
+            targets.append(self._variant_for_store(mapping.product_variant_id, store_id, lock=lock))
+        return targets
+
+    def _ensure_barcode_target(self, mapping: ProductBarcode, variant: ProductVariant, user_id: UUID) -> None:
+        existing = self.db.query(ProductBarcodeVariantTarget).filter(
+            ProductBarcodeVariantTarget.product_barcode_id == mapping.id,
+            ProductBarcodeVariantTarget.product_variant_id == variant.id,
+        ).first()
+        if not existing:
+            self.db.add(ProductBarcodeVariantTarget(
+                store_id=variant.store_id,
+                product_barcode_id=mapping.id,
+                product_variant_id=variant.id,
+                created_by=user_id,
+            ))
+
+    @staticmethod
+    def _shared_target_read(variant: ProductVariant) -> SharedBarcodeTargetRead:
+        product = variant.product
+        return SharedBarcodeTargetRead(
+            variant_id=variant.id,
+            product_id=variant.product_id,
+            product_name=product.name if product else "Product",
+            brand_name=product.brand.name if product and product.brand else None,
+            size=variant.size,
+            color=variant.color,
+            current_stock=variant.current_stock,
+        )
 
     @staticmethod
     def _validate_barcode(barcode: str) -> None:

@@ -11,7 +11,7 @@ from app.models.purchase_audit import PurchaseAudit
 from app.models.stock_history import StockHistory
 from app.models.stock_audit_event import StockAuditEvent
 from app.models.stock_scan import StockScanSession, StockScanSessionItem
-from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit
+from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit, ProductBarcodeVariantTarget
 from app.models.store import Store
 from app.models.supplier import Supplier
 from app.models.supplier import SupplierPayment
@@ -49,6 +49,7 @@ __all__ = [
     "StockScanSessionItem",
     "ProductBarcode",
     "ProductBarcodeAudit",
+    "ProductBarcodeVariantTarget",
     "Store",
     "Supplier",
     "SupplierPayment",

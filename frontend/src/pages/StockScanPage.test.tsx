@@ -5,6 +5,17 @@ import { describe, expect, it } from "vitest";
 const source = readFileSync(resolve(process.cwd(), "src/pages/StockScanPage.tsx"), "utf8");
 
 describe("confirmed Scan & Add Stock session", () => {
+  it("defaults to product-first entry while retaining barcode-first entry", () => {
+    expect(source).toContain('useState<"PRODUCT_FIRST" | "BARCODE_FIRST">("PRODUCT_FIRST")');
+    expect(source).toContain("Select Product First");
+    expect(source).toContain("Scan Barcode First");
+    expect(source).toContain("ProductFirstStockEntry");
+  });
+
+  it("offers a shared-barcode exact-size choice instead of silently assigning stock", () => {
+    expect(source).toContain("SHARED_BARCODE_SIZE_REQUIRED");
+    expect(source).toContain("Choose the exact size before staging stock");
+  });
   it("shows a single read-only warning banner", () => {
     expect(source.match(/This stock session is confirmed and cannot be edited\./g)).toHaveLength(1);
   });

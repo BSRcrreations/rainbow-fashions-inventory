@@ -28,6 +28,8 @@ from app.schemas.stock_scan import (
     StockScanSessionRead,
     StockScanSessionUpdate,
     StockScanValidationRead,
+    VariantStockStageRequest,
+    SharedBarcodeTargetRead,
 )
 from app.schemas.stock import StockHistoryRead
 from app.schemas.product import ProductVariantDeleteRequest, ProductVariantDetailsCreate, ProductVariantRead, ProductVariantUpdate
@@ -153,6 +155,16 @@ def update_session(session_id: UUID, payload: StockScanSessionUpdate, db: Sessio
 @router.post("/sessions/{session_id}/scan", response_model=StockScanSessionRead)
 def scan_barcode(session_id: UUID, payload: StockScanRequest, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
     return StockScanService(db).scan(session_id, payload, current_user)
+
+
+@router.post("/sessions/{session_id}/stage-variant", response_model=StockScanSessionRead)
+def stage_selected_variant(session_id: UUID, payload: VariantStockStageRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
+    return StockScanService(db).stage_selected_variant(session_id, payload, current_user, request.state.request_id)
+
+
+@barcodes_router.get("/{barcode}/shared-targets", response_model=list[SharedBarcodeTargetRead])
+def shared_barcode_targets(barcode: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> list[SharedBarcodeTargetRead]:
+    return StockScanService(db).shared_barcode_targets(barcode, current_user)
 
 
 @router.post("/sessions/{session_id}/batch-barcodes", response_model=StockScanSessionRead)

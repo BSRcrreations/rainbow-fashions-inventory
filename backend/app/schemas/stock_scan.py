@@ -65,6 +65,23 @@ class StockScanRequest(BaseModel):
         return barcode
 
 
+class VariantStockStageRequest(StockScanRequest):
+    """Assign/reuse a known barcode for one selected exact variant, then stage it."""
+
+    product_variant_id: UUID
+    confirm_shared_barcode: bool = False
+
+
+class SharedBarcodeTargetRead(BaseModel):
+    variant_id: UUID
+    product_id: UUID
+    product_name: str
+    brand_name: Optional[str] = None
+    size: Optional[str] = None
+    color: Optional[str] = None
+    current_stock: int
+
+
 class StockScanItemUpdate(BaseModel):
     scanned_quantity: int = Field(ge=0, le=100000)
     condition: Optional[str] = Field(default=None, min_length=2, max_length=40)

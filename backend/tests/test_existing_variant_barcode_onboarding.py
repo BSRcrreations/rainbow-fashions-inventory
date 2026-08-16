@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from app.models.enums import StockScanStatus
 from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit
 from app.models.stock_history import StockHistory
-from app.schemas.stock_scan import BarcodeProductOnboarding, BarcodeTransferLineRead, BulkBarcodeTransferRequest
+from app.schemas.stock_scan import BarcodeProductOnboarding, BarcodeTransferLineRead, BulkBarcodeTransferRequest, VariantStockStageRequest
 from app.services.stock_scan_service import StockScanService
 
 
@@ -176,6 +176,63 @@ def test_existing_variant_creates_a_mapping_and_adds_only_the_draft_line():
     service._add_mapping_to_session.assert_called_once()
     assert service._add_mapping_to_session.call_args.args[3] == payload.quantity
     assert result.id
+
+
+def test_select_product_first_new_barcode_assigns_and_stages_without_stock_movement():
+    service, db, session, store_id = configured_service()
+    variant = active_variant(store_id)
+    before_stock = variant.current_stock
+    service._editable_session = MagicMock(return_value=session)
+    service._variant_for_store = MagicMock(return_value=variant)
+    service._barcode_mapping = MagicMock(return_value=None)
+    service._ensure_barcode_target = MagicMock()
+    service._add_mapping_to_session = MagicMock()
+
+    service.stage_selected_variant(session.id, VariantStockStageRequest(product_variant_id=variant.id, barcode="RF-SELECTED-1", quantity=12), user(store_id))
+
+    service._add_mapping_to_session.assert_called_once()
+    assert service._add_mapping_to_session.call_args.args[3] == 12
+    assert variant.current_stock == before_stock
+    db.commit.assert_called_once()
+
+
+def test_shared_barcode_requires_confirmation_before_adding_a_new_size_target():
+    service, db, session, store_id = configured_service()
+    product_id = uuid4()
+    existing = active_variant(store_id); existing.product_id = product_id; existing.size = "S"; existing.color = "Black"
+    target = active_variant(store_id); target.product_id = product_id; target.product.name = "PR Full"; target.size = "M"; target.color = "Black"
+    mapping = SimpleNamespace(id=uuid4(), barcode="8905072572016", product_id=product_id, product_variant_id=existing.id, active=True)
+    service._editable_session = MagicMock(return_value=session)
+    service._variant_for_store = MagicMock(return_value=target)
+    service._barcode_mapping = MagicMock(return_value=mapping)
+    service._barcode_targets = MagicMock(return_value=[existing])
+
+    with pytest.raises(HTTPException) as error:
+        service.stage_selected_variant(session.id, VariantStockStageRequest(product_variant_id=target.id, barcode=mapping.barcode, quantity=1), user(store_id))
+
+    assert error.value.detail["code"] == "SHARED_BARCODE_CONFIRMATION_REQUIRED"
+    assert error.value.detail["existing_sizes"] == ["S"]
+    assert target.current_stock == 9
+    db.commit.assert_not_called()
+
+
+def test_unrelated_barcode_is_blocked_without_staging_inventory():
+    service, db, session, store_id = configured_service()
+    existing = active_variant(store_id); existing.product.name = "Sports Bra"; existing.product.brand = SimpleNamespace(name="Within"); existing.size = "36B"; existing.color = "White"
+    target = active_variant(store_id); target.product.name = "PR Full"; target.size = "M"; target.color = "Black"
+    mapping = SimpleNamespace(id=uuid4(), barcode="8905072572016", product_id=existing.product_id, product_variant_id=existing.id, active=True)
+    service._editable_session = MagicMock(return_value=session)
+    service._variant_for_store = MagicMock(return_value=target)
+    service._barcode_mapping = MagicMock(return_value=mapping)
+    service._barcode_targets = MagicMock(return_value=[existing])
+
+    with pytest.raises(HTTPException) as error:
+        service.stage_selected_variant(session.id, VariantStockStageRequest(product_variant_id=target.id, barcode=mapping.barcode, quantity=1), user(store_id))
+
+    assert error.value.detail["code"] == "BARCODE_PRODUCT_CONFLICT"
+    assert error.value.detail["existing"]["product_name"] == "Sports Bra"
+    assert target.current_stock == 9
+    db.commit.assert_not_called()
 
 
 def test_new_variant_blocks_an_exact_duplicate_variant_before_creating_anything():
