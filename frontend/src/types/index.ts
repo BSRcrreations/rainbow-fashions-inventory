@@ -418,6 +418,36 @@ export interface StockResetResponse extends StockResetPreviewResponse {
   already_completed: boolean;
 }
 
+export type VariantCorrectionReason = "WRONG_SIZE_ENTERED" | "INCORRECT_VARIANT_SELECTED" | "INCORRECT_BARCODE_ASSIGNMENT" | "DATA_ENTRY_MISTAKE" | "TEST_DATA" | "OTHER";
+
+export interface VariantCorrectionVariant {
+  variant_id: string;
+  product_id: string;
+  product_name: string;
+  size?: string | null;
+  color?: string | null;
+  sku: string;
+  barcode: string;
+  before_stock: number;
+  after_stock: number;
+}
+
+export interface VariantCorrectionPreview {
+  source: VariantCorrectionVariant;
+  destination: VariantCorrectionVariant;
+  quantity: number;
+  reason: string;
+  notes?: string | null;
+  reference: string;
+  request_id: string;
+}
+
+export interface VariantCorrectionResult extends VariantCorrectionPreview {
+  source_history_id: string;
+  destination_history_id: string;
+  already_completed: boolean;
+}
+
 export interface PurchaseItem {
   id?: string;
   product_id?: string | null;

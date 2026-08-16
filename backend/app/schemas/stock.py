@@ -51,6 +51,59 @@ class StockCorrectionCreate(BaseModel):
         return self
 
 
+class VariantCorrectionMoveRequest(BaseModel):
+    """Move already-confirmed stock to the correct variant without rewriting history."""
+
+    source_variant_id: UUID
+    destination_variant_id: UUID
+    quantity: int = Field(gt=0, le=100000)
+    reason: Literal[
+        "WRONG_SIZE_ENTERED",
+        "INCORRECT_VARIANT_SELECTED",
+        "INCORRECT_BARCODE_ASSIGNMENT",
+        "DATA_ENTRY_MISTAKE",
+        "TEST_DATA",
+        "OTHER",
+    ]
+    notes: Optional[str] = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_move(self) -> "VariantCorrectionMoveRequest":
+        if self.source_variant_id == self.destination_variant_id:
+            raise ValueError("Choose two different variants for a correction")
+        if self.reason == "OTHER" and not (self.notes or "").strip():
+            raise ValueError("Notes are required when correction reason is Other")
+        return self
+
+
+class VariantCorrectionVariantRead(BaseModel):
+    variant_id: UUID
+    product_id: UUID
+    product_name: str
+    size: Optional[str] = None
+    color: Optional[str] = None
+    sku: str
+    barcode: str
+    before_stock: int
+    after_stock: int
+
+
+class VariantCorrectionPreviewResponse(BaseModel):
+    source: VariantCorrectionVariantRead
+    destination: VariantCorrectionVariantRead
+    quantity: int
+    reason: str
+    notes: Optional[str] = None
+    reference: str
+    request_id: str
+
+
+class VariantCorrectionMoveResponse(VariantCorrectionPreviewResponse):
+    source_history_id: UUID
+    destination_history_id: UUID
+    already_completed: bool = False
+
+
 class StockProductRead(ORMBaseModel):
     id: UUID
     name: str
