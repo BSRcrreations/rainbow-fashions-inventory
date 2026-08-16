@@ -26,7 +26,10 @@ fi
 backup_dir="$DEPLOY_PATH/backups"
 install -d -m 700 "$backup_dir"
 backup_file="$backup_dir/postgres_${DEPLOY_ENVIRONMENT}_${CI_COMMIT_SHORT_SHA}_$(date -u +%Y%m%d_%H%M%S).dump"
-compose=(docker compose -p "$COMPOSE_PROJECT_NAME" -f "$current/docker-compose.yml" -f "$current/$COMPOSE_OVERRIDE")
+# Do not let Compose discover a legacy release-local .env file. Deployment
+# variables are supplied explicitly by the CI job and services read secrets
+# only from BACKEND_ENV_FILE under the environment's shared directory.
+compose=(docker compose --env-file /dev/null -p "$COMPOSE_PROJECT_NAME" -f "$current/docker-compose.yml" -f "$current/$COMPOSE_OVERRIDE")
 
 "${compose[@]}" ps postgres >/dev/null
 "${compose[@]}" exec -T postgres sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > "$backup_file"

@@ -37,3 +37,9 @@ def test_ci_keeps_environment_deployments_isolated() -> None:
     assert "COMPOSE_PROJECT_NAME=rainbow_prod" in ci
     assert 'CI_COMMIT_BRANCH == "shop-inventory"' in ci
     assert 'CI_COMMIT_BRANCH == "main"' in ci
+
+
+def test_deployment_scripts_do_not_probe_release_local_env_files() -> None:
+    for script_name in ("backup_before_deploy.sh", "deploy_release.sh"):
+        script = (ROOT / "deployment" / "scripts" / script_name).read_text(encoding="utf-8")
+        assert "--env-file /dev/null" in script

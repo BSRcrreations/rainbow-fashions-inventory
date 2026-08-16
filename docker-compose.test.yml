@@ -1,8 +1,5 @@
 # Test-only public entry point.  Do not publish PostgreSQL or FastAPI ports.
 services:
-  backend:
-    ports:
-      - "127.0.0.1:8001:8000"
   frontend:
     ports:
-      - "127.0.0.1:5174:80"
+      - "127.0.0.1:8081:80"
