@@ -23,6 +23,9 @@ Environment: isolated `rainbow_inventory_test` only. This checklist records the
 | UAT-016 | Expenses | Owner, seeded rent expense | Open `/expenses` | Expense categories and seeded expense render without API error | Rent and UAT monthly rent rendered | PASS | Browser UAT + authenticated API | Edit/delete not run |
 | UAT-017 | Reports | Owner, seeded expense/sales/inventory data | Open `/reports` | P&L, cash flow, and inventory valuation render | Profit and loss and inventory valuation rendered | PASS | Browser UAT + authenticated API | Export/report drilldowns not implemented |
 | UAT-018 | Mobile Business nav | Owner, 390px viewport | Open menu and Business links | Suppliers, Customers, Expenses, Reports are available | Mobile menu exposed all four links | PASS | Browser viewport UAT | Android-sized responsive smoke only |
+| UAT-019 | Variant API scan configuration | Isolated owner and seeded variant | Set a variant to Pack × 6; resolve its barcode; restore Piece | API retains Pack × 6 and barcode resolves to six base pieces | Pack configuration persisted; barcode returned `package_quantity=6`; restored Piece | PASS | Isolated UAT API | No production data touched |
+| UAT-020 | Variant management UI | Owner, desktop and narrow viewport | Open Manage, edit/archive/restore/delete preflight | Only selected variant changes; confirmation and blocked-state copy are clear | NOT VERIFIED | NOT VERIFIED | N/A | Requires browser walkthrough with resettable fixture |
+| UAT-021 | Historic pack scan preservation | Owner, staged pack scan | Change future conversion, then inspect prior session item | Existing `package_quantity` and `base_quantity` remain unchanged | NOT VERIFIED | NOT VERIFIED | N/A | Model and service preserve fields; full workflow needs manual run |
 
 Use a new UAT row for every repeat run. Do not reuse invoice numbers or request
 IDs as proof after resetting the test database.

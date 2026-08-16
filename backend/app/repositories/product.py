@@ -77,7 +77,7 @@ class ProductRepository(BaseRepository[Product]):
         created_from: Optional[date] = None,
         created_to: Optional[date] = None,
     ):
-        query = self.db.query(Product).options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand), selectinload(Product.variants))
+        query = self.db.query(Product).options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand), selectinload(Product.variants).selectinload(ProductVariant.barcode_mappings))
         if search:
             pattern = f"%{search.strip()}%"
             query = query.join(Product.category).join(Product.subcategory).join(Product.brand).filter(
@@ -140,7 +140,7 @@ class ProductRepository(BaseRepository[Product]):
     def get_with_relations(self, product_id: UUID) -> Optional[Product]:
         return (
             self.db.query(Product)
-            .options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand), selectinload(Product.variants))
+            .options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand), selectinload(Product.variants).selectinload(ProductVariant.barcode_mappings))
             .filter(Product.id == product_id)
             .first()
         )

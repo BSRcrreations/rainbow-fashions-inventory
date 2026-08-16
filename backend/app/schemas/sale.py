@@ -137,6 +137,8 @@ class SaleCatalogVariant(BaseModel):
     available_stock: int
     classification_review_required: bool = False
     is_active: bool
+    scan_unit: str = "PIECE"
+    pieces_per_pack: int = 1
 
 
 class SaleCatalogProduct(BaseModel):

@@ -47,6 +47,24 @@ class ProductVariant(Base):
     sale_items = relationship("SaleItem", back_populates="product_variant")
     purchase_items = relationship("PurchaseItem", back_populates="product_variant")
     stock_movements = relationship("StockHistory", back_populates="product_variant")
+    # Barcode mappings hold the scan/package configuration.  Keeping it beside
+    # the variant lets legacy variants retain the safe Piece × 1 default.
+    barcode_mappings = relationship("ProductBarcode", primaryjoin="ProductVariant.id == ProductBarcode.product_variant_id", viewonly=True)
+
+    @property
+    def primary_barcode_mapping(self):
+        exact = next((mapping for mapping in self.barcode_mappings if mapping.barcode == self.barcode), None)
+        if exact:
+            return exact
+        return next((mapping for mapping in self.barcode_mappings if mapping.active), None)
+
+    @property
+    def scan_unit(self) -> str:
+        return self.primary_barcode_mapping.scan_unit if self.primary_barcode_mapping else "PIECE"
+
+    @property
+    def pieces_per_pack(self) -> int:
+        return self.primary_barcode_mapping.base_unit_conversion if self.primary_barcode_mapping else 1
 
 
 class InventoryCostLot(Base):

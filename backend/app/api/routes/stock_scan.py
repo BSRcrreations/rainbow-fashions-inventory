@@ -30,7 +30,9 @@ from app.schemas.stock_scan import (
     StockScanValidationRead,
 )
 from app.schemas.stock import StockHistoryRead
+from app.schemas.product import ProductVariantDeleteRequest, ProductVariantRead, ProductVariantUpdate
 from app.services.stock_scan_service import StockScanService
+from app.services.variant_management_service import VariantManagementService
 
 
 router = APIRouter(prefix="/stock-scan", tags=["Stock scan"])
@@ -41,6 +43,31 @@ barcodes_router = APIRouter(prefix="/barcodes", tags=["Barcodes"])
 @variants_router.get("/by-barcode/{barcode}", response_model=ProductVariantBarcodeRead)
 def variant_by_barcode(barcode: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> ProductVariantBarcodeRead:
     return StockScanService(db).resolve_barcode(barcode, current_user)
+
+
+@variants_router.patch("/{variant_id}", response_model=ProductVariantRead)
+def update_variant(variant_id: UUID, payload: ProductVariantUpdate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+    return VariantManagementService(db).update(variant_id, payload, current_user, request.state.request_id)
+
+
+@variants_router.post("/{variant_id}/archive", response_model=ProductVariantRead)
+def archive_variant(variant_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+    return VariantManagementService(db).archive(variant_id, current_user, request.state.request_id)
+
+
+@variants_router.post("/{variant_id}/restore", response_model=ProductVariantRead)
+def restore_variant(variant_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+    return VariantManagementService(db).archive(variant_id, current_user, request.state.request_id, active=True)
+
+
+@variants_router.get("/{variant_id}/deletion-check")
+def variant_deletion_check(variant_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_owner)):
+    return VariantManagementService(db).check_delete(variant_id, current_user, request.state.request_id)
+
+
+@variants_router.delete("/{variant_id}")
+def permanently_delete_variant(variant_id: UUID, payload: ProductVariantDeleteRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_owner)):
+    return VariantManagementService(db).permanently_delete(variant_id, payload.confirmation, current_user, request.state.request_id)
 
 
 @variants_router.post("/{variant_id}/barcode", response_model=ProductVariantBarcodeRead)

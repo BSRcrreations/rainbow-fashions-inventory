@@ -119,7 +119,7 @@ export function CartItemRow({ line, onChange, onSetQuantity, onRemove }: { line:
       </div>
       <strong className="shrink-0 text-base text-slate-950">{money(Number(line.variant.selling_price) * line.quantity)}</strong>
     </div>
-    <div className="mt-2 text-xs font-semibold text-slate-500">Available stock: {line.variant.available_stock} · Stock after sale: {stockAfter}</div>
+    <div className="mt-2 text-xs font-semibold text-slate-500">Available stock: {line.variant.available_stock} · Stock after sale: {stockAfter}{line.variant.scan_unit === "PACK" && (line.variant.pieces_per_pack ?? 1) > 1 ? ` · Pack scan: ${line.variant.pieces_per_pack} pieces` : ""}</div>
     <div className="mt-3 flex items-center justify-between gap-3">
       <div className="flex h-11 items-center rounded-xl border border-slate-200 bg-white">
         <button type="button" className="grid h-11 w-11 place-items-center text-slate-700 hover:bg-slate-50" onClick={() => onChange(-1)} aria-label={`Decrease ${line.product.name}`}><Minus size={17} /></button>

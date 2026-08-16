@@ -80,6 +80,14 @@ describe("New Sale cart behavior", () => {
     expect(result.product.variants).toEqual([result.variant]);
   });
 
+  it("retains the pack conversion on a barcode-selected cart variant", () => {
+    const barcode: ProductVariantBarcode = { product_id: "product-1", variant_id: "variant-pack", product_name: "Pack leggings", category: "Leggings", brand: "Prisma", size: "L", color: "Blue", sku: "PACK-L", barcode: "890124", selling_price: "549", current_physical_stock: 12, current_available_stock: 12, active: true, package_quantity: 6, scan_unit: "PACK", inventory_unit: "PIECE", base_unit_conversion: 6, sale_mode: "PACK_ONLY" };
+    const result = catalogItemFromBarcode(barcode);
+    expect(result.variant.scan_unit).toBe("PACK");
+    expect(result.variant.pieces_per_pack).toBe(6);
+    expect(mergeCartVariant([], result.product, result.variant, barcode.package_quantity).cart[0].quantity).toBe(6);
+  });
+
   it("keeps the exact parent product identity when a visual catalog group contains matching products", () => {
     const exactVariant = { ...largeVariant, product_id: "separate-product" };
 

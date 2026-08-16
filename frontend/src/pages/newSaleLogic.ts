@@ -32,6 +32,6 @@ export function productForVariant(product: SaleCatalogProduct, variant: SaleCata
 }
 
 export function catalogItemFromBarcode(found: ProductVariantBarcode): { product: SaleCatalogProduct; variant: SaleCatalogVariant } {
-  const variant: SaleCatalogVariant = { variant_id: found.variant_id, product_id: found.product_id, size: found.size, color: found.color, style_code: found.style_code, sku: found.sku, barcode: found.barcode, mrp: found.mrp, selling_price: found.selling_price, available_stock: found.current_available_stock, classification_review_required: false, is_active: found.active };
+  const variant: SaleCatalogVariant = { variant_id: found.variant_id, product_id: found.product_id, size: found.size, color: found.color, style_code: found.style_code, sku: found.sku, barcode: found.barcode, mrp: found.mrp, selling_price: found.selling_price, available_stock: found.current_available_stock, classification_review_required: false, is_active: found.active, scan_unit: found.scan_unit === "PACK" ? "PACK" : "PIECE", pieces_per_pack: found.base_unit_conversion };
   return { variant, product: { product_id: found.product_id, name: found.product_name, category_name: found.category, brand_name: found.brand, variant_count: 1, total_stock: found.current_available_stock, minimum_stock: 0, total_available_stock: found.current_available_stock, variants: [variant] } };
 }

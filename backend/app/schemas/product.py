@@ -174,8 +174,34 @@ class ProductVariantRead(ORMBaseModel):
     current_stock: int
     classification_review_required: bool
     is_active: bool
+    scan_unit: Literal["PIECE", "PACK"] = "PIECE"
+    pieces_per_pack: int = 1
     created_at: datetime
     updated_at: datetime
+
+
+class ProductVariantUpdate(BaseModel):
+    size: Optional[str] = Field(default=None, max_length=60)
+    color: Optional[str] = Field(default=None, max_length=80)
+    mrp: Optional[Decimal] = Field(default=None, ge=0)
+    selling_price: Optional[Decimal] = Field(default=None, ge=0)
+    purchase_cost: Optional[Decimal] = Field(default=None, ge=0)
+    barcode: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    internal_sku: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    scan_unit: Optional[Literal["PIECE", "PACK"]] = None
+    pieces_per_pack: Optional[int] = Field(default=None, ge=1, le=100000)
+    is_active: Optional[bool] = None
+
+    @field_validator("size", "color", "barcode", "internal_sku", mode="before")
+    @classmethod
+    def normalize_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not isinstance(value, str):
+            return value
+        return value.strip() or None
+
+
+class ProductVariantDeleteRequest(BaseModel):
+    confirmation: str = Field(min_length=1, max_length=40)
 
 
 class ProductRead(ProductBase, ORMBaseModel):

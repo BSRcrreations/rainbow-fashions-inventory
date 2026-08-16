@@ -109,6 +109,8 @@ export interface ProductVariant {
   current_stock: number;
   classification_review_required: boolean;
   is_active: boolean;
+  scan_unit?: "PIECE" | "PACK";
+  pieces_per_pack?: number;
   created_at: string;
   updated_at: string;
 }
@@ -257,6 +259,8 @@ export interface SaleCatalogVariant {
   available_stock: number;
   classification_review_required: boolean;
   is_active: boolean;
+  scan_unit?: "PIECE" | "PACK";
+  pieces_per_pack?: number;
 }
 
 export interface SaleCatalogProduct {
