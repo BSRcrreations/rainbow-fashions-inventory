@@ -48,6 +48,7 @@ async def add_request_id(request: Request, call_next):
     request.state.request_id = request_id
     response = await call_next(request)
     response.headers.setdefault("X-Request-ID", request_id)
+    response.headers.setdefault("X-App-Version", settings.git_sha)
     return response
 
 settings.product_upload_dir.mkdir(parents=True, exist_ok=True)
@@ -119,6 +120,12 @@ app.include_router(stock_scan.barcodes_router, prefix=settings.api_v1_prefix)
 app.include_router(security.router, prefix=settings.api_v1_prefix)
 app.include_router(opening_stock_imports.router, prefix=settings.api_v1_prefix)
 app.include_router(inventory_reconciliation.router, prefix=settings.api_v1_prefix)
+
+
+@app.get("/version", tags=["System"])
+def version() -> dict[str, str]:
+    """Expose only deployment identity; never configuration or secret values."""
+    return {"git_sha": settings.git_sha, "environment": settings.app_env}
 
 
 @app.get("/health", tags=["System"])

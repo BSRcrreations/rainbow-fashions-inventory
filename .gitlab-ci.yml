@@ -187,7 +187,7 @@ deploy_test:
   extends: .test_deployment
   needs: [package_release]
   script:
-    - export DEPLOY_ENVIRONMENT=test DEPLOY_PATH=/opt/rainbow-fashions-test COMPOSE_PROJECT_NAME=rainbow_test BACKEND_ENV_FILE=/opt/rainbow-fashions-test/shared/backend.env COMPOSE_OVERRIDE=docker-compose.test.yml LOCAL_DEPLOY_URL=http://127.0.0.1:8081 PUBLIC_DEPLOY_URL=https://test.rainbow-fashions.in UPLOADS_HOST_PATH=/opt/rainbow-fashions-test/runtime/uploads OPENING_STOCK_IMPORTS_HOST_PATH=/opt/rainbow-fashions-test/runtime/opening-stock-imports BACKUP_STATUS_HOST_PATH=/opt/rainbow-fashions-test/runtime/backups/status
+    - export DEPLOY_ENVIRONMENT=test DEPLOY_PATH=/opt/rainbow-fashions-test COMPOSE_PROJECT_NAME=rainbow_test BACKEND_ENV_FILE=/opt/rainbow-fashions-test/shared/backend.env COMPOSE_OVERRIDE=docker-compose.test.yml LOCAL_DEPLOY_URL=http://127.0.0.1:8081 PUBLIC_DEPLOY_URL=https://test.rainbow-fashions.in UPLOADS_HOST_PATH=/opt/rainbow-fashions-test/runtime/uploads OPENING_STOCK_IMPORTS_HOST_PATH=/opt/rainbow-fashions-test/runtime/opening-stock-imports BACKUP_STATUS_HOST_PATH=/opt/rainbow-fashions-test/runtime/backups/status GIT_SHA="$CI_COMMIT_SHA"
     - bash deployment/scripts/verify_deployment_context.sh
     - export RELEASE_DIR="$DEPLOY_PATH/releases/$CI_COMMIT_SHORT_SHA"
     - install -d -m 750 "$RELEASE_DIR"
@@ -202,6 +202,7 @@ verify_test:
   script:
     - curl --fail --silent --show-error --max-time 15 https://test.rainbow-fashions.in/health/live
     - curl --fail --silent --show-error --max-time 15 https://test.rainbow-fashions.in/health/ready
+    - curl --fail --silent --show-error --max-time 15 https://test.rainbow-fashions.in/version | grep -Fq "\"git_sha\":\"$CI_COMMIT_SHA\""
 
 deploy_production:
   stage: deploy

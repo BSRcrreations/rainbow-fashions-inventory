@@ -1,5 +1,9 @@
 # Test-only public entry point.  Do not publish PostgreSQL or FastAPI ports.
 services:
+  backend:
+    environment:
+      # CI exports the exact commit SHA for TEST. Local runs remain usable.
+      GIT_SHA: ${GIT_SHA:-unknown}
   frontend:
     ports:
       - "127.0.0.1:8081:80"

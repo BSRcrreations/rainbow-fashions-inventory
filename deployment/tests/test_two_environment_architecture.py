@@ -16,6 +16,7 @@ def test_compose_overrides_bind_only_loopback_and_use_different_ports() -> None:
     assert "5432" not in production_compose
     assert "8000" not in test_compose
     assert "8000" not in production_compose
+    assert "GIT_SHA: ${GIT_SHA:-unknown}" in test_compose
 
 
 def test_common_compose_requires_explicit_environment_paths() -> None:
@@ -37,6 +38,8 @@ def test_ci_keeps_environment_deployments_isolated() -> None:
     assert "COMPOSE_PROJECT_NAME=rainbow_prod" in ci
     assert 'CI_COMMIT_BRANCH == "shop-inventory"' in ci
     assert 'CI_COMMIT_BRANCH == "main"' in ci
+    assert 'GIT_SHA="$CI_COMMIT_SHA"' in ci
+    assert 'https://test.rainbow-fashions.in/version' in ci
 
 
 def test_deployment_scripts_do_not_probe_release_local_env_files() -> None:
