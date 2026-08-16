@@ -167,7 +167,31 @@ class VariantManagementService:
             raise conflict("This SKU is already used by another variant.", "VARIANT_SKU_CONFLICT")
         duplicate = base.filter(ProductVariant.product_id == variant.product_id, func.coalesce(func.lower(ProductVariant.size), "") == (size or "").lower(), func.coalesce(func.lower(ProductVariant.color), "") == (color or "").lower(), func.coalesce(func.lower(ProductVariant.style_code), "") == (variant.style_code or "").lower()).first()
         if duplicate:
-            raise conflict("A sibling variant already uses this size and colour combination.", "VARIANT_ALREADY_EXISTS")
+            raise self._duplicate_variant_error(duplicate)
+
+    @staticmethod
+    def _duplicate_variant_error(duplicate: ProductVariant) -> HTTPException:
+        """Return a resolvable conflict instead of a dead-end validation error.
+
+        The client can open the already-existing exact variant.  It must never
+        silently merge the edited variant into that record: either record may
+        have stock or an immutable sales/inventory history.
+        """
+        label = " / ".join(value for value in (duplicate.size, duplicate.color) if value) or "Standard"
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": f"{label} already exists for this product.",
+                "code": "VARIANT_ALREADY_EXISTS",
+                "existing_variant": {
+                    "id": str(duplicate.id),
+                    "size": duplicate.size,
+                    "color": duplicate.color,
+                    "current_stock": int(duplicate.current_stock or 0),
+                    "is_active": duplicate.is_active,
+                },
+            },
+        )
 
     def _existing_product(self, product_id: UUID | None, current_user: User) -> Product:
         product = self.db.query(Product).filter(Product.id == product_id, Product.store_id == current_user.store_id).with_for_update().first()
