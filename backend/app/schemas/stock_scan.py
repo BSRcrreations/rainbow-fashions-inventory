@@ -83,9 +83,35 @@ class SharedBarcodeTargetRead(BaseModel):
 
 
 class StockScanItemUpdate(BaseModel):
-    scanned_quantity: int = Field(ge=0, le=100000)
+    """A safe correction to an unconfirmed stock draft row.
+
+    ``expected_session_updated_at`` is deliberately carried by the client.  A
+    stock draft is shared state, so a stale browser must not overwrite a newer
+    draft correction made by another owner or manager.
+    """
+
+    scanned_quantity: Optional[int] = Field(default=None, ge=0, le=100000)
     condition: Optional[str] = Field(default=None, min_length=2, max_length=40)
     unit_cost: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    product_variant_id: Optional[UUID] = None
+    barcode: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    confirm_shared_barcode: bool = False
+    merge_with_existing: bool = False
+    expected_session_updated_at: Optional[datetime] = None
+
+    @field_validator("barcode")
+    @classmethod
+    def normalize_optional_barcode(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Barcode is required")
+        return normalized
+
+
+class StockScanItemDelete(BaseModel):
+    expected_session_updated_at: Optional[datetime] = None
 
 
 class BarcodeAssignment(BaseModel):

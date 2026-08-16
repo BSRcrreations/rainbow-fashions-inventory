@@ -36,4 +36,23 @@ describe("confirmed Scan & Add Stock session", () => {
     expect(source).toContain("localStorage.removeItem(sessionKey(mode))");
     expect(source).toContain('setSessionId("")');
   });
+
+  it("keeps every draft correction action visible without a wide review table", () => {
+    expect(source).toContain("DRAFT — NO INVENTORY MOVEMENT");
+    expect(source).toContain("Change Product");
+    expect(source).toContain("Change Variant");
+    expect(source).toContain("Change Size");
+    expect(source).toContain("Change Colour");
+    expect(source).toContain("Change Barcode");
+    expect(source).toContain("Change Quantity");
+    expect(source).toContain("Remove staged item?");
+    expect(source).toContain("lg:grid-cols");
+  });
+
+  it("sends draft version and handles shared and existing-variant corrections", () => {
+    expect(source).toContain("expected_session_updated_at: session.updated_at");
+    expect(source).toContain("SHARED_BARCODE_CONFIRMATION_REQUIRED");
+    expect(source).toContain("DRAFT_VARIANT_ALREADY_EXISTS");
+    expect(source).toContain("Use Existing");
+  });
 });

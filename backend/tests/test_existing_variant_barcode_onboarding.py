@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import inspect
 from types import SimpleNamespace
@@ -13,7 +14,7 @@ from pydantic import ValidationError
 from app.models.enums import StockScanStatus
 from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit
 from app.models.stock_history import StockHistory
-from app.schemas.stock_scan import BarcodeProductOnboarding, BarcodeTransferLineRead, BulkBarcodeTransferRequest, VariantStockStageRequest
+from app.schemas.stock_scan import BarcodeProductOnboarding, BarcodeTransferLineRead, BulkBarcodeTransferRequest, StockScanItemUpdate, VariantStockStageRequest
 from app.services.stock_scan_service import StockScanService
 
 
@@ -233,6 +234,40 @@ def test_unrelated_barcode_is_blocked_without_staging_inventory():
     assert error.value.detail["existing"]["product_name"] == "Sports Bra"
     assert target.current_stock == 9
     db.commit.assert_not_called()
+
+
+def test_draft_edit_reuses_an_existing_shared_barcode_target_without_duplicate_link():
+    service, _, _, store_id = configured_service()
+    variant = active_variant(store_id); variant.color = "Black"; variant.product.name = "OE Intimacy"
+    mapping = SimpleNamespace(id=uuid4(), barcode="8905072572016", product_id=variant.product_id, product_variant_id=variant.id, active=True)
+    service._barcode_mapping = MagicMock(return_value=mapping)
+    service._barcode_targets = MagicMock(return_value=[variant])
+    service._ensure_barcode_target = MagicMock()
+
+    result = service._draft_mapping_for_variant(mapping.barcode, variant, store_id, user(store_id), False)
+
+    assert result is mapping
+    service._ensure_barcode_target.assert_not_called()
+    assert mapping.active is True
+
+
+def test_stale_draft_edit_is_rejected_before_any_inventory_work():
+    session = SimpleNamespace(updated_at=datetime.now(timezone.utc))
+
+    with pytest.raises(HTTPException) as error:
+        StockScanService._assert_draft_version(session, session.updated_at - timedelta(seconds=1))
+
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "STOCK_DRAFT_STALE"
+
+
+def test_draft_edit_schema_supports_variant_barcode_and_quantity_correction():
+    variant_id = uuid4()
+    payload = StockScanItemUpdate(product_variant_id=variant_id, barcode="  RF-CORRECT-1 ", scanned_quantity=8, expected_session_updated_at=datetime.now(timezone.utc))
+
+    assert payload.product_variant_id == variant_id
+    assert payload.barcode == "RF-CORRECT-1"
+    assert payload.scanned_quantity == 8
 
 
 def test_new_variant_blocks_an_exact_duplicate_variant_before_creating_anything():

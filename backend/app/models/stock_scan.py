@@ -49,7 +49,7 @@ class StockScanSession(Base):
 
 class StockScanSessionItem(Base):
     __tablename__ = "stock_scan_session_items"
-    __table_args__ = (UniqueConstraint("session_id", "barcode", name="uq_stock_scan_session_barcode"),)
+    __table_args__ = (UniqueConstraint("session_id", "barcode", "product_variant_id", name="uq_stock_scan_session_barcode_variant"),)
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     session_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("stock_scan_sessions.id", ondelete="CASCADE"), nullable=False, index=True)

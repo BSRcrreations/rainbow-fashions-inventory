@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
@@ -22,6 +23,7 @@ from app.schemas.stock_scan import (
     BarcodeProductOnboarding,
     ProductVariantBarcodeRead,
     StockScanConfirmRequest,
+    StockScanItemDelete,
     StockScanItemUpdate,
     StockScanRequest,
     StockScanSessionCreate,
@@ -184,8 +186,8 @@ def update_scan_item(session_id: UUID, item_id: UUID, payload: StockScanItemUpda
 
 
 @router.delete("/sessions/{session_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_scan_item(session_id: UUID, item_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
-    StockScanService(db).delete_item(session_id, item_id, current_user)
+def delete_scan_item(session_id: UUID, item_id: UUID, payload: Optional[StockScanItemDelete] = None, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
+    StockScanService(db).delete_item(session_id, item_id, current_user, payload.expected_session_updated_at if payload else None)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

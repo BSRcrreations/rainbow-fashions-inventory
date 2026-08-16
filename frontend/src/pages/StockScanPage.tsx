@@ -16,7 +16,7 @@ import BulkBarcodeTransferDialog from "../components/BulkBarcodeTransferDialog";
 import ProductFirstStockEntry from "../components/ProductFirstStockEntry";
 import type { OnboardingAction } from "../components/barcodeOnboardingLogic";
 import { useAuth } from "../hooks/useAuth";
-import type { CategoryHierarchy, Purchase, StockHistory, StockScanMode, StockScanQuantityMode, StockScanSession } from "../types";
+import type { CategoryHierarchy, Product, Purchase, StockHistory, StockScanMode, StockScanQuantityMode, StockScanSession, StockScanSessionItem } from "../types";
 import { money } from "../utils/format";
 
 const modes: Array<{ value: StockScanMode; label: string; description: string }> = [
@@ -65,6 +65,8 @@ export default function StockScanPage() {
   const [correctQuantity, setCorrectQuantity] = useState("");
   const [correctionReason, setCorrectionReason] = useState("DATA_ENTRY_MISTAKE");
   const [correctionNotes, setCorrectionNotes] = useState("");
+  const [draftEditItem, setDraftEditItem] = useState<StockScanSessionItem | null>(null);
+  const [removeItem, setRemoveItem] = useState<StockScanSessionItem | null>(null);
 
   const sessionQuery = useQuery({
     queryKey: ["stock-scan-session", sessionId],
@@ -119,13 +121,13 @@ export default function StockScanPage() {
   });
 
   const itemMutation = useMutation({
-    mutationFn: ({ itemId, scanned }: { itemId: string; scanned: number }) => api.patch<StockScanSession>(`/stock-scan/sessions/${sessionId}/items/${itemId}`, { scanned_quantity: scanned }),
+    mutationFn: ({ itemId, scanned }: { itemId: string; scanned: number }) => api.patch<StockScanSession>(`/stock-scan/sessions/${sessionId}/items/${itemId}`, { scanned_quantity: scanned, expected_session_updated_at: session?.updated_at }),
     onSuccess: (next) => { void queryClient.setQueryData(["stock-scan-session", next.id], next); },
     onError: (cause) => { const message = cause instanceof Error ? cause.message : "Unable to update scan line"; setError(message); toast.error(message); },
   });
   const removeMutation = useMutation({
-    mutationFn: (itemId: string) => api.delete(`/stock-scan/sessions/${sessionId}/items/${itemId}`),
-    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["stock-scan-session", sessionId] }); },
+    mutationFn: (itemId: string) => api.delete(`/stock-scan/sessions/${sessionId}/items/${itemId}`, { expected_session_updated_at: session?.updated_at }),
+    onSuccess: () => { setRemoveItem(null); void queryClient.invalidateQueries({ queryKey: ["stock-scan-session", sessionId] }); },
     onError: (cause) => toast.error(cause instanceof Error ? cause.message : "Unable to remove scan line"),
   });
   const confirmMutation = useMutation({
@@ -153,6 +155,7 @@ export default function StockScanPage() {
     enabled: mode === "PURCHASE_RECEIVING" && !sessionId,
   });
   const hierarchyQuery = useQuery({ queryKey: ["category-hierarchy"], queryFn: () => api.get<CategoryHierarchy[]>("/categories/hierarchy") });
+  const productsQuery = useQuery({ queryKey: ["stock-draft-products"], queryFn: () => api.get<Product[]>("/products"), enabled: Boolean(draftEditItem) });
   const categories = hierarchyQuery.data ?? [];
   const activeCategoryId = defaultCategoryId ?? session?.default_category_id ?? "";
   const activeBrandId = defaultBrandId ?? session?.default_brand_id ?? "";
@@ -217,7 +220,8 @@ export default function StockScanPage() {
             {latestScan && !error ? <div className="mt-3 flex items-center gap-2 text-sm font-medium text-success"><CheckCircle2 size={17} /> Latest barcode: {latestScan}</div> : null}
             {error ? <div className="mt-3"><ErrorState message={error} /></div> : null}
           </form>}
-          <section className="ds-surface overflow-hidden">
+          {session?.items.length ? <DraftReview session={session} locked={sessionLocked} onEdit={setDraftEditItem} onQuantity={(itemId, scanned) => itemMutation.mutate({ itemId, scanned })} onRemove={setRemoveItem} /> : session ? <EmptyState icon={ClipboardCheck} title="Ready to count" description="Scan a barcode or select a product to create a non-posting draft row." /> : null}
+          <section className="ds-surface hidden overflow-hidden" aria-hidden="true">
             <div className="flex flex-col gap-3 border-b border-border px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-lg font-semibold">Review scanned variants</h2>
@@ -232,6 +236,8 @@ export default function StockScanPage() {
       </div>
     </div>
     <ConfirmDialog open={confirmOpen} title="Confirm stock session" description="This creates append-only inventory movements for every reviewed difference. It cannot be applied twice." confirmLabel="Confirm stock" loading={confirmMutation.isPending} onCancel={() => setConfirmOpen(false)} onConfirm={() => confirmMutation.mutate()}><div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><div className="font-semibold">{totals.variants} variants · {totals.pieces} pieces</div>{mode === "PHYSICAL_COUNT" ? <div className="mt-1">{totals.positive} excess and {totals.negative} missing pieces will be recorded as count movements.</div> : null}</div></ConfirmDialog>
+    <ConfirmDialog open={Boolean(removeItem)} title="Remove staged item?" description="This removes the row from this draft only. Inventory and cost lots remain unchanged." confirmLabel="Remove item" loading={removeMutation.isPending} onCancel={() => setRemoveItem(null)} onConfirm={() => { if (removeItem) removeMutation.mutate(removeItem.id); }} />
+    {session && draftEditItem ? <DraftItemEditor session={session} item={draftEditItem} products={productsQuery.data ?? []} onClose={() => setDraftEditItem(null)} onAddVariant={() => navigate("/products")} onSaved={(next) => { void queryClient.setQueryData(["stock-scan-session", next.id], next); setDraftEditItem(null); setError(""); toast.success("Draft row updated. Inventory has not changed."); }} onError={(message) => { setError(message); toast.error(message); }} /> : null}
     <Dialog open={Boolean(correctionTarget)} onClose={() => { setCorrectionTarget(null); setCorrectionItemId(""); }} title="Correct stock mistake" description="The original confirmed transaction will remain in audit history.">{correctionTarget ? <div className="space-y-4"><div className="rounded-lg bg-slate-50 p-3 text-sm"><div className="font-semibold">{session?.items.find((item) => item.id === correctionItemId)?.product_name ?? correctionTarget.product?.name ?? "Product"}</div><div>{session?.items.find((item) => item.id === correctionItemId)?.brand_name || "Unbranded"} · {detailLabel(session?.items.find((item) => item.id === correctionItemId) ?? {})}</div><div>Barcode: {session?.items.find((item) => item.id === correctionItemId)?.barcode ?? "-"}</div><div>Original confirmed quantity: {correctionTarget.qty}</div><div>Current stock: {correctionTarget.after_stock}</div></div><label className="field-label">Correct stock should be<input className="field-input mt-1" min="0" type="number" value={correctQuantity} onChange={(event) => setCorrectQuantity(event.target.value)} /></label><p className="text-sm text-muted">A stock correction of {(Number(correctQuantity || 0) - correctionTarget.after_stock) > 0 ? "+" : ""}{Number(correctQuantity || 0) - correctionTarget.after_stock} will be recorded.</p><label className="field-label">Reason<select className="field-input mt-1" value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)}><option value="DATA_ENTRY_MISTAKE">Data-entry mistake</option><option value="DUPLICATE_OPENING_STOCK">Duplicate opening stock</option><option value="INCORRECT_VARIANT_SELECTED">Incorrect product selected</option><option value="INCORRECT_BARCODE_ASSIGNMENT">Incorrect barcode assigned</option><option value="TEST_DATA">Test data</option><option value="OTHER">Other</option></select></label><label className="field-label">Notes {correctionReason === "OTHER" ? "(required)" : "(optional)"}<textarea className="field-input mt-1 h-20 py-2" value={correctionNotes} onChange={(event) => setCorrectionNotes(event.target.value)} /></label><div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setCorrectionTarget(null)}>Cancel</Button><Button type="button" disabled={correctionMutation.isPending} onClick={() => correctionMutation.mutate()}>{correctionMutation.isPending ? "Recording" : "Record correction"}</Button></div></div> : null}</Dialog>
     <Dialog open={unknownDialogOpen} onClose={() => { setUnknownDialogOpen(false); setUnknownBarcode(""); window.requestAnimationFrame(() => scannerRef.current?.focus()); }} title="Barcode not registered" description="This barcode is not linked to a product in this store. Nothing has been added to stock.">
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><div className="text-xs font-semibold uppercase tracking-wide">Scanned barcode</div><div className="mt-1 font-mono text-base font-bold">{unknownBarcode}</div></div>
@@ -246,4 +252,53 @@ export default function StockScanPage() {
 
 function Summary({ label, value, tone }: { label: string; value: number; tone?: "success" | "error" }) {
   return <div className={`rounded-xl p-3 ${tone === "success" ? "bg-emerald-50" : tone === "error" ? "bg-rose-50" : "bg-slate-50"}`}><div className="text-xs text-muted">{label}</div><div className={`mt-1 text-2xl font-bold ${tone === "success" ? "text-success" : tone === "error" ? "text-error" : "text-foreground"}`}>{value}</div></div>;
+}
+
+function DraftReview({ session, locked, onEdit, onQuantity, onRemove }: { session: StockScanSession; locked: boolean; onEdit: (item: StockScanSessionItem) => void; onQuantity: (itemId: string, scanned: number) => void; onRemove: (item: StockScanSessionItem) => void }) {
+  return <section className="ds-surface overflow-hidden">
+    <div className="flex flex-col gap-3 border-b border-border px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div><h2 className="text-lg font-semibold">Review scanned variants</h2><p className="mt-1 text-sm text-muted">DRAFT — scanning, editing, and removing rows do not change inventory until confirmation.</p></div>
+      <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-900">{locked ? "CONFIRMED" : "DRAFT — NO INVENTORY MOVEMENT"}</span>
+    </div>
+    <div className="divide-y divide-border">{session.items.map((item) => <article key={item.id} className="grid gap-3 p-4 lg:grid-cols-[minmax(180px,1.7fr)_minmax(110px,0.9fr)_minmax(110px,0.8fr)_minmax(160px,1.15fr)_minmax(185px,1.3fr)] lg:items-center">
+      <div><div className="font-semibold text-foreground">{item.product_name}</div><div className="text-xs text-muted">{[item.brand_name, item.category_name].filter(Boolean).join(" · ") || "Unbranded"}</div><div className="mt-1 text-sm font-medium">{detailLabel(item)}</div></div>
+      <div><div className="text-xs font-semibold uppercase text-muted">Barcode</div><div className="mt-1 break-all font-mono text-sm">{item.barcode}</div></div>
+      <div><div className="text-xs font-semibold uppercase text-muted">Current / adding / after</div><div className="mt-1 font-semibold">{item.current_physical_stock} / {item.base_quantity} / {item.current_physical_stock + (item.difference_quantity ?? item.base_quantity)}</div><div className="text-xs text-muted">{item.package_quantity} per scan</div></div>
+      <div>{locked ? <span className="text-sm text-muted">Confirmed quantity: {item.scanned_quantity}</span> : <><label className="text-xs font-semibold uppercase text-muted">Adding</label><div className="mt-1 flex w-32 items-center rounded-lg border border-border bg-surface"><button type="button" className="grid h-9 w-9 place-items-center hover:bg-slate-50" onClick={() => onQuantity(item.id, Math.max(0, item.scanned_quantity - 1))} aria-label={`Decrease ${item.product_name}`}><Minus size={15} /></button><input aria-label={`Scanned quantity for ${item.product_name}`} className="h-9 w-12 border-x border-border text-center outline-none" value={item.scanned_quantity} type="number" min="0" onChange={(event) => onQuantity(item.id, Number(event.target.value) || 0)} /><button type="button" className="grid h-9 w-9 place-items-center hover:bg-slate-50" onClick={() => onQuantity(item.id, item.scanned_quantity + 1)} aria-label={`Increase ${item.product_name}`}><Plus size={15} /></button></div></>}</div>
+      <div>{locked ? null : <div className="flex flex-wrap gap-1"><Button type="button" size="sm" variant="secondary" onClick={() => onEdit(item)}>Edit</Button><Button type="button" size="sm" variant="secondary" onClick={() => onEdit(item)}>Change Product</Button><Button type="button" size="sm" variant="secondary" onClick={() => onEdit(item)}>Change Variant</Button><Button type="button" size="sm" variant="secondary" onClick={() => onEdit(item)}>Change Size</Button><Button type="button" size="sm" variant="secondary" onClick={() => onEdit(item)}>Change Colour</Button><Button type="button" size="sm" variant="secondary" onClick={() => onEdit(item)}>Change Barcode</Button><Button type="button" size="sm" variant="secondary" onClick={() => onEdit(item)}>Change Quantity</Button><Button type="button" size="sm" variant="secondary" className="text-error" onClick={() => onRemove(item)}>Remove</Button></div>}</div>
+    </article>)}</div>
+  </section>;
+}
+
+function DraftItemEditor({ session, item, products, onClose, onAddVariant, onSaved, onError }: { session: StockScanSession; item: StockScanSessionItem; products: Product[]; onClose: () => void; onAddVariant: () => void; onSaved: (session: StockScanSession) => void; onError: (message: string) => void }) {
+  const [productId, setProductId] = useState(item.product_id);
+  const [variantId, setVariantId] = useState(item.product_variant_id);
+  const [barcode, setBarcode] = useState(item.barcode);
+  const [quantity, setQuantity] = useState(String(item.scanned_quantity));
+  const [saving, setSaving] = useState(false);
+  const selectedProduct = products.find((product) => product.id === productId);
+  const selectedVariant = selectedProduct?.variants.find((variant) => variant.id === variantId);
+  const categories = [...new Set(products.map((product) => product.category_name || "Uncategorized"))];
+  const [category, setCategory] = useState(selectedProduct?.category_name || "");
+  const brands = products.filter((product) => !category || (product.category_name || "Uncategorized") === category).map((product) => product.brand_name || "Unbranded");
+  const [brand, setBrand] = useState(selectedProduct?.brand_name || "");
+  const visibleProducts = products.filter((product) => (!category || (product.category_name || "Uncategorized") === category) && (!brand || (product.brand_name || "Unbranded") === brand));
+
+  async function save(confirmSharedBarcode = false, mergeWithExisting = false) {
+    const count = Number(quantity);
+    if (!variantId || !Number.isInteger(count) || count < 0 || !barcode.trim()) { onError("Choose an exact variant, enter a barcode, and use a whole-number quantity."); return; }
+    setSaving(true);
+    try {
+      const next = await api.patch<StockScanSession>(`/stock-scan/sessions/${session.id}/items/${item.id}`, { product_variant_id: variantId, barcode: barcode.trim(), scanned_quantity: count, confirm_shared_barcode: confirmSharedBarcode, merge_with_existing: mergeWithExisting, expected_session_updated_at: session.updated_at });
+      onSaved(next);
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.code === "SHARED_BARCODE_CONFIRMATION_REQUIRED" && window.confirm("This barcode is shared within the same product and colour. Use it for this exact size?")) { await save(true, false); return; }
+      if (cause instanceof ApiError && cause.code === "DRAFT_VARIANT_ALREADY_EXISTS" && window.confirm(`${cause.details?.existing_size || "This variant"} already exists. Use Existing ${cause.details?.existing_size || "variant"} and move this staged quantity?`)) { await save(confirmSharedBarcode, true); return; }
+      onError(cause instanceof Error ? cause.message : "Unable to update draft row");
+    } finally { setSaving(false); }
+  }
+
+  return <Dialog open onClose={onClose} title="Edit staged stock" description="This is a draft correction. Inventory, ledger movements, and cost lots remain unchanged until final confirmation.">
+    <div className="space-y-4"><div className="grid gap-3 sm:grid-cols-2"><label className="field-label">Category<select className="field-input mt-1" value={category} onChange={(event) => { setCategory(event.target.value); setBrand(""); setProductId(""); setVariantId(""); }}><option value="">All categories</option>{categories.map((entry) => <option key={entry} value={entry}>{entry}</option>)}</select></label><label className="field-label">Brand<select className="field-input mt-1" value={brand} onChange={(event) => { setBrand(event.target.value); setProductId(""); setVariantId(""); }}><option value="">All brands</option>{[...new Set(brands)].map((entry) => <option key={entry} value={entry}>{entry}</option>)}</select></label></div><label className="field-label">Product<select className="field-input mt-1" value={productId} onChange={(event) => { setProductId(event.target.value); setVariantId(visibleProducts.find((product) => product.id === event.target.value)?.variants[0]?.id || ""); }}><option value="">Select product</option>{visibleProducts.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></label><label className="field-label">Exact variant — size / colour<select className="field-input mt-1" value={variantId} onChange={(event) => setVariantId(event.target.value)}><option value="">Select variant</option>{selectedProduct?.variants.filter((variant) => variant.is_active).map((variant) => <option key={variant.id} value={variant.id}>{[variant.size || "Standard", variant.color, variant.style_code].filter(Boolean).join(" · ")}</option>)}</select></label><div className="flex items-center justify-between gap-3"><p className="text-xs text-muted">Create a new exact size or colour with the existing safe workflow; it starts at zero stock.</p><Button type="button" size="sm" variant="secondary" onClick={onAddVariant}>+ Add Variant</Button></div><div className="grid gap-3 sm:grid-cols-2"><label className="field-label">Barcode<input className="field-input mt-1" value={barcode} onChange={(event) => setBarcode(event.target.value)} /></label><label className="field-label">Quantity<input className="field-input mt-1" min="0" step="1" type="number" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label></div>{selectedVariant ? <div className="rounded-lg bg-slate-50 p-3 text-sm"><strong>{selectedVariant.current_stock} current</strong> · Adding {Number(quantity) || 0} · After confirmation {selectedVariant.current_stock + (Number(quantity) || 0)}</div> : null}<div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={onClose}>Cancel</Button><Button type="button" disabled={saving} onClick={() => void save()}>{saving ? "Saving" : "Save draft correction"}</Button></div></div>
+  </Dialog>;
 }

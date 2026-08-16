@@ -601,11 +601,13 @@ class StockScanService:
             self.db.add(item)
         item.difference_quantity = self._difference(session.mode, item.base_quantity, item.expected_quantity)
         session.status = StockScanStatus.IN_PROGRESS
+        self._touch_draft(session)
         self.db.commit()
         return self.get_session(session.id, current_user)
 
     def update_item(self, session_id: UUID, item_id: UUID, payload: StockScanItemUpdate, current_user: User) -> StockScanSession:
         session = self._editable_session(session_id, current_user)
+        self._assert_draft_version(session, payload.expected_session_updated_at)
         item = (
             self.db.query(StockScanSessionItem)
             .filter(StockScanSessionItem.id == item_id, StockScanSessionItem.session_id == session.id)
@@ -614,16 +616,63 @@ class StockScanService:
         )
         if not item:
             raise not_found("Stock scan item")
-        for field, value in payload.model_dump(exclude_unset=True).items():
-            setattr(item, field, value)
-        item.base_quantity = self._base_quantity(item.scanned_quantity, item.package_quantity)
-        item.difference_quantity = self._difference(session.mode, item.base_quantity, item.expected_quantity)
-        item.last_scanned_at = datetime.now(timezone.utc)
+
+        target_variant = item.product_variant
+        changing_assignment = payload.product_variant_id is not None or payload.barcode is not None
+        if payload.product_variant_id:
+            target_variant = self._variant_for_store(payload.product_variant_id, session.store_id, lock=True)
+        target_barcode = payload.barcode or item.barcode
+        mapping = self._draft_mapping_for_variant(
+            target_barcode, target_variant, session.store_id, current_user, payload.confirm_shared_barcode
+        ) if changing_assignment else None
+        duplicate = (
+            self.db.query(StockScanSessionItem)
+            .filter(
+                StockScanSessionItem.session_id == session.id,
+                StockScanSessionItem.barcode == (mapping.barcode if mapping else item.barcode),
+                StockScanSessionItem.product_variant_id == target_variant.id,
+                StockScanSessionItem.id != item.id,
+            )
+            .with_for_update()
+            .first()
+        )
+        corrected_quantity = payload.scanned_quantity if payload.scanned_quantity is not None else item.scanned_quantity
+        if duplicate:
+            if not payload.merge_with_existing:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                    "message": f"{target_variant.size or 'This variant'} already exists in this draft. Use Existing {target_variant.size or 'variant'} to move the staged quantity.",
+                    "code": "DRAFT_VARIANT_ALREADY_EXISTS",
+                    "existing_item_id": str(duplicate.id),
+                    "existing_size": target_variant.size or "Standard",
+                })
+            duplicate.scanned_quantity += corrected_quantity
+            duplicate.base_quantity = self._base_quantity(duplicate.scanned_quantity, duplicate.package_quantity)
+            duplicate.difference_quantity = self._difference(session.mode, duplicate.base_quantity, duplicate.expected_quantity)
+            duplicate.last_scanned_at = datetime.now(timezone.utc)
+            self.db.delete(item)
+        else:
+            if changing_assignment:
+                item.product_id = target_variant.product_id
+                item.product_variant_id = target_variant.id
+                item.product_barcode_id = mapping.id if mapping else None
+                item.barcode = mapping.barcode if mapping else target_barcode
+                item.package_quantity = mapping.base_unit_conversion if mapping else 1
+                item.expected_quantity = self._expected_quantity(session, target_variant.id)
+            item.scanned_quantity = corrected_quantity
+            if payload.condition is not None:
+                item.condition = payload.condition
+            if payload.unit_cost is not None:
+                item.unit_cost = payload.unit_cost
+            item.base_quantity = self._base_quantity(item.scanned_quantity, item.package_quantity)
+            item.difference_quantity = self._difference(session.mode, item.base_quantity, item.expected_quantity)
+            item.last_scanned_at = datetime.now(timezone.utc)
+        self._touch_draft(session)
         self.db.commit()
         return self.get_session(session.id, current_user)
 
-    def delete_item(self, session_id: UUID, item_id: UUID, current_user: User) -> None:
+    def delete_item(self, session_id: UUID, item_id: UUID, current_user: User, expected_session_updated_at: Optional[datetime] = None) -> None:
         session = self._editable_session(session_id, current_user)
+        self._assert_draft_version(session, expected_session_updated_at)
         item = self.db.query(StockScanSessionItem).filter(StockScanSessionItem.id == item_id, StockScanSessionItem.session_id == session.id).first()
         if not item:
             raise not_found("Stock scan item")
@@ -631,6 +680,7 @@ class StockScanService:
         # a per-piece record owned by this draft. Removing a draft row must not
         # delete the mapping needed by the next stock-entry session.
         self.db.delete(item)
+        self._touch_draft(session)
         self.db.commit()
 
     def validate(self, session_id: UUID, current_user: User) -> tuple[bool, list[str], StockScanSession]:
@@ -877,6 +927,7 @@ class StockScanService:
         item.base_quantity = self._base_quantity(item.scanned_quantity, item.package_quantity)
         item.difference_quantity = self._difference(session.mode, item.base_quantity, item.expected_quantity)
         session.status = StockScanStatus.IN_PROGRESS
+        self._touch_draft(session)
         return item
 
     def _bulk_transfer_plan(
@@ -1389,6 +1440,78 @@ class StockScanService:
                 product_variant_id=variant.id,
                 created_by=user_id,
             ))
+
+    def _draft_mapping_for_variant(
+        self,
+        barcode: str,
+        variant: ProductVariant,
+        store_id: UUID,
+        current_user: User,
+        confirm_shared_barcode: bool,
+    ) -> ProductBarcode:
+        """Resolve a barcode while editing a draft; this never posts stock.
+
+        It mirrors product-first staging so barcode rules cannot be bypassed by
+        editing an already staged row.
+        """
+        normalized = barcode.strip()
+        self._validate_barcode(normalized)
+        mapping = self._barcode_mapping(normalized, store_id, lock=True, include_inactive=True)
+        if not mapping:
+            mapping = ProductBarcode(
+                store_id=store_id, product_id=variant.product_id, product_variant_id=variant.id, barcode=normalized,
+                barcode_type=self._barcode_type(normalized, "AUTO"), manufacturer_barcode=True, package_quantity=1,
+                scan_unit="PIECE", inventory_unit="PIECE", base_unit_conversion=1, sale_mode="PIECE_ONLY",
+                mrp=variant.mrp, default_selling_price=variant.selling_price, active=True, verified=True,
+                verified_by=current_user.id, verified_at=datetime.now(timezone.utc),
+            )
+            self.db.add(mapping)
+            self.db.flush()
+            self._ensure_barcode_target(mapping, variant, current_user.id)
+            return mapping
+        targets = self._barcode_targets(mapping, store_id, lock=True)
+        if not any(target.id == variant.id for target in targets):
+            same_family_and_colour = mapping.product_id == variant.product_id and all(
+                (target.color or "").casefold() == (variant.color or "").casefold() for target in targets
+            )
+            if not same_family_and_colour:
+                source = targets[0] if targets else self._variant_for_store(mapping.product_variant_id, store_id, lock=True)
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                    "message": "Barcode belongs to another product or colour.",
+                    "code": "BARCODE_PRODUCT_CONFLICT",
+                    "existing": self._shared_target_read(source).model_dump(mode="json"),
+                })
+            if not confirm_shared_barcode:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                    "message": "Shared barcode detected. Confirm using it for this exact size.",
+                    "code": "SHARED_BARCODE_CONFIRMATION_REQUIRED",
+                    "barcode": mapping.barcode,
+                    "product_name": variant.product.name,
+                    "color": variant.color,
+                    "existing_sizes": [target.size or "Standard" for target in targets],
+                })
+            self._ensure_barcode_target(mapping, variant, current_user.id)
+        mapping.active = True
+        return mapping
+
+    @staticmethod
+    def _touch_draft(session: StockScanSession) -> None:
+        session.updated_at = datetime.now(timezone.utc)
+
+    @staticmethod
+    def _assert_draft_version(session: StockScanSession, expected_updated_at: Optional[datetime]) -> None:
+        if expected_updated_at is None:
+            return
+        actual = session.updated_at
+        if actual.tzinfo is None:
+            actual = actual.replace(tzinfo=timezone.utc)
+        if expected_updated_at.tzinfo is None:
+            expected_updated_at = expected_updated_at.replace(tzinfo=timezone.utc)
+        if actual != expected_updated_at:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                "message": "This draft changed. Refresh and review before saving.",
+                "code": "STOCK_DRAFT_STALE",
+            })
 
     @staticmethod
     def _shared_target_read(variant: ProductVariant) -> SharedBarcodeTargetRead:
