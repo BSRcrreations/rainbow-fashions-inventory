@@ -46,7 +46,6 @@ export default function PurchasesPage() {
   }, [statusFilter]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- load updates state after the external request resolves.
     void load();
     return () => { if (pollTimer.current !== null) window.clearTimeout(pollTimer.current); };
   }, [load]);

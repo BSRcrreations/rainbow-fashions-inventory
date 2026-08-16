@@ -17,7 +17,6 @@ export default function OpeningStockImportPage() {
   const previewRows = useMemo(() => selected?.rows?.slice(0, 100) ?? [], [selected]);
   async function refresh() { const results = await api.get<OpeningImport[]>("/opening-stock-imports"); setImports(results); }
   useEffect(() => { if (user?.role === "OWNER") {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- refresh updates state after the external request resolves.
     void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load imports."));
   } }, [user?.role]);
   async function inspect(id: string) { setError(""); try { setSelected(await api.get<OpeningImport>(`/opening-stock-imports/${id}`)); } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load preview."); } }

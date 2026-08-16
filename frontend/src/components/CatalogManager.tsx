@@ -71,7 +71,6 @@ export default function CatalogManager<T extends CatalogItem>({
   }, [endpoint, noun]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- load updates state after the initial external request resolves.
     void load("");
   }, [load]);
 

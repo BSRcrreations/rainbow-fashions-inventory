@@ -13,7 +13,6 @@ export default function InventoryIntegrityPage() {
   const { user } = useAuth(); const [items, setItems] = useState<Item[]>([]); const [summary, setSummary] = useState<Summary | null>(null); const [filter, setFilter] = useState("ALL"); const [selected, setSelected] = useState<string[]>([]); const [confirmation, setConfirmation] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   async function load() { const [nextItems, nextSummary] = await Promise.all([api.get<Item[]>("/inventory/reconciliation"), api.get<Summary>("/inventory/reconciliation/summary")]); setItems(nextItems); setSummary(nextSummary); }
   useEffect(() => { if (user?.role === "OWNER" || user?.role === "MANAGER") {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- load updates state after the external request resolves.
     void load().catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load inventory integrity."));
   } }, [user?.role]);
   const visible = useMemo(() => filter === "ALL" ? items : items.filter((item) => item.category === filter), [filter, items]);

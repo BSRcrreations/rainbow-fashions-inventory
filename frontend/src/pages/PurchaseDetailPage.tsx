@@ -74,7 +74,6 @@ export default function PurchaseDetailPage() {
   }, [purchaseId]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- load updates state after the external request resolves.
     void load();
   }, [load]);
   useEffect(() => {
