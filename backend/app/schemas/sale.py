@@ -126,6 +126,7 @@ class SaleItemRead(ORMBaseModel):
 
 class SaleCatalogVariant(BaseModel):
     variant_id: UUID
+    product_id: UUID
     size: Optional[str] = None
     color: Optional[str] = None
     style_code: Optional[str] = None

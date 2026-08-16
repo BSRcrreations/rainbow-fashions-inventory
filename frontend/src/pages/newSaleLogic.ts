@@ -26,7 +26,12 @@ export function mergeCartVariant(cart: CartLine[], product: SaleCatalogProduct, 
   return { cart: existing ? cart.map((line) => line.variant.variant_id === variant.variant_id ? { ...line, quantity: line.quantity + quantityToAdd } : line) : [...cart, { product, variant, quantity: quantityToAdd }] };
 }
 
+/** A visual catalog group can contain same-named products; retain the variant's true parent in the cart. */
+export function productForVariant(product: SaleCatalogProduct, variant: SaleCatalogVariant): SaleCatalogProduct {
+  return product.product_id === variant.product_id ? product : { ...product, product_id: variant.product_id, variants: [variant], variant_count: 1, total_stock: variant.available_stock, total_available_stock: variant.available_stock };
+}
+
 export function catalogItemFromBarcode(found: ProductVariantBarcode): { product: SaleCatalogProduct; variant: SaleCatalogVariant } {
-  const variant: SaleCatalogVariant = { variant_id: found.variant_id, size: found.size, color: found.color, style_code: found.style_code, sku: found.sku, barcode: found.barcode, mrp: found.mrp, selling_price: found.selling_price, available_stock: found.current_available_stock, classification_review_required: false, is_active: found.active };
+  const variant: SaleCatalogVariant = { variant_id: found.variant_id, product_id: found.product_id, size: found.size, color: found.color, style_code: found.style_code, sku: found.sku, barcode: found.barcode, mrp: found.mrp, selling_price: found.selling_price, available_stock: found.current_available_stock, classification_review_required: false, is_active: found.active };
   return { variant, product: { product_id: found.product_id, name: found.product_name, category_name: found.category, brand_name: found.brand, variant_count: 1, total_stock: found.current_available_stock, minimum_stock: 0, total_available_stock: found.current_available_stock, variants: [variant] } };
 }

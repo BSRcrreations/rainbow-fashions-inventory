@@ -1,5 +1,25 @@
-import type { SaleCatalogProduct } from "../types";
+import type { SaleCatalogProduct, SaleCatalogVariant } from "../types";
 import { money } from "../utils/format";
+
+const logicalSizeOrder = ["XXS", "XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL", "FREE SIZE"];
+
+function normalizedSize(size?: string | null) {
+  return (size || "").trim().replace(/\s+/g, " ").toUpperCase();
+}
+
+/** Keeps POS size choices in customer-facing order while retaining unknown labels. */
+export function orderVariantsBySize(variants: SaleCatalogVariant[]) {
+  return variants.map((variant, index) => ({ variant, index })).sort((left, right) => {
+    const leftIndex = logicalSizeOrder.indexOf(normalizedSize(left.variant.size));
+    const rightIndex = logicalSizeOrder.indexOf(normalizedSize(right.variant.size));
+    const leftKnown = leftIndex !== -1;
+    const rightKnown = rightIndex !== -1;
+    if (leftKnown && rightKnown) return leftIndex - rightIndex || left.index - right.index;
+    if (leftKnown) return -1;
+    if (rightKnown) return 1;
+    return left.index - right.index;
+  }).map(({ variant }) => variant);
+}
 
 function compactParts(parts: Array<string | null | undefined>) {
   return parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part));

@@ -153,11 +153,13 @@ export default function ProductsPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- filters intentionally reset the server-side page before the next query.
     setPage(1);
   }, [debouncedSearch, categoryFilter, brandFilter, statusFilter, stockStatus, minPrice, maxPrice, createdFrom, createdTo, sortBy, sortDir, pageSize]);
 
   useEffect(() => {
     if (!imageFile) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear the derived preview when its input is removed.
       setImagePreview("");
       return;
     }

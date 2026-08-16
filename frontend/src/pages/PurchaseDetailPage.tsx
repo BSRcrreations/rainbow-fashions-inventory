@@ -73,7 +73,10 @@ export default function PurchaseDetailPage() {
     }
   }, [purchaseId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load updates state after the external request resolves.
+    void load();
+  }, [load]);
   useEffect(() => {
     void api.get<CategoryHierarchy[]>("/categories/hierarchy")
       .then(setCatalog)

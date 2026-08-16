@@ -246,6 +246,7 @@ export interface StockScanSession {
 
 export interface SaleCatalogVariant {
   variant_id: string;
+  product_id: string;
   size?: string | null;
   color?: string | null;
   style_code?: string | null;

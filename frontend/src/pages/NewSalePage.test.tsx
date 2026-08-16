@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CurrentSalePanel, ProductGroupCard, ProductVisual } from "./NewSalePage";
-import { productCardMrpText, productCardVariantSummary } from "./newSaleCard";
-import { catalogItemFromBarcode, firstSellableProduct, isQuickAddProduct, mergeCartVariant } from "./newSaleLogic";
+import { orderVariantsBySize, productCardMrpText, productCardVariantSummary } from "./newSaleCard";
+import { catalogItemFromBarcode, firstSellableProduct, isQuickAddProduct, mergeCartVariant, productForVariant } from "./newSaleLogic";
 import type { CartLine } from "./newSaleLogic";
 import { previewSaleDiscount } from "./saleDiscount";
 import type { ProductVariantBarcode, SaleCatalogProduct, SaleCatalogVariant } from "../types";
@@ -36,7 +36,7 @@ describe("ProductVisual", () => {
   });
 });
 
-const smallVariant: SaleCatalogVariant = { variant_id: "variant-small", size: "S", color: "Black", sku: "LEG-S", barcode: "8901", selling_price: "499", available_stock: 2, classification_review_required: false, is_active: true };
+const smallVariant: SaleCatalogVariant = { variant_id: "variant-small", product_id: "prisma-leggings", size: "S", color: "Black", sku: "LEG-S", barcode: "8901", selling_price: "499", available_stock: 2, classification_review_required: false, is_active: true };
 const largeVariant: SaleCatalogVariant = { ...smallVariant, variant_id: "variant-large", size: "L", barcode: "8902" };
 
 function renderProductCard(product: SaleCatalogProduct) {
@@ -76,7 +76,14 @@ describe("New Sale cart behavior", () => {
     const result = catalogItemFromBarcode(barcode);
 
     expect(result.variant.variant_id).toBe("variant-blue-large");
+    expect(result.variant.product_id).toBe("product-1");
     expect(result.product.variants).toEqual([result.variant]);
+  });
+
+  it("keeps the exact parent product identity when a visual catalog group contains matching products", () => {
+    const exactVariant = { ...largeVariant, product_id: "separate-product" };
+
+    expect(productForVariant(baseProduct, exactVariant).product_id).toBe("separate-product");
   });
 });
 
@@ -98,13 +105,14 @@ describe("New Sale product cards", () => {
 
     expect(markup).toContain("Soft padded bra");
     expect(markup).toContain("Bra · withIn");
-    expect(markup).toContain("34/85 cm • all • SoftA");
+    expect(markup).toContain("Select size");
+    expect(markup).toContain("34/85 cm");
     expect(markup).toContain("MRP ₹395.00");
     expect(markup).toContain("1 variant");
     expect(markup).toContain("30 in stock");
   });
 
-  it("uses the first sellable variant as the compact multiple-variant preview", () => {
+  it("renders logical, contained size chips for multiple variants", () => {
     const product = {
       ...baseProduct,
       variant_count: 2,
@@ -118,9 +126,32 @@ describe("New Sale product cards", () => {
 
     const markup = renderProductCard(product);
 
-    expect(markup).toContain("Preview: L • Blue • SoftB");
+    expect(markup).toContain("Select size");
+    expect(markup).toContain('data-testid="size-chips-prisma-leggings"');
+    expect(markup).toContain("flex flex-wrap");
+    expect(markup).toContain("S");
+    expect(markup).toContain("L");
     expect(markup).toContain("2 variants");
     expect(markup).toContain("11 in stock");
+  });
+
+  it("orders known sizes logically and leaves custom sizes after them", () => {
+    const variants = orderVariantsBySize([
+      { ...smallVariant, variant_id: "custom", size: "One Size" },
+      { ...smallVariant, variant_id: "xl", size: "XL" },
+      { ...smallVariant, variant_id: "small", size: "S" },
+      { ...smallVariant, variant_id: "free", size: "Free Size" },
+      { ...smallVariant, variant_id: "medium", size: "M" },
+    ]);
+
+    expect(variants.map((variant) => variant.size)).toEqual(["S", "M", "XL", "Free Size", "One Size"]);
+  });
+
+  it("keeps unavailable sizes visible but disabled", () => {
+    const markup = renderProductCard({ ...baseProduct, variant_count: 2, variants: [smallVariant, { ...largeVariant, available_stock: 0 }] });
+
+    expect(markup).toContain('disabled=""');
+    expect(markup).toContain("line-through");
   });
 
   it("does not render broken separators when size, colour, or variant name is missing", () => {
@@ -152,13 +183,14 @@ describe("New Sale product cards", () => {
     expect(markup).toContain("truncate");
     expect(markup).toContain("max-h-10");
     expect(markup).toContain("Very Long Soft Padded Bra Name");
-    expect(markup).toContain("34/85 cm extra long size • assorted colour family • SoftA ultra comfort padded long label");
+    expect(markup).toContain("34/85 cm extra long size");
+    expect(markup).toContain("flex flex-wrap");
   });
 
-  it("still renders the card as a product-selection button for the variant popup", () => {
+  it("keeps a product selection control without nesting the size buttons", () => {
     const markup = renderProductCard({ ...baseProduct, variants: [smallVariant] });
 
-    expect(markup.startsWith("<button")).toBe(true);
+    expect(markup.startsWith("<article")).toBe(true);
     expect(markup).toContain('type="button"');
     expect(markup).toContain('aria-pressed="false"');
   });
