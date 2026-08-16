@@ -85,6 +85,50 @@ Products are shown as grouped base rows. Each base row expands to display:
 
 The base product stock equals the sum of its variants.
 
+### Variant management and deletion
+
+Use **Manage** on an expanded variant row (or **Variants** on a narrow product
+card) to edit only that variant's size, colour, MRP, selling price, purchase
+cost, SKU, barcode, active state, and scan method. Sibling variants are not
+rewritten or recreated.
+
+- **Archive** deactivates the variant and its barcode mappings. Its ID, barcode
+  history, sales, purchases, and stock ledger remain intact.
+- **Permanent delete** is owner-only and requires typing `DELETE VARIANT`. It
+  is available only when the variant has zero stock and no stock, sale, purchase,
+  scan, import, cost-lot, audit, or barcode-history dependencies. Otherwise the
+  API returns a structured conflict and the operator must archive it instead.
+- Every update, archive/restore, blocked deletion, and deletion attempt writes
+  an immutable variant snapshot to the existing product deletion audit stream.
+
+### Barcode details workflow
+
+On **Products**, scanning a barcode is a lookup only. A known barcode opens
+**EDIT VARIANT** for its exact variant; an unknown barcode opens **NEW VARIANT /
+BARCODE DETAILS**. Neither action writes to the database, maps a barcode, or
+changes stock. The only management writes are the explicit **Save Changes** and
+**Add Details** buttons.
+
+The management `POST /product-variants/details` endpoint creates a product
+variant and barcode mapping with a zero stock balance. It is deliberately
+separate from Stock Scan's barcode onboarding endpoint, which stages a stock
+line and remains subject to the stock-session confirmation workflow.
+
+### Piece and pack barcode scans
+
+Inventory remains in individual pieces. A variant's primary barcode can be
+configured as either:
+
+- **Piece** — one scan adds one base piece.
+- **Pack** — one scan adds the configured number of base pieces.
+
+The configuration lives on the active `ProductBarcode` mapping, rather than on
+the stock balance. This permits multiple barcode mappings where needed and
+preserves `package_quantity` and `base_quantity` already captured by stock-scan
+session rows. Changing a scan method therefore affects future scans only. POS
+cart lines identify pack scans and their pieces-per-pack conversion; purchase
+and stock-scan flows use the same barcode mapping conversion.
+
 ## Stock Entry
 
 The scan-and-add workflow supports category and brand defaults before barcode entry. Known barcodes resolve to exact variants and repeated scans increment staged quantity. Permanent stock is updated only after confirmation.

@@ -174,8 +174,72 @@ class ProductVariantRead(ORMBaseModel):
     current_stock: int
     classification_review_required: bool
     is_active: bool
+    scan_unit: Literal["PIECE", "PACK"] = "PIECE"
+    pieces_per_pack: int = 1
     created_at: datetime
     updated_at: datetime
+
+
+class ProductVariantUpdate(BaseModel):
+    size: Optional[str] = Field(default=None, max_length=60)
+    color: Optional[str] = Field(default=None, max_length=80)
+    style_code: Optional[str] = Field(default=None, max_length=80)
+    manufacturer_sku: Optional[str] = Field(default=None, max_length=120)
+    mrp: Optional[Decimal] = Field(default=None, ge=0)
+    selling_price: Optional[Decimal] = Field(default=None, ge=0)
+    purchase_cost: Optional[Decimal] = Field(default=None, ge=0)
+    barcode: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    internal_sku: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    scan_unit: Optional[Literal["PIECE", "PACK"]] = None
+    pieces_per_pack: Optional[int] = Field(default=None, ge=1, le=100000)
+    is_active: Optional[bool] = None
+
+    @field_validator("size", "color", "style_code", "manufacturer_sku", "barcode", "internal_sku", mode="before")
+    @classmethod
+    def normalize_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not isinstance(value, str):
+            return value
+        return value.strip() or None
+
+
+class ProductVariantDeleteRequest(BaseModel):
+    confirmation: str = Field(min_length=1, max_length=40)
+
+
+class ProductVariantDetailsCreate(BaseModel):
+    """Creates a catalogue variant/mapping only; it never creates stock."""
+    product_id: Optional[UUID] = None
+    product_name: Optional[str] = Field(default=None, min_length=2, max_length=180)
+    category_id: Optional[UUID] = None
+    subcategory_id: Optional[UUID] = None
+    brand_id: Optional[UUID] = None
+    description: Optional[str] = Field(default=None, max_length=2000)
+    size: Optional[str] = Field(default=None, max_length=60)
+    color: Optional[str] = Field(default=None, max_length=80)
+    style_code: Optional[str] = Field(default=None, max_length=80)
+    manufacturer_sku: Optional[str] = Field(default=None, max_length=120)
+    internal_sku: str = Field(min_length=1, max_length=120)
+    barcode: str = Field(min_length=1, max_length=80)
+    mrp: Optional[Decimal] = Field(default=None, ge=0)
+    selling_price: Decimal = Field(ge=0)
+    purchase_cost: Decimal = Field(ge=0)
+    scan_unit: Literal["PIECE", "PACK"] = "PIECE"
+    pieces_per_pack: int = Field(default=1, ge=1, le=100000)
+
+    @field_validator("product_name", "size", "color", "style_code", "manufacturer_sku", "internal_sku", "barcode", mode="before")
+    @classmethod
+    def normalize_create_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not isinstance(value, str):
+            return value
+        return value.strip() or None
+
+    @model_validator(mode="after")
+    def validate_create_mode(self) -> "ProductVariantDetailsCreate":
+        if self.product_id is None and not all((self.product_name, self.category_id, self.subcategory_id, self.brand_id)):
+            raise ValueError("Select an existing product or provide product name, category, subcategory, and brand.")
+        if self.scan_unit == "PACK" and self.pieces_per_pack < 2:
+            raise ValueError("Pieces per Pack must be at least 2 for Pack scans.")
+        return self
 
 
 class ProductRead(ProductBase, ORMBaseModel):

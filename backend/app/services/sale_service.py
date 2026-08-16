@@ -310,7 +310,7 @@ class SaleService:
 
     @staticmethod
     def _catalog_variant(variant: ProductVariant) -> SaleCatalogVariant:
-        return SaleCatalogVariant(variant_id=variant.id, size=variant.size, color=variant.color, style_code=variant.style_code, sku=variant.internal_sku, barcode=variant.barcode, mrp=variant.mrp, selling_price=variant.selling_price, available_stock=variant.current_stock, classification_review_required=variant.classification_review_required, is_active=variant.is_active)
+        return SaleCatalogVariant(variant_id=variant.id, product_id=variant.product_id, size=variant.size, color=variant.color, style_code=variant.style_code, sku=variant.internal_sku, barcode=variant.barcode, mrp=variant.mrp, selling_price=variant.selling_price, available_stock=variant.current_stock, classification_review_required=variant.classification_review_required, is_active=variant.is_active, scan_unit=variant.scan_unit, pieces_per_pack=variant.pieces_per_pack)
 
     def get(self, sale_id: UUID, current_user: User) -> Sale:
         sale = self.repo.get_detail(sale_id, self._store_id(current_user))

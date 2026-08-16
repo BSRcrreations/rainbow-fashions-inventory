@@ -16,7 +16,10 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ "$RELEASE_DIR" == "$DEPLOY_PATH/releases/"* ]] || { echo 'deployment activation: release is outside the deployment root' >&2; exit 1; }
 [[ -f "$RELEASE_DIR/$COMPOSE_OVERRIDE" ]] || { echo 'deployment activation: environment Compose override is missing' >&2; exit 1; }
 
-compose=(docker compose -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f "$COMPOSE_OVERRIDE")
+# Do not probe an inherited or legacy release-local .env file. The CI job
+# exports every non-secret value and BACKEND_ENV_FILE remains the only source
+# for service secrets.
+compose=(docker compose --env-file /dev/null -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f "$COMPOSE_OVERRIDE")
 previous_release=""
 if [[ -L "$DEPLOY_PATH/current" ]]; then previous_release="$(readlink -f "$DEPLOY_PATH/current")"; fi
 

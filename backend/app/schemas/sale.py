@@ -126,6 +126,7 @@ class SaleItemRead(ORMBaseModel):
 
 class SaleCatalogVariant(BaseModel):
     variant_id: UUID
+    product_id: UUID
     size: Optional[str] = None
     color: Optional[str] = None
     style_code: Optional[str] = None
@@ -136,6 +137,8 @@ class SaleCatalogVariant(BaseModel):
     available_stock: int
     classification_review_required: bool = False
     is_active: bool
+    scan_unit: str = "PIECE"
+    pieces_per_pack: int = 1
 
 
 class SaleCatalogProduct(BaseModel):

@@ -16,7 +16,9 @@ export default function OpeningStockImportPage() {
   const ready = selected?.status === "READY_TO_CONFIRM" && selected.error_count === 0;
   const previewRows = useMemo(() => selected?.rows?.slice(0, 100) ?? [], [selected]);
   async function refresh() { const results = await api.get<OpeningImport[]>("/opening-stock-imports"); setImports(results); }
-  useEffect(() => { if (user?.role === "OWNER") void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load imports.")); }, [user?.role]);
+  useEffect(() => { if (user?.role === "OWNER") {
+    void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load imports."));
+  } }, [user?.role]);
   async function inspect(id: string) { setError(""); try { setSelected(await api.get<OpeningImport>(`/opening-stock-imports/${id}`)); } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load preview."); } }
   async function upload() { if (!file) return; setBusy(true); setError(""); try { const form = new FormData(); form.append("file", file); const created = await api.post<OpeningImport>("/opening-stock-imports/upload", form); await refresh(); await inspect(created.id); } catch (cause) { setError(cause instanceof Error ? cause.message : "Upload failed."); } finally { setBusy(false); } }
   async function post() { if (!selected) return; setBusy(true); setError(""); try { await api.post(`/opening-stock-imports/${selected.id}/confirm`, { confirmation, idempotency_key: idempotencyKey }); setConfirmation(""); setIdempotencyKey(crypto.randomUUID()); await refresh(); await inspect(selected.id); } catch (cause) { setError(cause instanceof Error ? cause.message : "Posting failed."); } finally { setBusy(false); } }

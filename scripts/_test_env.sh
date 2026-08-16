@@ -71,15 +71,23 @@ postgres_cli_url() {
 }
 
 test_compose() {
-  TEST_DOCKER_ENV_FILE="${TEST_DOCKER_ENV_FILE:-$TEST_RUNTIME_DIR/backend.test.docker.env}" \
-    docker compose --project-name "$TEST_COMPOSE_PROJECT" -f "$TEST_COMPOSE_FILE" "$@"
+  local docker_env="${TEST_DOCKER_ENV_FILE:-$TEST_RUNTIME_DIR/backend.test.docker.env}"
+  local uploads_path="${UPLOADS_HOST_PATH:-$TEST_RUNTIME_DIR/uploads}"
+  local imports_path="${OPENING_STOCK_IMPORTS_HOST_PATH:-$TEST_RUNTIME_DIR/opening-stock-imports}"
+  local backup_status_path="${BACKUP_STATUS_HOST_PATH:-$TEST_RUNTIME_DIR/backup-status}"
+  mkdir -p "$uploads_path" "$imports_path" "$backup_status_path"
+  BACKEND_ENV_FILE="$docker_env" \
+    UPLOADS_HOST_PATH="$uploads_path" \
+    OPENING_STOCK_IMPORTS_HOST_PATH="$imports_path" \
+    BACKUP_STATUS_HOST_PATH="$backup_status_path" \
+    docker compose --project-name "$TEST_COMPOSE_PROJECT" -f "$PROJECT_ROOT/docker-compose.yml" -f "$TEST_COMPOSE_FILE" "$@"
 }
 
 write_docker_test_environment() {
   mkdir -p "$TEST_RUNTIME_DIR"
   local target="$TEST_RUNTIME_DIR/backend.test.docker.env"
   # The direct-UAT URL uses localhost:5433. Docker needs the isolated service hostname.
-  sed -E 's#@(127\.0\.0\.1|localhost):5433/#@rainbow-test-db:5432/#' "$TEST_ENV_FILE" > "$target"
+  sed -E 's#@(127\.0\.0\.1|localhost):5433/#@postgres:5432/#' "$TEST_ENV_FILE" > "$target"
   chmod 600 "$target"
   export TEST_DOCKER_ENV_FILE="$target"
 }

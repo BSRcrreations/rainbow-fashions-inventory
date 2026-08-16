@@ -73,7 +73,9 @@ export default function PurchaseDetailPage() {
     }
   }, [purchaseId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
   useEffect(() => {
     void api.get<CategoryHierarchy[]>("/categories/hierarchy")
       .then(setCatalog)

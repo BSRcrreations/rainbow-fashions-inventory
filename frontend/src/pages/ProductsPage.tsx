@@ -5,6 +5,8 @@ import { useNavigate } from "react-router-dom";
 import { ApiError, api } from "../api/client";
 import BarcodeScannerInput from "../components/BarcodeScannerInput";
 import BarcodeLabelDialog from "../components/BarcodeLabelDialog";
+import VariantManagementDialog from "../components/VariantManagementDialog";
+import ProductBarcodeDetailsDialog from "../components/ProductBarcodeDetailsDialog";
 import Dialog from "../components/Dialog";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
@@ -15,7 +17,7 @@ import { useToast } from "../components/ToastProvider";
 import { Button } from "../components/ui/button";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useAuth } from "../hooks/useAuth";
-import type { CategoryHierarchy, PaginatedProducts, PricingType, Product, ProductVariantBarcode } from "../types";
+import type { CategoryHierarchy, PaginatedProducts, PricingType, Product, ProductVariant, ProductVariantBarcode } from "../types";
 import { money } from "../utils/format";
 import { productVariantLabel } from "../utils/product";
 import { productPayload, productUpdateErrorMessage } from "./productEditLogic";
@@ -150,6 +152,8 @@ export default function ProductsPage() {
   const [purgeConfirmation, setPurgeConfirmation] = useState("");
   const [deleteResult, setDeleteResult] = useState<BulkDeleteResult | null>(null);
   const [printTarget, setPrintTarget] = useState<Product | null>(null);
+  const [managedVariant, setManagedVariant] = useState<{ product: Product; variant: ProductVariant } | null>(null);
+  const [newBarcode, setNewBarcode] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -495,15 +499,16 @@ export default function ProductsPage() {
 
   async function scanProduct(barcode: string, signal: AbortSignal) {
     try {
-      const variant = await api.get<ProductVariantBarcode>(`/product-variants/by-barcode/${encodeURIComponent(barcode)}`, { signal });
-      const product = await api.get<Product>(`/products/${variant.product_id}`, { signal });
-      beginEdit(product);
-      toast.success(`${product.name} opened (${variant.size || variant.color || "standard"})`);
+      const lookup = await api.get<ProductVariantBarcode>(`/product-variants/by-barcode/${encodeURIComponent(barcode)}`, { signal });
+      const product = await api.get<Product>(`/products/${lookup.product_id}`, { signal });
+      const variant = product.variants.find((candidate) => candidate.id === lookup.variant_id);
+      if (!variant) throw new Error("The barcode resolved, but its variant details could not be loaded.");
+      setManagedVariant({ product, variant });
+      toast.success(`${product.name} details loaded. Review and Save Changes to update.`);
     } catch (cause) {
-      if (cause instanceof ApiError && cause.status === 404) {
-        beginCreate();
-        setForm((current) => ({ ...current, barcode }));
-        toast.success("Barcode not registered. Complete the product form to create it.");
+      if (cause instanceof ApiError && (cause.status === 404 || cause.code === "BARCODE_NOT_FOUND")) {
+        setNewBarcode(barcode);
+        toast.success("Barcode is not registered. Add details when you are ready; nothing has been saved.");
         return;
       }
       throw cause;
@@ -630,7 +635,7 @@ export default function ProductsPage() {
       />
 
       <div className="sticky top-[65px] z-[5] mb-4 rounded-md border border-line bg-white p-3 shadow-sm">
-        <div className="mb-3"><BarcodeScannerInput label="Scan product" placeholder="Scan a known barcode to open it, or scan a new barcode to create a product" onScan={scanProduct} /></div>
+        <div className="mb-3"><BarcodeScannerInput label="Scan product or variant barcode" placeholder="Scan to load editable details. Nothing is saved until you choose Add Details or Save Changes." onScan={scanProduct} /></div>
         <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 sm:flex">
           <div className="col-span-2 flex h-10 min-w-0 flex-1 items-center rounded-md border border-line bg-white px-3 sm:col-span-1">
           <Search size={16} className="shrink-0 text-slate-400" />
@@ -834,10 +839,12 @@ export default function ProductsPage() {
                   </div>
                   <div className="flex gap-1">
                     <Button type="button" variant="secondary" size="sm" onClick={() => beginEdit(product)}><Edit3 size={15} /> Edit</Button>
+                    {product.variants.length ? <Button type="button" variant="secondary" size="sm" onClick={() => toggleExpanded(product.id)}>{expandedIds.has(product.id) ? "Hide variants" : "Variants"}</Button> : null}
                     <Button type="button" variant="ghost" size="icon" onClick={() => setPrintTarget(product)} title="Print barcode"><Barcode size={16} /></Button>
                     {canPermanentlyDelete ? <Button type="button" variant="ghost" size="icon" className="text-rose-700" onClick={() => void openPermanentDelete([product.id])} title="Permanently delete product"><Trash2 size={16} /></Button> : null}
                   </div>
                 </div>
+                {expandedIds.has(product.id) ? <div className="mt-3 space-y-2 border-t border-line pt-3">{product.variants.map((variant) => <div key={variant.id} className="flex items-center justify-between gap-3 rounded-md bg-slate-50 p-3 text-xs"><div className="min-w-0"><p className="font-semibold text-slate-900">{variant.size || "Standard"}{variant.color ? ` · ${variant.color}` : ""}</p><p className="truncate font-mono text-slate-500">{variant.internal_sku} · {variant.scan_unit === "PACK" ? `Pack × ${variant.pieces_per_pack}` : "Piece"}</p></div><Button type="button" size="sm" variant="secondary" onClick={() => setManagedVariant({ product, variant })}>Manage</Button></div>)}</div> : null}
               </article>
             ))}
           </div>
@@ -899,7 +906,7 @@ export default function ProductsPage() {
                         </div>
                       </td>
                     </tr>
-                    {expanded ? <tr className="bg-slate-50/60"><td className="px-4 py-4" colSpan={9}><div className="overflow-x-auto rounded-md border border-line bg-white"><table className="min-w-[920px] w-full text-left text-xs"><thead className="bg-slate-50 uppercase text-slate-500"><tr><th className="px-3 py-2">Size</th><th className="px-3 py-2">Colour</th><th className="px-3 py-2">Barcode</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2 text-right">MRP</th><th className="px-3 py-2 text-right">Selling</th><th className="px-3 py-2 text-right">Cost</th><th className="px-3 py-2 text-right">Stock</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Actions</th></tr></thead><tbody className="divide-y divide-line">{product.variants.map((variant) => <tr key={variant.id}><td className="px-3 py-2 font-semibold">{variant.size || "Standard"}</td><td className="px-3 py-2">{variant.color || "-"}</td><td className="px-3 py-2 font-mono">{variant.barcode}</td><td className="px-3 py-2 font-mono">{variant.internal_sku}</td><td className="px-3 py-2 text-right">{variant.mrp ? money(variant.mrp) : "-"}</td><td className="px-3 py-2 text-right font-semibold">{money(variant.selling_price)}</td><td className="px-3 py-2 text-right">{money(variant.average_cost || variant.last_purchase_cost)}</td><td className="px-3 py-2 text-right font-bold">{variant.current_stock}</td><td className="px-3 py-2"><span className={`rounded px-2 py-1 font-medium ${variant.is_active ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-600"}`}>{variant.is_active ? "Active" : "Inactive"}</span></td><td className="px-3 py-2"><div className="flex gap-1"><Button type="button" variant="secondary" size="sm" onClick={() => navigate(`/stock-adjustment?variant_id=${variant.id}`)}>Adjust stock</Button><Button type="button" variant="ghost" size="icon" title="Print variant barcode" onClick={() => printVariantLabel(product, variant)}><Barcode size={15} /></Button></div></td></tr>)}</tbody></table></div></td></tr> : null}
+                    {expanded ? <tr className="bg-slate-50/60"><td className="px-4 py-4" colSpan={9}><div className="overflow-x-auto rounded-md border border-line bg-white"><table className="min-w-[980px] w-full text-left text-xs"><thead className="bg-slate-50 uppercase text-slate-500"><tr><th className="px-3 py-2">Size</th><th className="px-3 py-2">Colour</th><th className="px-3 py-2">Barcode</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2">Scan</th><th className="px-3 py-2 text-right">MRP</th><th className="px-3 py-2 text-right">Selling</th><th className="px-3 py-2 text-right">Cost</th><th className="px-3 py-2 text-right">Stock</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Actions</th></tr></thead><tbody className="divide-y divide-line">{product.variants.map((variant) => <tr key={variant.id}><td className="px-3 py-2 font-semibold">{variant.size || "Standard"}</td><td className="px-3 py-2">{variant.color || "-"}</td><td className="px-3 py-2 font-mono">{variant.barcode}</td><td className="px-3 py-2 font-mono">{variant.internal_sku}</td><td className="px-3 py-2">{variant.scan_unit === "PACK" ? `Pack × ${variant.pieces_per_pack}` : "Piece"}</td><td className="px-3 py-2 text-right">{variant.mrp ? money(variant.mrp) : "-"}</td><td className="px-3 py-2 text-right font-semibold">{money(variant.selling_price)}</td><td className="px-3 py-2 text-right">{money(variant.average_cost || variant.last_purchase_cost)}</td><td className="px-3 py-2 text-right font-bold">{variant.current_stock}</td><td className="px-3 py-2"><span className={`rounded px-2 py-1 font-medium ${variant.is_active ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-600"}`}>{variant.is_active ? "Active" : "Inactive"}</span></td><td className="px-3 py-2"><div className="flex gap-1"><Button type="button" variant="secondary" size="sm" onClick={() => setManagedVariant({ product, variant })}>Manage</Button><Button type="button" variant="secondary" size="sm" onClick={() => navigate(`/stock-adjustment?variant_id=${variant.id}`)}>Adjust stock</Button><Button type="button" variant="ghost" size="icon" title="Print variant barcode" onClick={() => printVariantLabel(product, variant)}><Barcode size={15} /></Button></div></td></tr>)}</tbody></table></div></td></tr> : null}
                   </Fragment>
                 );
               })}
@@ -929,6 +936,8 @@ export default function ProductsPage() {
       )}
 
       <BarcodeLabelDialog open={Boolean(printTarget)} product={printTarget} onClose={() => setPrintTarget(null)} />
+      {managedVariant ? <VariantManagementDialog key={managedVariant.variant.id} open product={managedVariant.product} variant={managedVariant.variant} canPermanentlyDelete={canPermanentlyDelete} onClose={() => setManagedVariant(null)} onSaved={invalidateProducts} onEditProduct={() => { const product = managedVariant.product; setManagedVariant(null); beginEdit(product); }} /> : null}
+      {newBarcode ? <ProductBarcodeDetailsDialog key={newBarcode} open barcode={newBarcode} onClose={() => setNewBarcode("")} onCreated={async (productId, variantId) => { invalidateProducts(); const product = await api.get<Product>(`/products/${productId}`); const variant = product.variants.find((candidate) => candidate.id === variantId); setNewBarcode(""); if (variant) setManagedVariant({ product, variant }); toast.success("Details added. No stock was created."); }} /> : null}
       <Dialog open={deleteDialogOpen} title={`Permanently delete ${deleteCheck ? deleteCheck.deletable.length + deleteCheck.blocked.length : selectedCount} product${(deleteCheck ? deleteCheck.deletable.length + deleteCheck.blocked.length : selectedCount) === 1 ? "" : "s"}?`} description="This action cannot be undone." onClose={() => setDeleteDialogOpen(false)} maxWidth="lg">
         {!deleteCheck ? <SkeletonRows rows={3} /> : <div className="space-y-5">
           {deleteCheck.deletable.length ? <section><h3 className="text-sm font-semibold text-foreground">Eligible for permanent deletion</h3><p className="mt-1 text-sm text-muted">The following products and their unused variants will be permanently removed.</p><ul className="mt-3 space-y-1 text-sm text-foreground">{deleteCheck.deletable.map((item) => <li key={item.product_id}>- {item.product_name}</li>)}</ul></section> : null}
