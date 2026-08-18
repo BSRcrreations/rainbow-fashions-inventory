@@ -343,6 +343,7 @@ PY
 alembic_version="$(psql_in_container -Atqc 'SELECT version_num FROM alembic_version LIMIT 1')"
 [[ -n "$alembic_version" ]] || fail 'Alembic version is missing'
 status_file="$DEPLOY_PATH/backups/status/latest-test-uat-reset.json"
+install -d -m 700 "$(dirname "$status_file")"
 python3 - "$status_file" "$alembic_version" "$post_counts" <<'PY'
 import json, os, sys
 from pathlib import Path
