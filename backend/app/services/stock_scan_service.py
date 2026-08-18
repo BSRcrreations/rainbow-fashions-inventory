@@ -152,6 +152,13 @@ class StockScanService:
         if not mapping:
             raise not_found("Barcode assignment")
         mapping.active = False
+        for variant in self._barcode_targets(mapping, store_id, lock=True):
+            if variant.barcode.casefold() == mapping.barcode.casefold():
+                variant.barcode = self._unassigned_barcode(variant.id)
+        self.db.query(Product).filter(
+            Product.store_id == store_id,
+            func.lower(Product.barcode) == mapping.barcode.casefold(),
+        ).update({Product.barcode: None}, synchronize_session=False)
         self.db.add(ProductBarcodeAudit(store_id=store_id, barcode=mapping.barcode, old_product_variant_id=mapping.product_variant_id, new_product_variant_id=mapping.product_variant_id, action="REMOVED", reason="BARCODE_ONLY", changed_by=current_user.id, request_id=request_id))
         self.db.commit()
 
@@ -173,6 +180,8 @@ class StockScanService:
                 ProductBarcodeVariantTarget.product_barcode_id == mapping.id,
                 ProductBarcodeVariantTarget.product_variant_id == variant_id,
             ).delete(synchronize_session=False)
+            if target.barcode.casefold() == mapping.barcode.casefold():
+                target.barcode = self._unassigned_barcode(target.id)
             old_variant_id = mapping.product_variant_id
             if mapping.product_variant_id == variant_id:
                 if remaining:
@@ -190,6 +199,11 @@ class StockScanService:
         except Exception:
             self.db.rollback()
             raise
+
+    @staticmethod
+    def _unassigned_barcode(variant_id: UUID) -> str:
+        """Clear a legacy required barcode field without making it scannable."""
+        return f"UNASSIGNED-{variant_id.hex}"
 
     def transfer_barcode(self, barcode_id: UUID, target_variant_id: UUID, current_user: User, request_id: Optional[str] = None) -> ProductVariantBarcodeRead:
         store_id = self._store_id(current_user)

@@ -19,6 +19,8 @@ from app.schemas.stock_scan import (
     BulkBarcodeTransferRequest,
     BulkBarcodeTransferResultRead,
     BarcodeImageResolutionRead,
+    BarcodeDeletionCheckRead,
+    BarcodePermanentDeleteRequest,
     BarcodeLookupRead,
     BarcodeOnboarding,
     BarcodeProductOnboarding,
@@ -38,6 +40,7 @@ from app.schemas.stock import StockHistoryRead
 from app.schemas.product import ProductVariantDeleteRequest, ProductVariantDetailsCreate, ProductVariantRead, ProductVariantUpdate
 from app.services.stock_scan_service import StockScanService
 from app.services.barcode_resolution_service import BarcodeResolutionService
+from app.services.barcode_deletion_service import BarcodeDeletionService
 from app.services.variant_management_service import VariantManagementService
 
 
@@ -102,6 +105,16 @@ def onboard_barcode(payload: BarcodeOnboarding, db: Session = Depends(get_db), c
 def lookup_barcode(barcode: str, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> BarcodeLookupRead:
     """Owner-only source of truth used before correcting a barcode assignment."""
     return BarcodeResolutionService(db).lookup(barcode, current_user)
+
+
+@barcodes_router.get("/lookup/{barcode}/deletion-check", response_model=BarcodeDeletionCheckRead)
+def barcode_deletion_check(barcode: str, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> BarcodeDeletionCheckRead:
+    return BarcodeDeletionService(db).check(barcode, current_user)
+
+
+@barcodes_router.post("/lookup/{barcode}/permanent-delete")
+def permanently_delete_barcode(barcode: str, payload: BarcodePermanentDeleteRequest, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> dict:
+    return BarcodeDeletionService(db).permanently_delete(barcode, payload.confirmation, current_user)
 
 
 @barcodes_router.delete("/{barcode_id}", status_code=status.HTTP_204_NO_CONTENT)

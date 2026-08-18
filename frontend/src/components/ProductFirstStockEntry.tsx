@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, ScanLine } from "lucide-react";
 import { ApiError, api } from "../api/client";
@@ -11,13 +11,14 @@ type SharedTarget = { variant_id: string; product_id: string; product_name: stri
 
 interface Props {
   session: StockScanSession;
+  initialBarcode?: string;
   canManageCatalog: boolean;
   onSaved: (session: StockScanSession) => void;
 }
 
 function variantLabel(variant: ProductVariant) { return [variant.size || "Standard", variant.color].filter(Boolean).join(" · "); }
 
-export default function ProductFirstStockEntry({ session, canManageCatalog, onSaved }: Props) {
+export default function ProductFirstStockEntry({ session, initialBarcode = "", canManageCatalog, onSaved }: Props) {
   const queryClient = useQueryClient();
   const [categoryId, setCategoryId] = useState(session.default_category_id ?? "");
   const [brandId, setBrandId] = useState(session.default_brand_id ?? "");
@@ -41,6 +42,8 @@ export default function ProductFirstStockEntry({ session, canManageCatalog, onSa
   const [error, setError] = useState("");
   const [sharedConfirmation, setSharedConfirmation] = useState<{ barcode: string; sizes: string[] } | null>(null);
   const [conflict, setConflict] = useState<SharedTarget | null>(null);
+
+  useEffect(() => { if (initialBarcode) setBarcode(initialBarcode); }, [initialBarcode]);
 
   const hierarchyQuery = useQuery({ queryKey: ["category-hierarchy"], queryFn: () => api.get<CategoryHierarchy[]>("/categories/hierarchy") });
   const categories = hierarchyQuery.data ?? [];

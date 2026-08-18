@@ -104,6 +104,22 @@ class BarcodeLookupRead(BaseModel):
     assignments: list[BarcodeLookupAssignmentRead] = Field(default_factory=list)
 
 
+class BarcodeDeletionCheckRead(BaseModel):
+    """Owner-facing preflight for deleting only non-historical barcode records."""
+
+    barcode: str
+    active_assignments: int
+    historical_references: int
+    draft_references: int
+    audit_references: int
+    can_permanently_delete: bool
+    reason: Optional[str] = None
+
+
+class BarcodePermanentDeleteRequest(BaseModel):
+    confirmation: str
+
+
 class StockScanItemUpdate(BaseModel):
     """A safe correction to an unconfirmed stock draft row.
 

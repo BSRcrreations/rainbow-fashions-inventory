@@ -16,6 +16,14 @@ describe("confirmed Scan & Add Stock session", () => {
     expect(source).toContain("SHARED_BARCODE_SIZE_REQUIRED");
     expect(source).toContain("Choose the exact size before staging stock");
   });
+
+  it("treats an unassigned barcode as available instead of a red error", () => {
+    expect(source).toContain('title="Barcode available"');
+    expect(source).toContain("is not currently assigned to any product.");
+    expect(source).toContain(">Select Product</Button>");
+    expect(source).toContain(">Create Product</Button>");
+    expect(source).toContain('cause.code === "BARCODE_NOT_FOUND"');
+  });
   it("shows a single read-only warning banner", () => {
     expect(source.match(/This stock session is confirmed and cannot be edited\./g)).toHaveLength(1);
   });
