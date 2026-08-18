@@ -54,6 +54,10 @@ export default function BarcodeScannerInput({
     // Many scanners send both keydown Enter and a form submit. Suppress that duplicate only.
     if (barcode === lastValueRef.current && now - lastScanAtRef.current < 250) return;
     lastValueRef.current = barcode; lastScanAtRef.current = now;
+    if (barcode.length > 40 || (/^\d+$/.test(barcode) && barcode.length > 20)) {
+      setValue(""); report("ERROR", "Barcode looks invalid. Please scan again."); if (soundEnabled) beep(false);
+      window.requestAnimationFrame(() => inputRef.current?.focus()); return;
+    }
     controllerRef.current?.abort();
     const controller = new AbortController(); controllerRef.current = controller;
     setValue(""); report("LOOKING_UP", "Looking up barcode…");
