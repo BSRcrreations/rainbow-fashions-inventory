@@ -43,6 +43,7 @@ export default function CategoriesPage() {
   const [formError, setFormError] = useState("");
   const [logoUploading, setLogoUploading] = useState(false);
   const canManageBrandLogos = user?.role === "OWNER" || user?.role === "MANAGER";
+  const canPermanentlyDelete = user?.role === "OWNER";
 
   const hierarchyQuery = useQuery({
     queryKey: ["category-hierarchy"],
@@ -184,7 +185,7 @@ export default function CategoriesPage() {
                     <div className="mt-0.5 text-xs text-slate-500">{category.subcategories.length} subcategories · {category.brands.length} brands</div>
                   </div>
                   <Button type="button" variant="ghost" size="icon" onClick={() => openEditor("category", undefined, category)} title="Edit category"><Edit3 size={16} /></Button>
-                  <Button type="button" variant="ghost" size="icon" className="text-rose-700" onClick={() => setDeleteTarget({ type: "category", record: category })} title="Delete category"><Trash2 size={16} /></Button>
+                  {canPermanentlyDelete ? <Button type="button" variant="ghost" size="icon" className="text-rose-700" onClick={() => setDeleteTarget({ type: "category", record: category })} title="Delete permanently"><Trash2 size={16} /></Button> : null}
                 </div>
 
                 {isExpanded ? (
@@ -199,7 +200,7 @@ export default function CategoriesPage() {
                           <div key={subcategory.id} className="flex items-center gap-2 px-3 py-2.5 text-sm">
                             <span className="min-w-0 flex-1 truncate">{subcategory.name}</span>
                             <Button type="button" variant="ghost" size="icon" onClick={() => openEditor("subcategory", category.id, subcategory)} title="Edit subcategory"><Edit3 size={14} /></Button>
-                            <Button type="button" variant="ghost" size="icon" className="text-rose-700" onClick={() => setDeleteTarget({ type: "subcategory", record: subcategory })} title="Delete subcategory"><Trash2 size={14} /></Button>
+                            {canPermanentlyDelete ? <Button type="button" variant="ghost" size="icon" className="text-rose-700" onClick={() => setDeleteTarget({ type: "subcategory", record: subcategory })} title="Delete permanently"><Trash2 size={14} /></Button> : null}
                           </div>
                         )) : <div className="px-3 py-4 text-sm text-slate-500">No subcategories</div>}
                       </div>
@@ -216,7 +217,7 @@ export default function CategoriesPage() {
                             <BrandLogoPreview brand={brand} />
                             <span className="min-w-0 flex-1 truncate">{brand.name}</span>
                             <Button type="button" variant="ghost" size="icon" onClick={() => openEditor("brand", category.id, brand)} title="Edit brand"><Edit3 size={14} /></Button>
-                            <Button type="button" variant="ghost" size="icon" className="text-rose-700" onClick={() => setDeleteTarget({ type: "brand", record: brand })} title="Delete brand"><Trash2 size={14} /></Button>
+                            {canPermanentlyDelete ? <Button type="button" variant="ghost" size="icon" className="text-rose-700" onClick={() => setDeleteTarget({ type: "brand", record: brand })} title="Delete permanently"><Trash2 size={14} /></Button> : null}
                           </div>
                         )) : <div className="px-3 py-4 text-sm text-slate-500">No brands</div>}
                       </div>
@@ -241,7 +242,7 @@ export default function CategoriesPage() {
           <div className="flex justify-end gap-2 border-t border-line pt-4"><Button type="button" variant="secondary" onClick={closeEditor}>Cancel</Button><Button type="submit" disabled={saveMutation.isPending}>{saveMutation.isPending ? "Saving" : "Save"}</Button></div>
         </form>
       </Dialog>
-      <ConfirmDialog open={Boolean(deleteTarget)} title={`Delete ${deleteTarget?.type ?? "item"}`} description={`Delete "${deleteTarget?.record.name ?? "this item"}"? Items used by products are protected.`} loading={deleteMutation.isPending} onCancel={() => setDeleteTarget(null)} onConfirm={() => deleteMutation.mutate()} />
+      <ConfirmDialog open={Boolean(deleteTarget)} title={`Delete ${deleteTarget?.type ?? "item"} permanently`} description={`Delete "${deleteTarget?.record.name ?? "this item"}" permanently? This is allowed only when nothing depends on it.`} loading={deleteMutation.isPending} onCancel={() => setDeleteTarget(null)} onConfirm={() => deleteMutation.mutate()} />
     </>
   );
 }

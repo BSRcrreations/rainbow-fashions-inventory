@@ -20,6 +20,7 @@ from app.models.stock_import import StockImportRow
 from app.models.stock_scan import StockScanSessionItem
 from app.models.user import User
 from app.models.enums import PricingType
+from app.models.enums import UserRole
 from app.schemas.product import ProductVariantDetailsCreate, ProductVariantUpdate
 from app.services.product_service import ProductService
 
@@ -38,6 +39,8 @@ class VariantManagementService:
         sku = values.get("internal_sku", variant.internal_sku)
         if not barcode:
             raise bad_request("Barcode is required for every variant.", "VARIANT_BARCODE_REQUIRED")
+        if barcode.casefold() != variant.barcode.casefold() and current_user.role != UserRole.OWNER:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"message": "Only an owner can change a barcode assignment.", "code": "OWNER_BARCODE_MANAGEMENT_REQUIRED"})
         if not sku:
             raise bad_request("SKU is required for every variant.", "VARIANT_SKU_REQUIRED")
         self._validate_unique(variant, barcode, sku, values.get("size", variant.size), values.get("color", variant.color))

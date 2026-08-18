@@ -7,6 +7,7 @@ import BarcodeScannerInput from "../components/BarcodeScannerInput";
 import BarcodeLabelDialog from "../components/BarcodeLabelDialog";
 import VariantManagementDialog from "../components/VariantManagementDialog";
 import ProductBarcodeDetailsDialog from "../components/ProductBarcodeDetailsDialog";
+import BarcodeLookupDialog from "../components/BarcodeLookupDialog";
 import Dialog from "../components/Dialog";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
@@ -155,6 +156,7 @@ export default function ProductsPage() {
   const [managedVariant, setManagedVariant] = useState<{ product: Product; variant: ProductVariant } | null>(null);
   const [newBarcode, setNewBarcode] = useState("");
   const [error, setError] = useState("");
+  const [barcodeLookupOpen, setBarcodeLookupOpen] = useState(false);
 
   useEffect(() => {
     setPage(1);
@@ -628,6 +630,7 @@ export default function ProductsPage() {
               <FileUp size={16} /> Import original stock
               <input className="hidden" type="file" accept=".csv,.xlsx" onChange={(event) => void importFile(event)} />
             </label>
+            {canPermanentlyDelete ? <Button type="button" variant="secondary" size="sm" onClick={() => setBarcodeLookupOpen(true)} title="Find barcode"><Barcode size={16} /> Find Barcode</Button> : null}
             <Button type="button" variant="secondary" size="sm" onClick={() => void exportProducts("xlsx")} title="Export products"><Download size={16} /> Export</Button>
             <Button type="button" size="sm" onClick={beginCreate}><Plus size={16} /> New product</Button>
           </div>
@@ -938,6 +941,7 @@ export default function ProductsPage() {
       <BarcodeLabelDialog open={Boolean(printTarget)} product={printTarget} onClose={() => setPrintTarget(null)} />
       {managedVariant ? <VariantManagementDialog key={managedVariant.variant.id} open product={managedVariant.product} variant={managedVariant.variant} canPermanentlyDelete={canPermanentlyDelete} onClose={() => setManagedVariant(null)} onSaved={invalidateProducts} onEditProduct={() => { const product = managedVariant.product; setManagedVariant(null); beginEdit(product); }} onUseExistingVariant={(variantId) => { const existing = managedVariant.product.variants.find((candidate) => candidate.id === variantId); if (existing) setManagedVariant({ product: managedVariant.product, variant: existing }); else { setManagedVariant(null); toast.error("Reload the product list before selecting the existing variant."); } }} /> : null}
       {newBarcode ? <ProductBarcodeDetailsDialog key={newBarcode} open barcode={newBarcode} onClose={() => setNewBarcode("")} onCreated={async (productId, variantId) => { invalidateProducts(); const product = await api.get<Product>(`/products/${productId}`); const variant = product.variants.find((candidate) => candidate.id === variantId); setNewBarcode(""); if (variant) setManagedVariant({ product, variant }); toast.success("Details added. No stock was created."); }} /> : null}
+      {canPermanentlyDelete ? <BarcodeLookupDialog open={barcodeLookupOpen} products={products} onClose={() => setBarcodeLookupOpen(false)} onManageVariant={(variantId) => { const product = products.find((candidate) => candidate.variants.some((variant) => variant.id === variantId)); const variant = product?.variants.find((candidate) => candidate.id === variantId); if (product && variant) { setManagedVariant({ product, variant }); setBarcodeLookupOpen(false); } }} onChanged={() => { void productsQuery.refetch(); }} /> : null}
       <Dialog open={deleteDialogOpen} title={`Permanently delete ${deleteCheck ? deleteCheck.deletable.length + deleteCheck.blocked.length : selectedCount} product${(deleteCheck ? deleteCheck.deletable.length + deleteCheck.blocked.length : selectedCount) === 1 ? "" : "s"}?`} description="This action cannot be undone." onClose={() => setDeleteDialogOpen(false)} maxWidth="lg">
         {!deleteCheck ? <SkeletonRows rows={3} /> : <div className="space-y-5">
           {deleteCheck.deletable.length ? <section><h3 className="text-sm font-semibold text-foreground">Eligible for permanent deletion</h3><p className="mt-1 text-sm text-muted">The following products and their unused variants will be permanently removed.</p><ul className="mt-3 space-y-1 text-sm text-foreground">{deleteCheck.deletable.map((item) => <li key={item.product_id}>- {item.product_name}</li>)}</ul></section> : null}

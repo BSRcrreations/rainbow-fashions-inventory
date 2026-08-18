@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_manager_or_owner
+from app.api.deps import get_current_user, require_manager_or_owner, require_owner
 from app.database.session import get_db
 from app.models.user import User
 from app.schemas.subcategory import SubCategoryCreate, SubCategoryRead, SubCategoryUpdate
@@ -32,6 +32,6 @@ def update_subcategory(subcategory_id: UUID, payload: SubCategoryUpdate, db: Ses
 
 
 @router.delete("/{subcategory_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_subcategory(subcategory_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
+def delete_subcategory(subcategory_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> Response:
     SubCategoryService(db).delete(subcategory_id, current_user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -176,6 +176,7 @@ class ProductVariantRead(ORMBaseModel):
     is_active: bool
     scan_unit: Literal["PIECE", "PACK"] = "PIECE"
     pieces_per_pack: int = 1
+    barcodes: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

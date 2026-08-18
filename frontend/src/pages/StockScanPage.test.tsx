@@ -37,16 +37,19 @@ describe("confirmed Scan & Add Stock session", () => {
     expect(source).toContain('setSessionId("")');
   });
 
-  it("keeps every draft correction action visible without a wide review table", () => {
+  it("keeps one compact draft editor and a single remove action", () => {
     expect(source).toContain("DRAFT — NO INVENTORY MOVEMENT");
-    expect(source).toContain("Change Product");
-    expect(source).toContain("Change Variant");
-    expect(source).toContain("Change Size");
-    expect(source).toContain("Change Colour");
-    expect(source).toContain("Change Barcode");
-    expect(source).toContain("Change Quantity");
+    expect(source).toContain('>Edit</Button>');
+    expect(source).not.toContain("Change Product");
+    expect(source).not.toContain("Change Variant");
+    expect(source).not.toContain("Change Size");
+    expect(source).not.toContain("Change Colour");
+    expect(source).not.toContain("Change Barcode");
+    expect(source).not.toContain("Change Quantity");
     expect(source).toContain("Remove staged item?");
-    expect(source).toContain("lg:grid-cols");
+    expect(source).toContain("sm:grid-cols-[minmax(0,1fr)_auto]");
+    expect(source).toContain("Save Changes");
+    expect(source).toContain("+ Add Variant");
   });
 
   it("sends draft version and handles shared and existing-variant corrections", () => {

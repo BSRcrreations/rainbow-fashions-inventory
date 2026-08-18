@@ -169,8 +169,8 @@ def create_product(payload: ProductCreate, db: Session = Depends(get_db), curren
 
 
 @router.get("/barcode/{barcode}", response_model=ProductRead)
-def get_product_by_barcode(barcode: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    return ProductService(db).get_by_barcode(barcode)
+def get_product_by_barcode(barcode: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return ProductService(db).get_by_barcode(barcode, current_user.store_id)
 
 
 @router.get("/{product_id}", response_model=ProductRead)

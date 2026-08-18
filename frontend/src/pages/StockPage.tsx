@@ -86,7 +86,7 @@ export default function StockPage() {
       if (brandFilter && product.brand_id !== brandFilter) return false;
       if (sizeFilter && variant.size !== sizeFilter) return false;
       if (!value) return true;
-      return [product.name, product.sku, product.barcode, product.brand?.name, product.category?.name, variant.size, variant.color, variant.barcode, variant.internal_sku, variant.manufacturer_sku].some((field) => field?.toLowerCase().includes(value));
+      return [product.name, product.sku, product.barcode, product.brand?.name, product.category?.name, variant.size, variant.color, variant.barcode, ...(variant.barcodes ?? []), variant.internal_sku, variant.manufacturer_sku].some((field) => field?.toLowerCase().includes(value));
     });
   }, [brandFilter, categoryFilter, search, sizeFilter, variantRows]);
   const totalStock = variantRows.reduce((sum, row) => sum + row.variant.current_stock, 0);

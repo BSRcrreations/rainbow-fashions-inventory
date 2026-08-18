@@ -155,6 +155,42 @@ class StockScanService:
         self.db.add(ProductBarcodeAudit(store_id=store_id, barcode=mapping.barcode, old_product_variant_id=mapping.product_variant_id, new_product_variant_id=mapping.product_variant_id, action="REMOVED", reason="BARCODE_ONLY", changed_by=current_user.id, request_id=request_id))
         self.db.commit()
 
+    def remove_barcode_target(self, barcode_id: UUID, variant_id: UUID, current_user: User, request_id: Optional[str] = None) -> None:
+        """Unlink one size from a shared barcode without touching stock or history."""
+        store_id = self._store_id(current_user)
+        try:
+            mapping = self.db.query(ProductBarcode).filter(
+                ProductBarcode.id == barcode_id, ProductBarcode.store_id == store_id,
+            ).with_for_update().first()
+            if not mapping:
+                raise not_found("Barcode assignment")
+            targets = self._barcode_targets(mapping, store_id, lock=True)
+            target = next((candidate for candidate in targets if candidate.id == variant_id), None)
+            if not target:
+                raise not_found("Barcode variant assignment")
+            remaining = [candidate for candidate in targets if candidate.id != variant_id]
+            self.db.query(ProductBarcodeVariantTarget).filter(
+                ProductBarcodeVariantTarget.product_barcode_id == mapping.id,
+                ProductBarcodeVariantTarget.product_variant_id == variant_id,
+            ).delete(synchronize_session=False)
+            old_variant_id = mapping.product_variant_id
+            if mapping.product_variant_id == variant_id:
+                if remaining:
+                    replacement = remaining[0]
+                    mapping.product_variant_id = replacement.id
+                    mapping.product_id = replacement.product_id
+                else:
+                    mapping.active = False
+            self.db.add(ProductBarcodeAudit(
+                store_id=store_id, barcode=mapping.barcode, old_product_variant_id=old_variant_id,
+                new_product_variant_id=mapping.product_variant_id, action="SHARED_TARGET_REMOVED",
+                reason="OWNER_CONFIRMED", changed_by=current_user.id, request_id=request_id,
+            ))
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
     def transfer_barcode(self, barcode_id: UUID, target_variant_id: UUID, current_user: User, request_id: Optional[str] = None) -> ProductVariantBarcodeRead:
         store_id = self._store_id(current_user)
         mapping = self.db.query(ProductBarcode).filter(ProductBarcode.id == barcode_id, ProductBarcode.store_id == store_id).with_for_update().first()

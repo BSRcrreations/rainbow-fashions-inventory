@@ -111,6 +111,7 @@ export interface ProductVariant {
   is_active: boolean;
   scan_unit?: "PIECE" | "PACK";
   pieces_per_pack?: number;
+  barcodes?: string[];
   created_at: string;
   updated_at: string;
 }

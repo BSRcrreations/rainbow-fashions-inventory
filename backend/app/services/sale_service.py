@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -185,7 +185,7 @@ class SaleService:
         )
         if search and search.strip():
             pattern = f"%{search.strip()}%"
-            query = query.filter(or_(Product.name.ilike(pattern), Product.sku.ilike(pattern), ProductVariant.internal_sku.ilike(pattern), ProductVariant.manufacturer_sku.ilike(pattern), ProductVariant.barcode.ilike(pattern), ProductVariant.size.ilike(pattern), ProductVariant.color.ilike(pattern), ProductVariant.style_code.ilike(pattern), Brand.name.ilike(pattern)))
+            query = query.filter(or_(Product.name.ilike(pattern), Product.sku.ilike(pattern), ProductVariant.internal_sku.ilike(pattern), ProductVariant.manufacturer_sku.ilike(pattern), and_(ProductVariant.barcode.ilike(pattern), ~ProductVariant.barcode_mappings.any(ProductBarcode.barcode.ilike(pattern))), ProductVariant.barcode_mappings.any(and_(ProductBarcode.active.is_(True), ProductBarcode.barcode.ilike(pattern))), ProductVariant.size.ilike(pattern), ProductVariant.color.ilike(pattern), ProductVariant.style_code.ilike(pattern), Brand.name.ilike(pattern)))
         grouped: dict[UUID, SaleCatalogProduct] = {}
         for variant in query.order_by(Product.name, ProductVariant.size, ProductVariant.mrp).all():
             product = variant.product

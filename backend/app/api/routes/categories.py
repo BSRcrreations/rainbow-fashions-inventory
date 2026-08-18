@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_manager_or_owner
+from app.api.deps import get_current_user, require_manager_or_owner, require_owner
 from app.database.session import get_db
 from app.models.user import User
 from app.schemas.category import CategoryCreate, CategoryHierarchyRead, CategoryRead, CategoryUpdate
@@ -41,6 +41,6 @@ def update_category(category_id: UUID, payload: CategoryUpdate, db: Session = De
 
 
 @router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_category(category_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
+def delete_category(category_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> Response:
     CategoryService(db).delete(category_id, current_user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -19,6 +19,7 @@ from app.schemas.stock_scan import (
     BulkBarcodeTransferRequest,
     BulkBarcodeTransferResultRead,
     BarcodeImageResolutionRead,
+    BarcodeLookupRead,
     BarcodeOnboarding,
     BarcodeProductOnboarding,
     ProductVariantBarcodeRead,
@@ -36,6 +37,7 @@ from app.schemas.stock_scan import (
 from app.schemas.stock import StockHistoryRead
 from app.schemas.product import ProductVariantDeleteRequest, ProductVariantDetailsCreate, ProductVariantRead, ProductVariantUpdate
 from app.services.stock_scan_service import StockScanService
+from app.services.barcode_resolution_service import BarcodeResolutionService
 from app.services.variant_management_service import VariantManagementService
 
 
@@ -96,9 +98,21 @@ def onboard_barcode(payload: BarcodeOnboarding, db: Session = Depends(get_db), c
     return StockScanService(db).onboard_barcode(payload, current_user)
 
 
+@barcodes_router.get("/lookup/{barcode}", response_model=BarcodeLookupRead)
+def lookup_barcode(barcode: str, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> BarcodeLookupRead:
+    """Owner-only source of truth used before correcting a barcode assignment."""
+    return BarcodeResolutionService(db).lookup(barcode, current_user)
+
+
 @barcodes_router.delete("/{barcode_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_barcode(barcode_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
+def remove_barcode(barcode_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> Response:
     StockScanService(db).remove_barcode(barcode_id, current_user, request.state.request_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@barcodes_router.delete("/{barcode_id}/targets/{variant_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_barcode_target(barcode_id: UUID, variant_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> Response:
+    StockScanService(db).remove_barcode_target(barcode_id, variant_id, current_user, request.state.request_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

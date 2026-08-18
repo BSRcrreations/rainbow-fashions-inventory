@@ -82,6 +82,28 @@ class SharedBarcodeTargetRead(BaseModel):
     current_stock: int
 
 
+class BarcodeLookupAssignmentRead(BaseModel):
+    """A human-facing barcode assignment; never exposes persistence internals."""
+
+    barcode_id: UUID
+    product_id: UUID
+    variant_id: UUID
+    product_name: str
+    brand_name: Optional[str] = None
+    category_name: Optional[str] = None
+    size: Optional[str] = None
+    color: Optional[str] = None
+    current_stock: int
+    active: bool
+
+
+class BarcodeLookupRead(BaseModel):
+    barcode: str
+    status: Literal["AVAILABLE", "UNIQUE", "SHARED", "CONFLICT", "STALE"]
+    message: str
+    assignments: list[BarcodeLookupAssignmentRead] = Field(default_factory=list)
+
+
 class StockScanItemUpdate(BaseModel):
     """A safe correction to an unconfirmed stock draft row.
 

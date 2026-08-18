@@ -66,6 +66,12 @@ class ProductVariant(Base):
     def pieces_per_pack(self) -> int:
         return self.primary_barcode_mapping.base_unit_conversion if self.primary_barcode_mapping else 1
 
+    @property
+    def barcodes(self) -> list[str]:
+        """All active scan values, including valid shared manufacturer barcodes."""
+        values = [mapping.barcode for mapping in self.barcode_mappings if mapping.active]
+        return list(dict.fromkeys(values))
+
 
 class InventoryCostLot(Base):
     __tablename__ = "inventory_cost_lots"
