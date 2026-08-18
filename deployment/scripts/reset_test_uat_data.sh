@@ -72,8 +72,8 @@ PY
 psql_in_container() {
   docker exec -i "$postgres_id" sh -ceu '
     export PGPASSWORD="${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
-    exec psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
-  '
+    exec psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$@"
+  ' sh "$@"
 }
 
 owner_email='uat-owner@rainbow-fashions.com'
