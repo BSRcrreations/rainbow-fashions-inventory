@@ -204,6 +204,17 @@ verify_test:
     - curl --fail --silent --show-error --max-time 15 https://test.rainbow-fashions.in/health/ready
     - curl --fail --silent --show-error --max-time 15 https://test.rainbow-fashions.in/version | grep -Fq "\"git_sha\":\"$CI_COMMIT_SHA\""
 
+reset_test_uat_data:
+  stage: verify
+  extends: .test_deployment
+  needs: [verify_test]
+  when: manual
+  allow_failure: false
+  manual_confirmation: "Permanently delete TEST/UAT business data only after the guarded TEST backup and restore verification pass?"
+  script:
+    - export DEPLOY_ENVIRONMENT=test DEPLOY_PATH=/opt/rainbow-fashions-test COMPOSE_PROJECT_NAME=rainbow_test BACKEND_ENV_FILE=/opt/rainbow-fashions-test/shared/backend.env COMPOSE_OVERRIDE=docker-compose.test.yml PUBLIC_DEPLOY_URL=https://test.rainbow-fashions.in
+    - bash /opt/rainbow-fashions-test/current/deployment/scripts/reset_test_uat_data.sh
+
 deploy_production:
   stage: deploy
   extends: .production_deployment
