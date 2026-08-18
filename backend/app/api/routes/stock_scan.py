@@ -134,7 +134,7 @@ def transfer_barcode(barcode_id: UUID, payload: BarcodeTransferRequest, request:
     if not payload.confirm_transfer:
         from app.core.exceptions import bad_request
         raise bad_request("Confirm the barcode transfer before continuing", "BARCODE_TRANSFER_CONFIRMATION_REQUIRED")
-    return StockScanService(db).transfer_barcode(barcode_id, payload.target_variant_id, current_user, request.state.request_id)
+    return StockScanService(db).transfer_barcode(barcode_id, payload.source_variant_id, payload.target_variant_id, current_user, request.state.request_id)
 
 
 @barcodes_router.post("/bulk-transfer/preview", response_model=BulkBarcodeTransferPreviewRead)

@@ -80,6 +80,8 @@ class SharedBarcodeTargetRead(BaseModel):
     size: Optional[str] = None
     color: Optional[str] = None
     current_stock: int
+    mrp: Optional[Decimal] = None
+    selling_price: Optional[Decimal] = None
 
 
 class BarcodeLookupAssignmentRead(BaseModel):
@@ -99,7 +101,7 @@ class BarcodeLookupAssignmentRead(BaseModel):
 
 class BarcodeLookupRead(BaseModel):
     barcode: str
-    status: Literal["AVAILABLE", "UNIQUE", "SHARED", "CONFLICT", "STALE"]
+    status: Literal["AVAILABLE", "UNIQUE", "MULTIPLE", "STALE"]
     message: str
     assignments: list[BarcodeLookupAssignmentRead] = Field(default_factory=list)
 
@@ -165,6 +167,7 @@ class BarcodeAssignment(BaseModel):
 
 
 class BarcodeTransferRequest(BaseModel):
+    source_variant_id: Optional[UUID] = None
     target_variant_id: UUID
     confirm_transfer: bool = False
 

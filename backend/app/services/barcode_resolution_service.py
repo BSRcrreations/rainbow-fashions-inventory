@@ -42,12 +42,8 @@ class BarcodeResolutionService:
                 return BarcodeLookupRead(barcode=normalized, status="STALE", message="Old/inactive barcode assignment detected", assignments=[])
             if any(not assignment.active for assignment in assignments):
                 return BarcodeLookupRead(barcode=normalized, status="STALE", message="Old/inactive barcode assignment detected", assignments=assignments)
-            product_ids = {assignment.product_id for assignment in assignments}
-            colours = {(assignment.color or "").casefold() for assignment in assignments}
-            if len(product_ids) != 1 or len(colours) != 1:
-                return BarcodeLookupRead(barcode=normalized, status="CONFLICT", message="Barcode is assigned to unrelated active variants", assignments=assignments)
-            status = "SHARED" if len(assignments) > 1 else "UNIQUE"
-            return BarcodeLookupRead(barcode=normalized, status=status, message="Shared barcode assignment" if status == "SHARED" else "Active barcode assignment", assignments=assignments)
+            status = "MULTIPLE" if len(assignments) > 1 else "UNIQUE"
+            return BarcodeLookupRead(barcode=normalized, status=status, message="Multiple exact variants use this manufacturer barcode" if status == "MULTIPLE" else "Active barcode assignment", assignments=assignments)
 
         legacy = self._legacy_assignments(normalized, store_id)
         if not legacy:
@@ -55,12 +51,8 @@ class BarcodeResolutionService:
         active = [assignment for assignment in legacy if assignment.active]
         if not active:
             return BarcodeLookupRead(barcode=normalized, status="STALE", message="Old/inactive barcode assignment detected", assignments=legacy)
-        product_ids = {assignment.product_id for assignment in active}
-        colours = {(assignment.color or "").casefold() for assignment in active}
-        if len(product_ids) != 1 or len(colours) != 1:
-            return BarcodeLookupRead(barcode=normalized, status="CONFLICT", message="Barcode is assigned to unrelated active variants", assignments=active)
-        status = "SHARED" if len(active) > 1 else "UNIQUE"
-        return BarcodeLookupRead(barcode=normalized, status=status, message="Legacy barcode assignment" if status == "UNIQUE" else "Shared barcode assignment", assignments=active)
+        status = "MULTIPLE" if len(active) > 1 else "UNIQUE"
+        return BarcodeLookupRead(barcode=normalized, status=status, message="Legacy barcode assignment" if status == "UNIQUE" else "Multiple exact variants use this manufacturer barcode", assignments=active)
 
     def _mapping_assignments(self, mapping: ProductBarcode, store_id: UUID) -> list[BarcodeLookupAssignmentRead]:
         ids = [variant_id for (variant_id,) in self.db.query(ProductBarcodeVariantTarget.product_variant_id).filter(

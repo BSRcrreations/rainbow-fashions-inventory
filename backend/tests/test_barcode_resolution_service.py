@@ -36,7 +36,7 @@ def test_shared_mapping_reports_all_sizes():
     subject.db.query = lambda *_: SimpleNamespace(filter=lambda *_: SimpleNamespace(first=lambda: mapping))
     subject._mapping_assignments = lambda *_: [assignment(product_id=product_id), assignment(product_id=product_id)]
 
-    assert subject.lookup_for_store("8905072571989", uuid4()).status == "SHARED"
+    assert subject.lookup_for_store("8905072571989", uuid4()).status == "MULTIPLE"
 
 
 def test_inactive_mapping_releases_the_barcode():
@@ -57,10 +57,10 @@ def test_missing_mapping_with_inactive_legacy_variant_is_stale():
     assert subject.lookup_for_store("8905072571989", uuid4()).status == "STALE"
 
 
-def test_unrelated_active_variants_are_a_conflict():
+def test_unrelated_active_variants_are_multiple_valid_targets():
     subject = service()
     mapping = SimpleNamespace(active=True)
     subject.db.query = lambda *_: SimpleNamespace(filter=lambda *_: SimpleNamespace(first=lambda: mapping))
     subject._mapping_assignments = lambda *_: [assignment(product_id=uuid4()), assignment(product_id=uuid4())]
 
-    assert subject.lookup_for_store("8905072571989", uuid4()).status == "CONFLICT"
+    assert subject.lookup_for_store("8905072571989", uuid4()).status == "MULTIPLE"

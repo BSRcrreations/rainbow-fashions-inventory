@@ -212,12 +212,12 @@ def test_shared_barcode_requires_confirmation_before_adding_a_new_size_target():
         service.stage_selected_variant(session.id, VariantStockStageRequest(product_variant_id=target.id, barcode=mapping.barcode, quantity=1), user(store_id))
 
     assert error.value.detail["code"] == "SHARED_BARCODE_CONFIRMATION_REQUIRED"
-    assert error.value.detail["existing_sizes"] == ["S"]
+    assert error.value.detail["targets"][0]["size"] == "S"
     assert target.current_stock == 9
     db.commit.assert_not_called()
 
 
-def test_unrelated_barcode_is_blocked_without_staging_inventory():
+def test_cross_product_barcode_requires_explicit_mapping_confirmation_without_staging_inventory():
     service, db, session, store_id = configured_service()
     existing = active_variant(store_id); existing.product.name = "Sports Bra"; existing.product.brand = SimpleNamespace(name="Within"); existing.size = "36B"; existing.color = "White"
     target = active_variant(store_id); target.product.name = "PR Full"; target.size = "M"; target.color = "Black"
@@ -230,8 +230,8 @@ def test_unrelated_barcode_is_blocked_without_staging_inventory():
     with pytest.raises(HTTPException) as error:
         service.stage_selected_variant(session.id, VariantStockStageRequest(product_variant_id=target.id, barcode=mapping.barcode, quantity=1), user(store_id))
 
-    assert error.value.detail["code"] == "BARCODE_PRODUCT_CONFLICT"
-    assert error.value.detail["existing"]["product_name"] == "Sports Bra"
+    assert error.value.detail["code"] == "SHARED_BARCODE_CONFIRMATION_REQUIRED"
+    assert error.value.detail["targets"][0]["product_name"] == "Sports Bra"
     assert target.current_stock == 9
     db.commit.assert_not_called()
 
@@ -365,16 +365,18 @@ def test_existing_variant_reuses_its_current_mapping_and_adds_the_scan():
     assert not any(isinstance(item.args[0], ProductBarcode) for item in db.add.call_args_list)
 
 
-def test_existing_variant_rejects_a_barcode_mapped_to_a_different_variant():
+def test_existing_variant_adds_a_target_for_a_barcode_mapped_to_a_different_variant():
     service, _, _, store_id = configured_service()
     variant = active_variant(store_id)
+    mapping = SimpleNamespace(id=uuid4(), barcode="0012345678905", product_variant_id=uuid4(), active=True)
     service._variant_for_store = MagicMock(return_value=variant)
-    service._barcode_mapping = MagicMock(return_value=SimpleNamespace(product_variant_id=uuid4(), active=True))
+    service._barcode_mapping = MagicMock(return_value=mapping)
+    service._ensure_barcode_target = MagicMock()
+    service._add_mapping_to_session = MagicMock()
 
-    with pytest.raises(HTTPException, match="already assigned to another product variant") as error:
-        service.onboard_product(existing_payload(product_variant_id=variant.id), user(store_id))
+    service.onboard_product(existing_payload(product_variant_id=variant.id), user(store_id))
 
-    assert error.value.status_code == 409
+    service._ensure_barcode_target.assert_called_once()
 
 
 def test_existing_variant_rejects_a_confirmed_session_without_mutating_it():
