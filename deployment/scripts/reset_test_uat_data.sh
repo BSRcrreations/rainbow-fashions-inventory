@@ -23,13 +23,16 @@ fail() { printf 'TEST/UAT reset: %s\n' "$1" >&2; exit 1; }
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${script_dir}/verify_deployment_context.sh"
 
-# The protected file is intentionally sourced only in this process.  Do not
-# print it or enable shell tracing in this script.
-# shellcheck source=/dev/null
-source "$BACKEND_ENV_FILE"
-[[ "${APP_ENV:-}" == "staging" ]] || fail 'APP_ENV is not staging'
-[[ "${POSTGRES_DB:-}" == "rainbow_test_db" ]] || fail 'database is not rainbow_test_db'
-[[ -n "${POSTGRES_USER:-}" && -n "${POSTGRES_PASSWORD:-}" ]] || fail 'PostgreSQL credentials are incomplete'
+# This is an env_file, not a shell script: values may legally contain spaces
+# or shell metacharacters. Read only the two non-secret values needed for the
+# guard; PostgreSQL credentials stay inside its running TEST container.
+env_value() {
+  sed -n -E "s/^[[:space:]]*$1=(.*)$/\\1/p" "$BACKEND_ENV_FILE" | head -n 1
+}
+test_app_env="$(env_value APP_ENV)"
+test_database="$(env_value POSTGRES_DB)"
+[[ "$test_app_env" == "staging" ]] || fail 'APP_ENV is not staging'
+[[ "$test_database" == "rainbow_test_db" ]] || fail 'database is not rainbow_test_db'
 
 current_dir="$DEPLOY_PATH/current"
 [[ -d "$current_dir" ]] || fail 'current TEST release is missing'
@@ -43,13 +46,20 @@ postgres_volume="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/va
 docker volume inspect rainbow_test_postgres_data >/dev/null || fail 'expected TEST PostgreSQL volume is unavailable'
 
 for forbidden in inventory_db current_postgres_data rainbow_prod /opt/rainbow-fashions-prod; do
-  [[ "$DEPLOY_PATH $COMPOSE_PROJECT_NAME $POSTGRES_DB $postgres_volume" != *"$forbidden"* ]] || fail 'a production identifier was detected in the target'
+  [[ "$DEPLOY_PATH $COMPOSE_PROJECT_NAME $test_database $postgres_volume" != *"$forbidden"* ]] || fail 'a production identifier was detected in the target'
 done
 
 version_payload="$(mktemp)"
 login_payload="$(mktemp)"
 lookup_payload="$(mktemp)"
-trap 'rm -f "$version_payload" "$login_payload" "$lookup_payload"' EXIT
+restore_container=''
+restore_volume=''
+cleanup() {
+  rm -f "$version_payload" "$login_payload" "$lookup_payload"
+  [[ -z "$restore_container" ]] || docker rm -f "$restore_container" >/dev/null 2>&1 || true
+  [[ -z "$restore_volume" ]] || docker volume rm "$restore_volume" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
 curl --fail --silent --show-error --max-time 15 "$PUBLIC_DEPLOY_URL/health/ready" >/dev/null
 curl --fail --silent --show-error --max-time 15 "$PUBLIC_DEPLOY_URL/version" -o "$version_payload"
 python3 - "$version_payload" <<'PY'
@@ -109,17 +119,47 @@ SELECT concat_ws(E'\\n',
 pre_counts="$(psql_in_container -Atqc "$counts_sql")"
 printf 'TEST/UAT reset pre-counts:\n%s\n' "$pre_counts"
 
-# Reuse the hardened backup and isolated restore drill.  Both tools only see
-# the TEST Compose project and write below the TEST deployment root.
-export RAINBOW_APP_ROOT="$DEPLOY_PATH"
-export RAINBOW_CURRENT_DIR="$current_dir"
-export RAINBOW_SHARED_DIR="$DEPLOY_PATH/shared"
-export RAINBOW_BACKEND_ENV="$BACKEND_ENV_FILE"
-export RAINBOW_BACKUP_ROOT="$DEPLOY_PATH/backups"
-export RAINBOW_BACKUP_STATUS_DIR="$DEPLOY_PATH/backups/status"
-export RAINBOW_COMPOSE_PROJECT=rainbow_test
-"${script_dir}/backup_postgres.sh"
-"${script_dir}/test_database_restore.sh"
+# Create a fresh custom-format backup without reading credentials onto the
+# runner. Validate its checksum and restore it into a network-isolated,
+# disposable PostgreSQL container before the transaction below is allowed.
+backup_timestamp="$(date -u '+%Y%m%d_%H%M%S')"
+backup_dir="$DEPLOY_PATH/backups/database/$(date -u '+%Y/%m/%d')"
+backup_file="$backup_dir/rainbow_test_uat_reset_${backup_timestamp}.dump"
+backup_partial="${backup_file}.partial"
+backup_checksum="${backup_file}.sha256"
+postgres_image="$(docker inspect -f '{{.Config.Image}}' "$postgres_id")"
+install -d -m 700 "$backup_dir"
+umask 077
+docker exec -i "$postgres_id" sh -ceu '
+  export PGPASSWORD="${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+  exec pg_dump -Fc -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+' > "$backup_partial"
+[[ -s "$backup_partial" ]] || fail 'pg_dump produced an empty backup'
+docker run --rm --network none -v "$backup_dir:/backup:ro" "$postgres_image" \
+  pg_restore --list "/backup/$(basename "$backup_partial")" >/dev/null
+mv "$backup_partial" "$backup_file"
+backup_sha256="$(sha256sum "$backup_file" | awk '{print $1}')"
+printf '%s  %s\n' "$backup_sha256" "$backup_file" > "$backup_checksum"
+sha256sum --check "$backup_checksum" >/dev/null
+
+restore_container="rainbow-test-uat-reset-restore-${backup_timestamp}"
+restore_volume="rainbow_test_uat_reset_restore_${backup_timestamp}"
+restore_password="$(openssl rand -hex 24)"
+docker run --detach --name "$restore_container" --network none \
+  --mount "type=volume,source=${restore_volume},target=/var/lib/postgresql/data" \
+  --env POSTGRES_DB=rainbow_reset_restore --env POSTGRES_USER=rainbow_restore \
+  --env "POSTGRES_PASSWORD=${restore_password}" "$postgres_image" >/dev/null
+for _ in $(seq 1 30); do
+  if docker exec "$restore_container" pg_isready -U rainbow_restore -d rainbow_reset_restore >/dev/null 2>&1; then break; fi
+  sleep 1
+done
+docker exec "$restore_container" pg_isready -U rainbow_restore -d rainbow_reset_restore >/dev/null
+docker run --rm --network none -v "$backup_dir:/backup:ro" "$postgres_image" \
+  pg_restore --no-owner --no-acl --exit-on-error --file=- "/backup/$(basename "$backup_file")" |
+  docker exec -i "$restore_container" sh -ceu 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null
+restore_alembic="$(docker exec "$restore_container" sh -ceu 'export PGPASSWORD="$POSTGRES_PASSWORD"; psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT version_num FROM alembic_version LIMIT 1"')"
+[[ -n "$restore_alembic" ]] || fail 'isolated restore did not contain an Alembic version'
+printf 'TEST/UAT reset backup and isolated restore verification: PASS\n'
 
 # Reject schema drift rather than guessing at an incomplete dependency order.
 # All listed tables are UAT business/catalogue, stock, barcode, document, or
