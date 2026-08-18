@@ -78,6 +78,51 @@ psql_in_container() {
 
 owner_email='uat-owner@rainbow-fashions.com'
 owner_check="$(psql_in_container -Atqc "SELECT role::text || ':' || is_active::text FROM users WHERE lower(email) = lower('$owner_email')")"
+if [[ -z "$owner_check" ]]; then
+  # The account is a required TEST system record. Provision it only when it is
+  # missing, inside the TEST backend container, with the application's bcrypt
+  # implementation and the protected TEST password. No plaintext is stored or
+  # printed; an existing account is never reset by this maintenance job.
+  backend_id="$("${compose[@]}" ps -q backend)"
+  [[ -n "$backend_id" ]] || fail 'TEST backend container is not running'
+  [[ "$(docker inspect -f '{{.Name}}' "$backend_id")" == "/rainbow_test-backend-1" ]] || fail 'backend container name mismatch'
+  docker exec -i --env TEST_OWNER_PASSWORD "$backend_id" python - <<'PY'
+import os
+
+from app.core.security import hash_password
+from app.database.session import SessionLocal
+from app.models.enums import UserRole
+from app.models.store import Store
+from app.models.user import User
+
+email = "uat-owner@rainbow-fashions.com"
+password = os.environ["TEST_OWNER_PASSWORD"]
+db = SessionLocal()
+try:
+    existing = db.query(User).filter(User.email.ilike(email)).first()
+    if existing is not None:
+        raise RuntimeError("required UAT Owner account changed while it was being provisioned")
+    stores = db.query(Store).filter(Store.is_active.is_(True)).order_by(Store.created_at).all()
+    if len(stores) != 1:
+        raise RuntimeError("required TEST store identity is ambiguous")
+    db.add(User(
+        store_id=stores[0].id,
+        full_name="UAT Owner",
+        email=email,
+        password_hash=hash_password(password),
+        role=UserRole.OWNER,
+        is_active=True,
+    ))
+    db.commit()
+except Exception:
+    db.rollback()
+    raise
+finally:
+    db.close()
+PY
+  owner_check="$(psql_in_container -Atqc "SELECT role::text || ':' || is_active::text FROM users WHERE lower(email) = lower('$owner_email')")"
+  printf 'TEST/UAT reset: required UAT Owner account created\n'
+fi
 [[ "$owner_check" == "OWNER:true" ]] || fail 'required active UAT Owner account is missing or not an Owner'
 
 # Authenticate before deleting so a stale/misconfigured protected password
