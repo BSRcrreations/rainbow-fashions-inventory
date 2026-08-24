@@ -26,6 +26,7 @@ from app.models.stock_import import StockImport, StockImportBackup, StockImportR
 from app.models.destructive_action import DeletePasswordAttempt, DestructiveActionAudit, DestructiveIdempotencyRecord, StoreSecuritySetting
 from app.models.opening_stock_import import OpeningStockImport, OpeningStockImportAudit, OpeningStockImportError, OpeningStockImportRow
 from app.models.inventory_reconciliation import InventoryReconciliationAudit
+from app.models.catalog_migration_import import CatalogMigrationImport
 
 __all__ = [
     "Brand",
@@ -76,4 +77,5 @@ __all__ = [
     "OpeningStockImportError",
     "OpeningStockImportAudit",
     "InventoryReconciliationAudit",
+    "CatalogMigrationImport",
 ]

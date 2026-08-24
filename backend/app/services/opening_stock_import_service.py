@@ -202,6 +202,47 @@ class OpeningStockImportService:
             self.db.rollback()
             raise
 
+    def post_migration_opening_stock(
+        self,
+        *,
+        product: Product,
+        variant: ProductVariant,
+        store_id: UUID,
+        quantity: int,
+        unit_cost: Decimal,
+        current_user: User,
+        reference: str,
+        request_id: str,
+    ) -> tuple[InventoryCostLot, StockHistory]:
+        """Post one vetted migration quantity using the normal inventory evidence.
+
+        The caller owns the surrounding transaction and must have performed the
+        package, owner, environment, and idempotency checks.  This deliberately
+        creates no purchase or TEST ledger data.
+        """
+        if quantity < 0:
+            raise ValueError("Opening-stock quantity cannot be negative")
+        if quantity == 0:
+            raise ValueError("Zero opening-stock quantity does not create a movement")
+        before = variant.current_stock
+        variant.current_stock += quantity
+        variant.last_purchase_cost = unit_cost
+        variant.average_cost = ((variant.average_cost * before) + (unit_cost * quantity)) / (before + quantity) if before else unit_cost
+        product.current_stock += quantity
+        product.purchase_price = unit_cost
+        inventory = self.db.query(ProductInventory).filter_by(product_id=product.id, store_id=store_id).with_for_update().first()
+        if not inventory:
+            inventory = ProductInventory(product_id=product.id, store_id=store_id, current_stock=0)
+            self.db.add(inventory)
+        inventory.current_stock += quantity
+        lot = InventoryCostLot(store_id=store_id, product_variant_id=variant.id, received_quantity=quantity, remaining_quantity=quantity, unit_purchase_cost=unit_cost, effective_unit_cost=unit_cost, lot_reference=reference)
+        self.db.add(lot)
+        self.db.flush()
+        movement = StockHistory(product_id=product.id, product_variant_id=variant.id, purchase_cost_lot_id=lot.id, unit_cost=unit_cost, store_id=store_id, movement_type=StockMovementType.OPENING_STOCK, qty=quantity, before_stock=before, after_stock=variant.current_stock, reference=reference, request_id=request_id, created_by=current_user.id)
+        self.db.add(movement)
+        self.db.flush()
+        return lot, movement
+
     def _parse(self, filename: str, content: bytes) -> tuple[list[dict[str, str]], list[tuple[str, str]]]:
         try:
             if filename.lower().endswith(".csv"):
