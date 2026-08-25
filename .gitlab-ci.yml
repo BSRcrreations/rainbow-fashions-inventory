@@ -16,6 +16,10 @@ variables:
 
 default:
   interruptible: true
+  # Runner #13 must not start DinD for ordinary test/security jobs.  The
+  # runner configuration may provide a Docker service default, so make the
+  # no-service policy explicit and opt in only where Docker is required.
+  services: []
 
 .validation_rules:
   rules:
@@ -132,6 +136,12 @@ docker_compose_build:
   image: docker:27-cli
   tags: [rainbow-ci]
   extends: .validation_rules
+  services:
+    - name: docker:27-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
   before_script:
     - docker version
     - docker compose version
