@@ -11,6 +11,10 @@ from app.models.enums import StockMovementType
 from app.schemas.common import ORMBaseModel
 
 
+class InventoryValuationRead(BaseModel):
+    inventory_value: Decimal
+
+
 class StockAdjustmentCreate(BaseModel):
     product_id: Optional[UUID] = None
     product_variant_id: Optional[UUID] = None

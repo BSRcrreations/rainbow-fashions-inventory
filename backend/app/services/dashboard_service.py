@@ -14,6 +14,7 @@ from app.models.purchase import Purchase
 from app.models.stock_history import StockHistory
 from app.models.user import User
 from app.schemas.dashboard import DashboardSummary, LowStockProduct, TodaySaleItem, TodaySalesReport
+from app.services.inventory_valuation_service import InventoryValuationService
 
 
 class DashboardService:
@@ -23,7 +24,11 @@ class DashboardService:
     def summary(self, current_user: User | None = None) -> DashboardSummary:
         total_products = self.db.query(func.count(Product.id)).scalar() or 0
         total_stock = self.db.query(func.coalesce(func.sum(Product.current_stock), 0)).scalar() or 0
-        inventory_value = self.db.query(func.coalesce(func.sum(Product.current_stock * Product.purchase_price), 0)).scalar() or Decimal("0")
+        inventory_value = (
+            InventoryValuationService(self.db).current_value(current_user.store_id)
+            if current_user and current_user.store_id
+            else Decimal("0")
+        )
         low_stock_products = (
             self.db.query(Product)
             .options(joinedload(Product.brand), joinedload(Product.category))

@@ -31,6 +31,7 @@ from app.schemas.stock import (
     VariantCorrectionMoveRequest,
 )
 from app.services.deletion_security_service import DeletePasswordConfigurationError, DeletePasswordInvalidError, verify_delete_password
+from app.services.inventory_valuation_service import InventoryValuationService
 
 
 class StockService:
@@ -49,6 +50,10 @@ class StockService:
         to_date: Optional[datetime] = None,
     ) -> list[StockHistory]:
         return self.repo.list_recent(skip, limit, product_id, movement_type, store_id, from_date, to_date)
+
+    def inventory_valuation(self, current_user: User) -> dict[str, Decimal]:
+        """Return the same active-cost-lot valuation used by the Dashboard."""
+        return {"inventory_value": InventoryValuationService(self.db).current_value(self._store_id(current_user))}
 
     def adjust(self, payload: StockAdjustmentCreate, current_user: User) -> StockHistory:
         if not current_user.store_id:

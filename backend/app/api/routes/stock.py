@@ -17,6 +17,7 @@ from app.schemas.stock import (
     StockAdjustmentCreate,
     StockCorrectionCreate,
     StockHistoryRead,
+    InventoryValuationRead,
     StockResetConfirmRequest,
     StockResetPreviewRequest,
     StockResetPreviewResponse,
@@ -29,6 +30,11 @@ from app.services.stock_service import StockService
 
 
 router = APIRouter(prefix="/stock", tags=["Stock"])
+
+
+@router.get("/valuation", response_model=InventoryValuationRead)
+def inventory_valuation(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+    return StockService(db).inventory_valuation(current_user)
 
 
 @router.get("/history/export")

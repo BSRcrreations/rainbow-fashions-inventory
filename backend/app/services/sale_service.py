@@ -31,6 +31,7 @@ from app.models.user import User
 from app.repositories.sale import SaleRepository
 from app.schemas.sale import SaleCatalogProduct, SaleCatalogVariant, SaleCreate, SaleListResponse, SaleReturnCreate, SaleUpdate, SaleVoidRequest, SalesDashboardResponse, SalesMetric
 from app.services.discount_calculator import money
+from app.services.inventory_valuation_service import InventoryValuationService
 from app.services.sale_discount import SaleDiscountError, calculate_sale_discount
 
 
@@ -464,12 +465,7 @@ class SaleService:
             month=self._metric(month_start, today, store_id),
             total_revenue=self.db.query(func.coalesce(func.sum(Sale.total_amount), 0)).filter(Sale.store_id == store_id, Sale.status != SaleStatus.VOIDED).scalar() or Decimal("0"),
             collection=self._collection(selected_start, selected_end, store_id),
-            inventory_value=(
-                self.db.query(func.coalesce(func.sum(Product.purchase_price * Product.current_stock), 0))
-                .join(ProductInventory, ProductInventory.product_id == Product.id).filter(Product.is_active.is_(True), ProductInventory.store_id == store_id)
-                .scalar()
-                or Decimal("0")
-            ),
+            inventory_value=InventoryValuationService(self.db).current_value(store_id),
             total_stock=(
                 self.db.query(func.coalesce(func.sum(ProductInventory.current_stock), 0))
                 .join(Product, ProductInventory.product_id == Product.id).filter(Product.is_active.is_(True), ProductInventory.store_id == store_id)

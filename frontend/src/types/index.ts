@@ -375,6 +375,10 @@ export interface SalesDashboard {
   out_of_stock: Array<{ id: string; name: string; current_stock: number; minimum_stock: number }>;
 }
 
+export interface InventoryValuation {
+  inventory_value: string;
+}
+
 export interface PaginatedProducts {
   items: Product[];
   meta: {

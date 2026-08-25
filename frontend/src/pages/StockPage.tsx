@@ -13,7 +13,7 @@ import StatusBadge from "../components/StatusBadge";
 import { useToast } from "../components/ToastProvider";
 import { Button } from "../components/ui/button";
 import { useAuth } from "../hooks/useAuth";
-import type { Product, ProductVariant, StockHistory, StockMovementType, StockResetPreviewResponse, StockResetResponse, StockResetScope } from "../types";
+import type { InventoryValuation, Product, ProductVariant, StockHistory, StockMovementType, StockResetPreviewResponse, StockResetResponse, StockResetScope } from "../types";
 import { money, shortDate } from "../utils/format";
 
 const RESET_CONFIRMATION = "This will set the selected existing stock quantities to zero. Products, variants and barcodes will remain available.";
@@ -69,6 +69,7 @@ export default function StockPage() {
   const [resetPreview, setResetPreview] = useState<StockResetPreviewResponse | null>(null);
 
   const productsQuery = useQuery({ queryKey: ["inventory-products"], queryFn: () => api.get<Product[]>("/products?limit=500") });
+  const valuationQuery = useQuery({ queryKey: ["inventory-valuation"], queryFn: () => api.get<InventoryValuation>("/stock/valuation") });
   const params = new URLSearchParams();
   if (productId) params.set("product_id", productId);
   if (movementType) params.set("movement_type", movementType);
@@ -90,7 +91,7 @@ export default function StockPage() {
     });
   }, [brandFilter, categoryFilter, search, sizeFilter, variantRows]);
   const totalStock = variantRows.reduce((sum, row) => sum + row.variant.current_stock, 0);
-  const inventoryValue = variantRows.reduce((sum, row) => sum + Number(row.variant.average_cost || row.variant.last_purchase_cost || row.product.purchase_price) * row.variant.current_stock, 0);
+  const inventoryValue = Number(valuationQuery.data?.inventory_value ?? 0);
   const lowStock = variantRows.filter((row) => row.variant.current_stock > 0 && row.product.minimum_stock > 0 && row.variant.current_stock <= row.product.minimum_stock).length;
   const outOfStock = variantRows.filter((row) => row.variant.current_stock === 0).length;
   const canCorrect = user?.role === "OWNER" || user?.role === "MANAGER";
@@ -122,11 +123,11 @@ export default function StockPage() {
     onSuccess: (result) => {
       toast.success(result.already_completed ? "Reset was already completed for this request" : `Reset ${result.total_pieces} pieces to zero`);
       setResetOpen(false); setResetPreview(null); setSelectedVariantIds(new Set()); setOwnerPassword(""); setResetConfirmed(false);
-      for (const key of ["inventory-products", "stock-history", "products", "pos-variant-catalog", "sales-dashboard"]) void queryClient.invalidateQueries({ queryKey: [key] });
+      for (const key of ["inventory-products", "inventory-valuation", "stock-history", "products", "pos-variant-catalog", "sales-dashboard"]) void queryClient.invalidateQueries({ queryKey: [key] });
     },
     onError: (cause) => toast.error(cause instanceof Error ? cause.message : "Unable to reset stock"),
   });
-  const correctionMutation = useMutation({ mutationFn: () => { if (!correction) throw new Error("Select a stock transaction"); const quantity = Number(correctQuantity); if (!Number.isInteger(quantity) || quantity < 0) throw new Error("Correct quantity must be zero or more"); if (correctionReason === "OTHER" && !correctionNotes.trim()) throw new Error("Notes are required when reason is Other"); return api.post<StockHistory>(`/stock/transactions/${correction.id}/correct`, { correct_quantity: quantity, reason: correctionReason, notes: correctionNotes || null }); }, onSuccess: () => { toast.success("Original record preserved. The stock correction was recorded."); setCorrection(null); void queryClient.invalidateQueries({ queryKey: ["stock-history"] }); void queryClient.invalidateQueries({ queryKey: ["inventory-products"] }); }, onError: (cause) => toast.error(cause instanceof Error ? cause.message : "Unable to correct stock entry") });
+  const correctionMutation = useMutation({ mutationFn: () => { if (!correction) throw new Error("Select a stock transaction"); const quantity = Number(correctQuantity); if (!Number.isInteger(quantity) || quantity < 0) throw new Error("Correct quantity must be zero or more"); if (correctionReason === "OTHER" && !correctionNotes.trim()) throw new Error("Notes are required when reason is Other"); return api.post<StockHistory>(`/stock/transactions/${correction.id}/correct`, { correct_quantity: quantity, reason: correctionReason, notes: correctionNotes || null }); }, onSuccess: () => { toast.success("Original record preserved. The stock correction was recorded."); setCorrection(null); void queryClient.invalidateQueries({ queryKey: ["stock-history"] }); void queryClient.invalidateQueries({ queryKey: ["inventory-products"] }); void queryClient.invalidateQueries({ queryKey: ["inventory-valuation"] }); }, onError: (cause) => toast.error(cause instanceof Error ? cause.message : "Unable to correct stock entry") });
 
   function toggleVariant(id: string, checked: boolean) { setSelectedVariantIds((current) => { const next = new Set(current); if (checked) next.add(id); else next.delete(id); return next; }); }
   function openReset() { setResetScope(selectedVariantIds.size ? "SELECTED_VARIANTS" : "ALL_CURRENT_STOCK"); setResetPreview(null); setResetConfirmed(false); setOwnerPassword(""); setResetOpen(true); }

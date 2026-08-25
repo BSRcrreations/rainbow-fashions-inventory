@@ -127,6 +127,8 @@ class InventoryReconciliationService:
         barcode_conflicts = barcode_conflicts or set()
         latest_history = latest_history or {}
         if not variants:
+            if product.current_stock == 0:
+                return [self._item(product, None, 0, product.current_stock, inventory.current_stock if inventory else None, 0, expected, "LEGACY_CATALOG_ONLY", "WARNING", "Zero-stock catalog-only record has no sellable variants; it does not affect inventory.", False)]
             return [self._item(product, None, 0, product.current_stock, inventory.current_stock if inventory else None, 0, expected, "ORPHAN_VARIANT", "CRITICAL", "Product has no sellable variant records.", False)]
         for variant in variants:
             lots = sum(lot.remaining_quantity for lot in variant.cost_lots)
@@ -144,7 +146,10 @@ class InventoryReconciliationService:
             elif product.current_stock != expected:
                 category, severity, cause, repair = "PRODUCT_AGGREGATE_MISMATCH", "WARNING", "Product compatibility aggregate differs from the variant total.", True
             elif not inventory or inventory.current_stock != expected:
-                category, severity, cause, repair = "STORE_INVENTORY_MISMATCH", "WARNING", "Store compatibility aggregate differs from the variant total.", True
+                if expected == 0 and product.current_stock == 0 and not inventory:
+                    category, severity, cause, repair = "LEGACY_STORE_INVENTORY_ABSENT", "WARNING", "Zero-stock legacy record has no store compatibility aggregate; it does not affect inventory.", False
+                else:
+                    category, severity, cause, repair = "STORE_INVENTORY_MISMATCH", "WARNING", "Store compatibility aggregate differs from the variant total.", True
             result.append(self._item(product, variant.id, variant.current_stock, product.current_stock, inventory.current_stock if inventory else None, lots, expected, category, severity, cause, repair))
         return result
 
