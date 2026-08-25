@@ -290,6 +290,7 @@ class ProductBulkIds(BaseModel):
 
 class ProductBulkDeleteRequest(ProductBulkIds):
     confirmation: str = Field(min_length=1, max_length=40)
+    delete_password: str = Field(min_length=1, max_length=256)
 
 
 class ProductBulkPurgeTestDataRequest(ProductBulkIds):

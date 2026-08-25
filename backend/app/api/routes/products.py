@@ -239,7 +239,11 @@ def permanently_delete_products(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_owner),
 ):
-    return ProductDeletionService(db).permanently_delete(payload.product_ids, payload.confirmation, current_user, request.state.request_id)
+    return ProductDeletionService(db).permanently_delete(
+        payload.product_ids, payload.confirmation, payload.delete_password,
+        request.headers.get("Idempotency-Key", ""), current_user, request.state.request_id,
+        request.client.host if request.client else None,
+    )
 
 
 @router.post("/bulk-purge-test-data")
@@ -260,7 +264,11 @@ def bulk_delete_products_legacy(
     current_user: User = Depends(require_owner),
 ):
     """Compatibility alias. It now enforces the same typed owner confirmation."""
-    return ProductDeletionService(db).permanently_delete(payload.product_ids, payload.confirmation, current_user, request.state.request_id)
+    return ProductDeletionService(db).permanently_delete(
+        payload.product_ids, payload.confirmation, payload.delete_password,
+        request.headers.get("Idempotency-Key", ""), current_user, request.state.request_id,
+        request.client.host if request.client else None,
+    )
 
 
 @router.post("/bulk/category")
