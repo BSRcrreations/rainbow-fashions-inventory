@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from app.models.enums import UserRole
+from app.models.product import Product
 from app.models.product_barcode import ProductBarcode, ProductBarcodeVariantTarget
 from app.services.product_deletion_service import ProductDeletionService
 
@@ -36,6 +37,32 @@ class DeleteDb:
 
     def rollback(self) -> None:
         self.rolled_back = True
+
+
+class ProductLockQuery:
+    def __init__(self) -> None:
+        self.lock_kwargs: dict[str, object] | None = None
+
+    def options(self, *_args: object) -> "ProductLockQuery":
+        return self
+
+    def filter(self, *_args: object) -> "ProductLockQuery":
+        return self
+
+    def with_for_update(self, **kwargs: object) -> "ProductLockQuery":
+        self.lock_kwargs = kwargs
+        return self
+
+    def all(self) -> list[SimpleNamespace]:
+        return []
+
+
+class ProductLockDb:
+    def __init__(self) -> None:
+        self.query_object = ProductLockQuery()
+
+    def query(self, _model: object) -> ProductLockQuery:
+        return self.query_object
 
 
 class BarcodeCleanupQuery:
@@ -109,6 +136,11 @@ def _counts(**overrides: int) -> dict[str, int]:
 
 
 class ProductDeletionServiceTests(unittest.TestCase):
+    def test_delete_lock_targets_only_the_product_row(self) -> None:
+        db = ProductLockDb()
+        ProductDeletionService(db)._locked_products([uuid4()], lock=True)
+        self.assertEqual(db.query_object.lock_kwargs, {"of": Product})
+
     def test_confirmation_must_match_exactly(self) -> None:
         with self.assertRaises(HTTPException) as context:
             ProductDeletionService._require_confirmation("delete", "DELETE", "request-1")

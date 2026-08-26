@@ -150,7 +150,10 @@ class ProductDeletionService:
             selectinload(Product.variants),
         ).filter(Product.id.in_(ids))
         if lock:
-            query = query.with_for_update()
+            # Category and brand are nullable left joins used only for the
+            # deletion snapshot. PostgreSQL cannot lock their nullable side.
+            # Lock the product row itself, which is the row being deleted.
+            query = query.with_for_update(of=Product)
         products = query.all()
         product_by_id = {product.id: product for product in products}
         return [product_by_id[product_id] for product_id in ids if product_id in product_by_id]
