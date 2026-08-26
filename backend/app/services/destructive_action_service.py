@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings
 from app.core.exceptions import error_payload, not_found
+from app.core.security import verify_password
 from app.models.destructive_action import DeletePasswordAttempt, DestructiveActionAudit, DestructiveIdempotencyRecord, StoreSecuritySetting
 from app.models.enums import PurchaseStatus, SaleStatus, StockMovementType
 from app.models.product import Product
@@ -21,7 +22,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.sale import Sale, SaleAudit, SaleItem, SaleReturn
 from app.models.stock_history import StockHistory
 from app.models.user import User
-from app.services.deletion_security_service import DeletePasswordConfigurationError, DeletePasswordInvalidError, verify_delete_password
+from app.services.deletion_security_service import DeletePasswordConfigurationError, DeletePasswordInvalidError, hash_delete_password, verify_delete_password, verify_delete_password_hash
 
 
 class DestructiveActionService:
@@ -35,8 +36,38 @@ class DestructiveActionService:
         return {
             "require_password_for_sale_delete": setting.require_password_for_sale_delete if setting else True,
             "require_password_for_purchase_delete": setting.require_password_for_purchase_delete if setting else True,
-            "configured": bool(get_settings().delete_auth_password_hash),
+            "configured": bool(setting and setting.delete_password_hash) or bool(get_settings().delete_auth_password_hash),
         }
+
+    def configure_delete_password(self, current_credential: str, new_password: str, user: User, request_id: str, client_ip: str | None) -> dict:
+        """Set or rotate a per-store deletion password after re-authenticating the Owner."""
+        if not verify_password(current_credential, user.password_hash):
+            self._audit("DELETE_PASSWORD_CONFIGURATION_FAILED", user, request_id, client_ip)
+            self.db.commit()
+            self._error(status.HTTP_403_FORBIDDEN, "The current Owner password is incorrect.", "OWNER_CREDENTIAL_INVALID", request_id)
+
+        store_id = self._store_id(user)
+        setting = self.db.get(StoreSecuritySetting, store_id)
+        changed = bool(setting and setting.delete_password_hash)
+        if not setting:
+            setting = StoreSecuritySetting(
+                store_id=store_id,
+                require_password_for_sale_delete=True,
+                require_password_for_purchase_delete=True,
+                updated_by=user.id,
+            )
+            self.db.add(setting)
+        setting.delete_password_hash = hash_delete_password(new_password)
+        setting.updated_by = user.id
+        self._audit(
+            "DELETE_PASSWORD_CHANGED" if changed else "DELETE_PASSWORD_CONFIGURED",
+            user,
+            request_id,
+            client_ip,
+            record_counts={"password_changed": 1},
+        )
+        self.db.commit()
+        return self.security(user)
 
     def check_purchases(self, ids: list[UUID], user: User, request_id: str) -> dict:
         purchases = self._purchases(ids, user, lock=False)
@@ -160,7 +191,11 @@ class DestructiveActionService:
             self.db.commit()
             self._error(status.HTTP_429_TOO_MANY_REQUESTS, "Too many incorrect attempts. Try again later.", "DELETE_PASSWORD_LOCKED", request_id)
         try:
-            verify_delete_password(password)
+            setting = self.db.get(StoreSecuritySetting, store_id)
+            if setting and setting.delete_password_hash:
+                verify_delete_password_hash(password, setting.delete_password_hash)
+            else:
+                verify_delete_password(password)
         except DeletePasswordConfigurationError:
             self._audit("DELETE_PASSWORD_CONFIGURATION_ERROR", user, request_id, client_ip)
             self.db.commit()

@@ -986,6 +986,7 @@ export default function ProductsPage() {
         requestId={deleteCheck?.request_id}
         onClose={() => { setDeletePasswordOpen(false); setDeletePasswordError(""); }}
         onSubmit={(password) => void submitPermanentDelete(password)}
+        onConfigurePassword={() => navigate("/settings/security")}
       />
       <Dialog open={Boolean(deleteResult)} title="Deletion completed" onClose={() => setDeleteResult(null)} maxWidth="md">
         <div className="space-y-4"><section><h3 className="text-sm font-semibold text-foreground">Deleted</h3>{deleteResult?.deleted.length ? <ul className="mt-2 space-y-1 text-sm">{deleteResult.deleted.map((item) => <li key={item.product_id}>- {item.product_name}</li>)}</ul> : <p className="mt-2 text-sm text-muted">No products were deleted.</p>}</section>{deleteResult?.blocked.length ? <section><h3 className="text-sm font-semibold text-foreground">Could not delete</h3><ul className="mt-2 space-y-2 text-sm">{deleteResult.blocked.map((item) => <li key={item.product_id}><div className="font-medium">{item.product_name}</div><div className="text-muted">{item.reason}</div></li>)}</ul></section> : null}<div className="flex justify-end"><Button type="button" onClick={() => setDeleteResult(null)}>Close</Button></div></div>

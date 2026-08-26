@@ -48,7 +48,7 @@ class _Db:
 
 
 def _owner() -> SimpleNamespace:
-    return SimpleNamespace(id=uuid4(), store_id=uuid4(), role=UserRole.OWNER)
+    return SimpleNamespace(id=uuid4(), store_id=uuid4(), role=UserRole.OWNER, password_hash="owner-password-hash")
 
 
 class DestructiveActionServiceTests(unittest.TestCase):
@@ -90,3 +90,33 @@ class DestructiveActionServiceTests(unittest.TestCase):
                 service._verify_password("wrong", user, "request-789", None)
         self.assertEqual(context.exception.status_code, 403)
         self.assertEqual(context.exception.detail["code"], "DELETE_PASSWORD_INVALID")
+
+    def test_owner_can_configure_a_store_specific_deletion_password(self) -> None:
+        user = _owner()
+        db = SimpleNamespace(added=[], audits=[], setting=None)
+        def get(model: object, _identifier: object) -> object | None:
+            return db.setting
+        def add(record: object) -> None:
+            db.added.append(record)
+            if record.__class__.__name__ == "StoreSecuritySetting":
+                db.setting = record
+        db.get, db.add, db.commit = get, add, lambda: None
+        service = DestructiveActionService(db)
+        service._audit = lambda *args, **kwargs: db.audits.append(args[0])  # type: ignore[method-assign]
+        with patch("app.services.destructive_action_service.verify_password", return_value=True):
+            result = service.configure_delete_password("owner-password", "new-delete-password", user, "request-configuration", None)
+        self.assertTrue(result["configured"])
+        self.assertIsNotNone(db.setting.delete_password_hash)
+        self.assertNotEqual(db.setting.delete_password_hash, "new-delete-password")
+        self.assertEqual(db.audits, ["DELETE_PASSWORD_CONFIGURED"])
+
+    def test_owner_current_password_is_required_to_configure_deletion_password(self) -> None:
+        user = _owner()
+        db = SimpleNamespace(get=lambda *_args: None, add=lambda *_args: None, commit=lambda: None)
+        service = DestructiveActionService(db)
+        service._audit = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+        with patch("app.services.destructive_action_service.verify_password", return_value=False):
+            with self.assertRaises(HTTPException) as context:
+                service.configure_delete_password("wrong-owner-password", "new-delete-password", user, "request-configuration", None)
+        self.assertEqual(context.exception.status_code, 403)
+        self.assertEqual(context.exception.detail["code"], "OWNER_CREDENTIAL_INVALID")
