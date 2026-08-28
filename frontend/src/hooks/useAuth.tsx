@@ -10,6 +10,7 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+const SESSION_EXPIRED_NOTICE_KEY = "rainbow_session_expired_notice";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -33,7 +34,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const handleUnauthorized = () => setUser(null);
+    const handleUnauthorized = () => {
+      window.sessionStorage.setItem(SESSION_EXPIRED_NOTICE_KEY, "Your session has expired. Please sign in again.");
+      setUser(null);
+    };
     window.addEventListener("rainbow:unauthorized", handleUnauthorized);
     return () => window.removeEventListener("rainbow:unauthorized", handleUnauthorized);
   }, []);

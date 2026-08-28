@@ -94,7 +94,14 @@ async def integrity_exception_handler(request: Request, exc: IntegrityError) -> 
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception("Unhandled API error", exc_info=exc)
+    logger.exception(
+        "Unhandled API error request_id=%s method=%s path=%s exception_type=%s",
+        getattr(request.state, "request_id", None),
+        request.method,
+        request.url.path,
+        type(exc).__name__,
+        exc_info=exc,
+    )
     payload = error_payload("The server could not complete this request. Please try again.", "internal_error")
     payload["request_id"] = getattr(request.state, "request_id", None)
     return JSONResponse(status_code=500, content={"detail": payload})

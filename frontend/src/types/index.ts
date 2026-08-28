@@ -729,6 +729,7 @@ export interface Expense {
 }
 
 export interface ReportsSummary {
+  has_report_data: boolean;
   profit_and_loss: {
     start_date: string;
     end_date: string;
