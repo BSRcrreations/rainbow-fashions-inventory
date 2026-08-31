@@ -1,5 +1,6 @@
 import copy
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -88,3 +89,80 @@ def test_production_execution_guard_requires_identity_and_all_gates() -> None:
         TestToProductionMigrationService._assert_production_identity("inventory_db", "current", "current_postgres_data", {**gates, "gate_3": "FAIL"})
     with pytest.raises(MigrationSafetyError, match="identity"):
         TestToProductionMigrationService._assert_production_identity("rainbow_test_db", "current", "current_postgres_data", gates)
+
+
+def test_migration_restores_package_product_cost_after_different_variant_opening_costs(monkeypatch) -> None:
+    """Opening cost lots keep their exact costs; package catalog cost wins afterward."""
+    package = _package()
+    shared = package["catalog"]["products"][1]
+    shared["purchase_cost"] = "250.00"
+    shared["variants"][0]["purchase_cost"] = shared["variants"][0]["average_cost"] = "260.00"
+    shared["variants"][1]["purchase_cost"] = shared["variants"][1]["average_cost"] = "315.00"
+    package["opening_stock"] = [
+        {"variant_key": "sku:unique-tee|m|blue", "quantity": 3, "unit_cost": "200.00"},
+        {"variant_key": "sku:shared-tee|m|red", "quantity": 4, "unit_cost": "260.00"},
+        {"variant_key": "sku:shared-tee|l|red", "quantity": 5, "unit_cost": "315.00"},
+    ]
+    package["counts"] = TestToProductionMigrationService._counts(package)
+    package["content_sha256"] = _sha256({key: value for key, value in package.items() if key != "content_sha256"})
+
+    def fake_product(source: dict) -> SimpleNamespace:
+        return SimpleNamespace(
+            store_id="store", category=SimpleNamespace(name=source["category"]),
+            subcategory=SimpleNamespace(name=source["subcategory"]), brand=SimpleNamespace(name=source["brand"]),
+            name=source["name"], sku=source["sku"], mrp=Decimal(source["mrp"]),
+            selling_price=Decimal(source["selling_price"]), purchase_price=Decimal(source["purchase_cost"]),
+        )
+
+    unique_product, shared_product = (fake_product(source) for source in package["catalog"]["products"])
+    products = [unique_product, shared_product]
+    variants = {
+        "sku:unique-tee|m|blue": SimpleNamespace(current_stock=0, last_purchase_cost=Decimal("200"), average_cost=Decimal("200")),
+        "sku:shared-tee|m|red": SimpleNamespace(current_stock=0, last_purchase_cost=Decimal("260"), average_cost=Decimal("260")),
+        "sku:shared-tee|l|red": SimpleNamespace(current_stock=0, last_purchase_cost=Decimal("315"), average_cost=Decimal("315")),
+    }
+    resolved = {
+        "sku:unique-tee|m|blue": (unique_product, variants["sku:unique-tee|m|blue"]),
+        "sku:shared-tee|m|red": (shared_product, variants["sku:shared-tee|m|red"]),
+        "sku:shared-tee|l|red": (shared_product, variants["sku:shared-tee|l|red"]),
+    }
+
+    class Query:
+        def options(self, *args):
+            return self
+
+        def filter(self, *args):
+            return self
+
+        def all(self):
+            return products
+
+    class Session:
+        def query(self, *_args):
+            return Query()
+
+    lots: list[tuple[int, Decimal]] = []
+
+    class Poster:
+        def post_migration_opening_stock(self, *, product, variant, quantity, unit_cost, **_kwargs):
+            # This models the intentional generic receipt behaviour: latest
+            # product cost follows the final receipt, while each lot keeps its
+            # exact unit cost.
+            product.purchase_price = unit_cost
+            variant.current_stock += quantity
+            variant.last_purchase_cost = unit_cost
+            variant.average_cost = unit_cost
+            lots.append((quantity, unit_cost))
+            return SimpleNamespace(), SimpleNamespace(qty=quantity)
+
+    monkeypatch.setattr("app.services.test_to_production_migration_service.OpeningStockImportService", lambda _db: Poster())
+    service = TestToProductionMigrationService(Session())
+    movements = service._post_opening_stock(package, SimpleNamespace(id="store"), SimpleNamespace(), resolved)
+    service._restore_package_product_pricing(package, SimpleNamespace(id="store"))
+
+    assert sum(item.qty for item in movements) == 12
+    assert sum(quantity for quantity, _ in lots) == 12
+    assert sum(quantity * cost for quantity, cost in lots) == Decimal("3215")
+    assert shared_product.purchase_price == Decimal("250.00")
+    assert variants["sku:shared-tee|m|red"].last_purchase_cost == Decimal("260.00")
+    assert variants["sku:shared-tee|l|red"].last_purchase_cost == Decimal("315.00")

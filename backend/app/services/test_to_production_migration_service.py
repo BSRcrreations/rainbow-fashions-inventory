@@ -467,6 +467,15 @@ class TestToProductionMigrationService:
                 user = self.db.query(User).filter(User.id == executing_user_id, User.store_id == store.id, User.is_active.is_(True)).one_or_none()
                 if not user:
                     raise MigrationSafetyError("An active executing user in the target store is required.")
+                existing = self.db.query(CatalogMigrationImport).filter_by(store_id=store.id, package_id=package["package_id"]).with_for_update().first()
+                if existing and existing.status == "COMPLETED":
+                    report = self._plan(package, store)
+                    if report.conflicts:
+                        raise MigrationSafetyError("Completed package no longer matches the target catalog; reconcile before retrying.")
+                    report.already_imported = True
+                    return report
+                if existing:
+                    raise MigrationSafetyError(f"Package is already in {existing.status}; inspect before retrying.")
                 if package["mode"] == CATALOG_AND_OPENING_STOCK:
                     if user.role != UserRole.OWNER:
                         raise MigrationSafetyError("Opening stock requires an active Owner user.")
@@ -475,13 +484,6 @@ class TestToProductionMigrationService:
                         raise MigrationSafetyError(f"Explicit owner authorization must be exactly: {expected_authorization}")
                     if self.db.query(func.coalesce(func.sum(ProductVariant.current_stock), 0)).filter(ProductVariant.store_id == store.id).scalar() != 0:
                         raise MigrationSafetyError("Production stock is not zero; opening stock cannot be posted.")
-                existing = self.db.query(CatalogMigrationImport).filter_by(store_id=store.id, package_id=package["package_id"]).with_for_update().first()
-                if existing and existing.status == "COMPLETED":
-                    report = self._plan(package, store)
-                    report.already_imported = True
-                    return report
-                if existing:
-                    raise MigrationSafetyError(f"Package is already in {existing.status}; inspect before retrying.")
                 report = self._plan(package, store)
                 if report.conflicts:
                     raise MigrationSafetyError("Conflicts were found; no production records were changed.")
@@ -491,12 +493,68 @@ class TestToProductionMigrationService:
                 resolved = self._create_catalog(package, store, user)
                 self._create_barcode_mappings(package, store, user, resolved)
                 movements = self._post_opening_stock(package, store, user, resolved)
+                # Opening-stock posting deliberately updates a product's latest
+                # receipt cost.  A TEST catalog package, however, is an
+                # authoritative catalog snapshot, so restore its product-level
+                # pricing after the cost lots and exact variant costs exist.
+                self._restore_package_product_pricing(package, store)
                 self.db.flush()
                 self._verify_post_import(package, store, movements)
                 record.status = "COMPLETED"
                 record.completed_at = datetime.now(timezone.utc)
                 record.summary_json = {**report.as_dict(), "opening_stock_movement_ids": [str(item.id) for item in movements]}
             return report
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def reconcile_completed_catalog(
+        self,
+        package: dict[str, Any],
+        *,
+        target_store_code: str,
+        executing_user_id: UUID,
+        owner_authorization: str | None,
+        target_database: str,
+        compose_project: str,
+        postgres_volume: str,
+        gate_evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Restore package-defined product pricing for an already-completed import.
+
+        This is deliberately narrower than ``execute``: it never creates
+        catalog records, barcodes, stock movements, or cost lots.  It is only
+        eligible when the same checksum-pinned package is already COMPLETED.
+        """
+        self.validate_package(package)
+        self._assert_production_identity(target_database, compose_project, postgres_volume, gate_evidence)
+        try:
+            with self.db.begin():
+                store = self.db.query(Store).filter(func.lower(Store.code) == _normal(target_store_code)).one_or_none()
+                if not store:
+                    raise MigrationSafetyError("Target production store was not found.")
+                user = self.db.query(User).filter(User.id == executing_user_id, User.store_id == store.id, User.is_active.is_(True)).one_or_none()
+                if not user or user.role != UserRole.OWNER:
+                    raise MigrationSafetyError("An active Owner in the target store is required.")
+                expected_authorization = f"OWNER APPROVED CATALOG RECONCILIATION {package['package_id']}"
+                if owner_authorization != expected_authorization:
+                    raise MigrationSafetyError(f"Explicit owner authorization must be exactly: {expected_authorization}")
+                record = self.db.query(CatalogMigrationImport).filter_by(store_id=store.id, package_id=package["package_id"]).with_for_update().one_or_none()
+                if not record or record.status != "COMPLETED" or record.package_sha256 != package["content_sha256"]:
+                    raise MigrationSafetyError("Only the matching completed package may be reconciled.")
+                changed = self._restore_package_product_pricing(package, store, completed_import_repair=True)
+                self.db.flush()
+                verification = self._plan(package, store)
+                if verification.conflicts:
+                    raise MigrationSafetyError("Catalog reconciliation left package conflicts; transaction will roll back.")
+                record.summary_json = {
+                    **(record.summary_json or {}),
+                    "catalog_reconciliation": {
+                        "reconciled_at": datetime.now(timezone.utc).isoformat(),
+                        "product_purchase_price_repairs": changed,
+                    },
+                }
+            return {"package_id": package["package_id"], "product_purchase_price_repairs": changed}
         except Exception:
             self.db.rollback()
             raise
@@ -572,6 +630,44 @@ class TestToProductionMigrationService:
             _, movement = poster.post_migration_opening_stock(product=product, variant=variant, store_id=store.id, quantity=quantity, unit_cost=Decimal(stock["unit_cost"]), current_user=user, reference=reference, request_id=request_id)
             movements.append(movement)
         return movements
+
+    def _restore_package_product_pricing(self, package: dict[str, Any], store: Store, *, completed_import_repair: bool = False) -> list[str]:
+        """Make the package's product-level price fields authoritative again.
+
+        Inventory cost lives on exact variants and cost lots.  The aggregate
+        product purchase price remains catalog metadata for package imports.
+        A completed-import repair is fail-closed unless the only discrepancy is
+        product purchase price; it must never be used to silently rewrite MRP
+        or selling prices after the fact.
+        """
+        products = (
+            self.db.query(Product)
+            .options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand))
+            .filter(Product.store_id == store.id)
+            .all()
+        )
+        by_key: dict[str, list[Product]] = defaultdict(list)
+        for product in products:
+            by_key[product_key({"category": product.category.name, "subcategory": product.subcategory.name, "brand": product.brand.name, "name": product.name, "sku": product.sku})].append(product)
+        changed: list[str] = []
+        for source in package["catalog"]["products"]:
+            key = product_key(source)
+            matches = by_key[key]
+            if len(matches) != 1:
+                raise MigrationSafetyError(f"Package product {key} is not uniquely present for price reconciliation.")
+            product = matches[0]
+            expected_mrp = Decimal(source["mrp"]) if source.get("mrp") else None
+            expected_selling = Decimal(source["selling_price"])
+            expected_purchase = Decimal(source["purchase_cost"])
+            if completed_import_repair and (product.mrp != expected_mrp or product.selling_price != expected_selling):
+                raise MigrationSafetyError("Completed-import reconciliation refuses non-purchase-price catalog differences.")
+            if not completed_import_repair:
+                product.mrp = expected_mrp
+                product.selling_price = expected_selling
+            if product.purchase_price != expected_purchase:
+                product.purchase_price = expected_purchase
+                changed.append(key)
+        return changed
 
     def _verify_post_import(self, package: dict[str, Any], store: Store, movements: Iterable[StockHistory]) -> None:
         if package["mode"] != CATALOG_AND_OPENING_STOCK:

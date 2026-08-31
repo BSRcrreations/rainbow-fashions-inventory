@@ -84,6 +84,33 @@ def execute(args: argparse.Namespace) -> int:
     return 0
 
 
+def reconcile_catalog(args: argparse.Namespace) -> int:
+    package = TestToProductionMigrationService.read_package(args.package_dir)
+    if _database_name(args.target_database_url) != "inventory_db":
+        raise MigrationSafetyError("--target-database-url must point to inventory_db.")
+    try:
+        gates = json.loads(args.gate_evidence.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise MigrationSafetyError("Gate evidence must be a readable JSON file.") from exc
+    compose_project = os.environ.get("COMPOSE_PROJECT_NAME", "")
+    postgres_volume = os.environ.get("POSTGRES_DATA_VOLUME", "")
+    with _session(args.target_database_url) as db:
+        actual_db = db.execute(text("select current_database()")).scalar_one()
+        db.rollback()
+        result = TestToProductionMigrationService(db).reconcile_completed_catalog(
+            package,
+            target_store_code=args.target_store_code,
+            executing_user_id=UUID(args.executing_user_id),
+            owner_authorization=args.owner_authorization,
+            target_database=actual_db,
+            compose_project=compose_project,
+            postgres_volume=postgres_volume,
+            gate_evidence=gates,
+        )
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     command = argparse.ArgumentParser(prog="test_to_production_migration")
     commands = command.add_subparsers(dest="command", required=True)
@@ -108,6 +135,14 @@ def parser() -> argparse.ArgumentParser:
     execute_parser.add_argument("--gate-evidence", type=Path, required=True)
     execute_parser.add_argument("--owner-authorization")
     execute_parser.set_defaults(handler=execute)
+    reconcile_parser = commands.add_parser("reconcile-catalog", help="Repair package product pricing after a completed import")
+    reconcile_parser.add_argument("--package-dir", type=Path, required=True)
+    reconcile_parser.add_argument("--target-database-url", required=True)
+    reconcile_parser.add_argument("--target-store-code", required=True)
+    reconcile_parser.add_argument("--executing-user-id", required=True)
+    reconcile_parser.add_argument("--gate-evidence", type=Path, required=True)
+    reconcile_parser.add_argument("--owner-authorization")
+    reconcile_parser.set_defaults(handler=reconcile_catalog)
     return command
 
 
