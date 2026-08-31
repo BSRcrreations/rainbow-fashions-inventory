@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import bad_request, conflict, not_found
 from app.models.opening_stock_import import OpeningStockImportRow
-from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit
+from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit, ProductBarcodeVariantTarget
 from app.models.product_deletion_audit import ProductDeletionAudit
 from app.models.product import Product
 from app.models.product_variant import InventoryCostLot, ProductVariant
@@ -20,6 +20,7 @@ from app.models.stock_import import StockImportRow
 from app.models.stock_scan import StockScanSessionItem
 from app.models.user import User
 from app.models.enums import PricingType
+from app.models.enums import UserRole
 from app.schemas.product import ProductVariantDetailsCreate, ProductVariantUpdate
 from app.services.product_service import ProductService
 
@@ -38,6 +39,8 @@ class VariantManagementService:
         sku = values.get("internal_sku", variant.internal_sku)
         if not barcode:
             raise bad_request("Barcode is required for every variant.", "VARIANT_BARCODE_REQUIRED")
+        if barcode.casefold() != variant.barcode.casefold() and current_user.role != UserRole.OWNER:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"message": "Only an owner can change a barcode assignment.", "code": "OWNER_BARCODE_MANAGEMENT_REQUIRED"})
         if not sku:
             raise bad_request("SKU is required for every variant.", "VARIANT_SKU_REQUIRED")
         self._validate_unique(variant, barcode, sku, values.get("size", variant.size), values.get("color", variant.color))
@@ -156,18 +159,44 @@ class VariantManagementService:
         base = self.db.query(ProductVariant).filter(ProductVariant.store_id == variant.store_id)
         if variant.id:
             base = base.filter(ProductVariant.id != variant.id)
-        if base.filter(func.lower(ProductVariant.barcode) == barcode.lower()).first():
-            raise conflict("This barcode is already used by another variant.", "VARIANT_BARCODE_CONFLICT")
-        barcode_query = self.db.query(ProductBarcode).filter(ProductBarcode.store_id == variant.store_id, func.lower(ProductBarcode.barcode) == barcode.lower())
+        barcode_query = self.db.query(ProductBarcode).filter(
+            ProductBarcode.store_id == variant.store_id,
+            func.lower(ProductBarcode.barcode) == barcode.lower(),
+        )
         if variant.id:
             barcode_query = barcode_query.filter(ProductBarcode.product_variant_id != variant.id)
-        if barcode_query.first():
-            raise conflict("This barcode is already assigned to another variant.", "BARCODE_ALREADY_ASSIGNED")
+        mapped_elsewhere = barcode_query.first()
+        if base.filter(func.lower(ProductVariant.barcode) == barcode.lower()).first() and not mapped_elsewhere:
+            raise conflict("This barcode is already used by another variant.", "VARIANT_BARCODE_CONFLICT")
         if base.filter(func.lower(ProductVariant.internal_sku) == sku.lower()).first():
             raise conflict("This SKU is already used by another variant.", "VARIANT_SKU_CONFLICT")
         duplicate = base.filter(ProductVariant.product_id == variant.product_id, func.coalesce(func.lower(ProductVariant.size), "") == (size or "").lower(), func.coalesce(func.lower(ProductVariant.color), "") == (color or "").lower(), func.coalesce(func.lower(ProductVariant.style_code), "") == (variant.style_code or "").lower()).first()
         if duplicate:
-            raise conflict("A sibling variant already uses this size and colour combination.", "VARIANT_ALREADY_EXISTS")
+            raise self._duplicate_variant_error(duplicate)
+
+    @staticmethod
+    def _duplicate_variant_error(duplicate: ProductVariant) -> HTTPException:
+        """Return a resolvable conflict instead of a dead-end validation error.
+
+        The client can open the already-existing exact variant.  It must never
+        silently merge the edited variant into that record: either record may
+        have stock or an immutable sales/inventory history.
+        """
+        label = " / ".join(value for value in (duplicate.size, duplicate.color) if value) or "Standard"
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": f"{label} already exists for this product.",
+                "code": "VARIANT_ALREADY_EXISTS",
+                "existing_variant": {
+                    "id": str(duplicate.id),
+                    "size": duplicate.size,
+                    "color": duplicate.color,
+                    "current_stock": int(duplicate.current_stock or 0),
+                    "is_active": duplicate.is_active,
+                },
+            },
+        )
 
     def _existing_product(self, product_id: UUID | None, current_user: User) -> Product:
         product = self.db.query(Product).filter(Product.id == product_id, Product.store_id == current_user.store_id).with_for_update().first()
@@ -191,6 +220,20 @@ class VariantManagementService:
 
     def _sync_primary_mapping(self, variant: ProductVariant, barcode: str, scan_unit: str, pieces: int, current_user: User, request_id: str) -> None:
         current = next((item for item in variant.barcode_mappings if item.barcode.lower() == variant.barcode.lower()), None)
+        shared_mapping = self.db.query(ProductBarcode).filter(
+            ProductBarcode.store_id == variant.store_id,
+            func.lower(ProductBarcode.barcode) == barcode.lower(),
+        ).first()
+        if shared_mapping and shared_mapping.product_variant_id != variant.id:
+            shared_mapping.active = variant.is_active
+            target = self.db.query(ProductBarcodeVariantTarget).filter(
+                ProductBarcodeVariantTarget.product_barcode_id == shared_mapping.id,
+                ProductBarcodeVariantTarget.product_variant_id == variant.id,
+            ).first()
+            if not target:
+                self.db.add(ProductBarcodeVariantTarget(store_id=variant.store_id, product_barcode_id=shared_mapping.id, product_variant_id=variant.id, created_by=current_user.id))
+                self.db.add(ProductBarcodeAudit(store_id=variant.store_id, barcode=barcode, old_product_variant_id=shared_mapping.product_variant_id, new_product_variant_id=variant.id, action="SHARED_TARGET_ADDED", reason="VARIANT_CONFIGURATION_UPDATED", changed_by=current_user.id, request_id=request_id))
+            return
         if barcode.lower() != variant.barcode.lower():
             if current:
                 current.active = False

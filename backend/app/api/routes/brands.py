@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_manager_or_owner
+from app.api.deps import get_current_user, require_manager_or_owner, require_owner
 from app.database.session import get_db
 from app.models.user import User
 from app.schemas.brand import BrandCreate, BrandRead, BrandUpdate
@@ -52,6 +52,6 @@ def delete_brand_logo(brand_id: UUID, db: Session = Depends(get_db), current_use
 
 
 @router.delete("/{brand_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_brand(brand_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
+def delete_brand(brand_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> Response:
     BrandService(db).delete(brand_id, current_user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

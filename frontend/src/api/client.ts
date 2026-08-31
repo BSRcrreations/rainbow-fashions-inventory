@@ -9,14 +9,16 @@ export class ApiError extends Error {
   code?: string;
   requestId?: string;
   fields?: Array<{ field: string; message: string }>;
+  details?: Record<string, unknown>;
 
-  constructor(message: string, status: number, code?: string, fields?: Array<{ field: string; message: string }>, requestId?: string) {
+  constructor(message: string, status: number, code?: string, fields?: Array<{ field: string; message: string }>, requestId?: string, details?: Record<string, unknown>) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.fields = fields;
     this.requestId = requestId;
+    this.details = details;
   }
 }
 
@@ -51,7 +53,7 @@ export async function toApiError(response: Response): Promise<ApiError> {
   const message = validationMessage ?? detailMessage ?? (typeof payload === "string" ? safeRawMessage(payload, response.status) : fallbackMessage(response.status));
   const code = typeof detailObject?.code === "string" ? detailObject.code : typeof body?.code === "string" ? body.code : undefined;
   const requestId = typeof detailObject?.request_id === "string" ? detailObject.request_id : typeof body?.request_id === "string" ? body.request_id : response.headers.get("X-Request-ID") ?? undefined;
-  return new ApiError(message, response.status, code, fields, requestId);
+  return new ApiError(message, response.status, code, fields, requestId, detailObject);
 }
 
 export function getToken(): string | null {
@@ -82,7 +84,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   try {
     response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
   } catch {
-    throw new ApiError("The server could not be reached.", 0, "NETWORK_ERROR");
+    throw new ApiError("Unable to connect to the server. Check your connection and try again.", 0, "NETWORK_ERROR");
   }
   if (!response.ok) {
     handleUnauthorized(response.status);
@@ -100,7 +102,7 @@ async function requestBlob(path: string): Promise<Blob> {
   try {
     response = await fetch(`${API_BASE_URL}${path}`, { headers });
   } catch {
-    throw new ApiError("The server could not be reached.", 0, "NETWORK_ERROR");
+    throw new ApiError("Unable to connect to the server. Check your connection and try again.", 0, "NETWORK_ERROR");
   }
   if (!response.ok) {
     handleUnauthorized(response.status);
@@ -118,7 +120,7 @@ async function requestBlobWithBody(path: string, body: unknown): Promise<Blob> {
   try {
     response = await fetch(`${API_BASE_URL}${path}`, { method: "POST", headers, body: JSON.stringify(body ?? {}) });
   } catch {
-    throw new ApiError("The server could not be reached.", 0, "NETWORK_ERROR");
+    throw new ApiError("Unable to connect to the server. Check your connection and try again.", 0, "NETWORK_ERROR");
   }
   if (!response.ok) {
     handleUnauthorized(response.status);

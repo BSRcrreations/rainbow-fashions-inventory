@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.core.config import Settings
-from app.services.deletion_security_service import DeletePasswordConfigurationError, DeletePasswordInvalidError, verify_delete_password
+from app.services.deletion_security_service import DeletePasswordConfigurationError, DeletePasswordInvalidError, hash_delete_password, verify_delete_password, verify_delete_password_hash
 from passlib.hash import argon2
 
 
@@ -35,3 +35,9 @@ class DeletionSecurityServiceTests(unittest.TestCase):
             verify_delete_password("test-delete-password")
             with self.assertRaises(DeletePasswordInvalidError):
                 verify_delete_password("wrong-password")
+
+    def test_persisted_hash_accepts_the_correct_password_without_environment_configuration(self) -> None:
+        password_hash = hash_delete_password("store-specific-delete-password")
+        verify_delete_password_hash("store-specific-delete-password", password_hash)
+        with self.assertRaises(DeletePasswordInvalidError):
+            verify_delete_password_hash("wrong-password", password_hash)

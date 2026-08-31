@@ -43,6 +43,8 @@ def stocked_product(store_id=None):
         brand_id=uuid4(),
         pricing_type=PricingType.OWN_PRICE,
         mrp=Decimal("395"),
+        purchase_price=Decimal("220"),
+        selling_price=Decimal("395"),
         current_stock=25,
         variants=[variant],
         stock_movements=[SimpleNamespace(id=uuid4())],
@@ -134,3 +136,34 @@ def test_product_metadata_change_records_an_audit_without_changing_stock():
     assert audit.before_values == {"name": "Softa padded bra"}
     assert audit.after_values == {"name": "Soft padded bra"}
     assert product.current_stock == 25
+
+
+def test_product_brand_and_category_edit_preserves_every_variant_and_stock():
+    product = stocked_product()
+    original_variant_id = product.variants[0].id
+    original_stock = product.current_stock
+    service, db = configured_service(product)
+    category_id, brand_id = uuid4(), uuid4()
+
+    service.update(product.id, ProductUpdate(category_id=category_id, brand_id=brand_id), product.store_id)
+
+    assert product.category_id == category_id
+    assert product.brand_id == brand_id
+    assert product.variants[0].id == original_variant_id
+    assert product.variants[0].current_stock == 25
+    assert product.current_stock == original_stock
+    db.commit.assert_called_once()
+
+
+def test_product_price_edit_preserves_stock_and_variant_history():
+    product = stocked_product()
+    original_history = list(product.stock_movements)
+    service, db = configured_service(product)
+
+    service.update(product.id, ProductUpdate(selling_price=Decimal("425")), product.store_id)
+
+    assert product.selling_price == Decimal("425")
+    assert product.current_stock == 25
+    assert product.variants[0].current_stock == 25
+    assert product.stock_movements == original_history
+    db.commit.assert_called_once()

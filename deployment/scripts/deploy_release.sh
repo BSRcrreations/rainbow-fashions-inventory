@@ -82,6 +82,30 @@ if [[ "$DEPLOY_ENVIRONMENT" == test ]]; then
 fi
 "$script_dir/wait_for_application.sh" --base-url "$LOCAL_DEPLOY_URL" --timeout "$local_health_timeout"
 
+if [[ "$DEPLOY_ENVIRONMENT" == test ]]; then
+  # The version marker is supplied by the TEST CI job, not stored in the
+  # release checkout or backend environment file.
+  : "${GIT_SHA:?GIT_SHA is required for TEST deployment version verification}"
+  curl --fail --silent --show-error --max-time 15 "$LOCAL_DEPLOY_URL/version" | grep -Fq "\"git_sha\":\"$GIT_SHA\""
+
+  # A TEST owner can be repaired only with protected CI variables. Omitting
+  # them leaves existing TEST accounts unchanged and cannot affect production.
+  if [[ -n "${TEST_OWNER_EMAIL:-}" || -n "${TEST_OWNER_PASSWORD:-}" ]]; then
+    : "${TEST_OWNER_EMAIL:?TEST_OWNER_EMAIL is required when repairing TEST authentication}"
+    : "${TEST_OWNER_PASSWORD:?TEST_OWNER_PASSWORD is required when repairing TEST authentication}"
+    export OWNER_EMAIL="$TEST_OWNER_EMAIL"
+    export OWNER_PASSWORD="$TEST_OWNER_PASSWORD"
+    export OWNER_NAME="${TEST_OWNER_NAME:-Rainbow Fashions TEST Owner}"
+    export OWNER_STORE_NAME="${TEST_OWNER_STORE_NAME:-Rainbow Fashions TEST}"
+    export OWNER_STORE_CODE="${TEST_OWNER_STORE_CODE:-TEST}"
+    "${compose[@]}" run --rm -e RUN_MIGRATIONS_ON_STARTUP=false -e OWNER_EMAIL -e OWNER_PASSWORD -e OWNER_NAME -e OWNER_STORE_NAME -e OWNER_STORE_CODE backend python scripts/bootstrap_owner.py --update-existing
+    "${compose[@]}" run --rm -e RUN_MIGRATIONS_ON_STARTUP=false -e TEST_OWNER_EMAIL -e TEST_OWNER_PASSWORD backend python scripts/verify_test_login.py --base-url http://backend:8000/api/v1
+    "${compose[@]}" run --rm -e RUN_MIGRATIONS_ON_STARTUP=false -e TEST_OWNER_EMAIL -e TEST_OWNER_PASSWORD backend python scripts/verify_test_login.py --base-url "$PUBLIC_DEPLOY_URL/api/v1"
+  else
+    echo 'test authentication repair: skipped because protected TEST_OWNER_EMAIL and TEST_OWNER_PASSWORD are not configured'
+  fi
+fi
+
 # TEST is activated behind a deliberately closed Nginx vhost. Its public
 # proxy and certificate are configured only after loopback health succeeds,
 # so public HTTPS verification is deferred to the TEST proxy/TLS phase.

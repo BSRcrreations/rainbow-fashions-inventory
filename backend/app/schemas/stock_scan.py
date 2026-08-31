@@ -65,10 +65,93 @@ class StockScanRequest(BaseModel):
         return barcode
 
 
+class VariantStockStageRequest(StockScanRequest):
+    """Assign/reuse a known barcode for one selected exact variant, then stage it."""
+
+    product_variant_id: UUID
+    confirm_shared_barcode: bool = False
+
+
+class SharedBarcodeTargetRead(BaseModel):
+    variant_id: UUID
+    product_id: UUID
+    product_name: str
+    brand_name: Optional[str] = None
+    size: Optional[str] = None
+    color: Optional[str] = None
+    current_stock: int
+    mrp: Optional[Decimal] = None
+    selling_price: Optional[Decimal] = None
+
+
+class BarcodeLookupAssignmentRead(BaseModel):
+    """A human-facing barcode assignment; never exposes persistence internals."""
+
+    barcode_id: UUID
+    product_id: UUID
+    variant_id: UUID
+    product_name: str
+    brand_name: Optional[str] = None
+    category_name: Optional[str] = None
+    size: Optional[str] = None
+    color: Optional[str] = None
+    current_stock: int
+    active: bool
+
+
+class BarcodeLookupRead(BaseModel):
+    barcode: str
+    status: Literal["AVAILABLE", "UNIQUE", "MULTIPLE", "STALE"]
+    message: str
+    assignments: list[BarcodeLookupAssignmentRead] = Field(default_factory=list)
+
+
+class BarcodeDeletionCheckRead(BaseModel):
+    """Owner-facing preflight for deleting only non-historical barcode records."""
+
+    barcode: str
+    active_assignments: int
+    historical_references: int
+    draft_references: int
+    audit_references: int
+    can_permanently_delete: bool
+    reason: Optional[str] = None
+
+
+class BarcodePermanentDeleteRequest(BaseModel):
+    confirmation: str
+
+
 class StockScanItemUpdate(BaseModel):
-    scanned_quantity: int = Field(ge=0, le=100000)
+    """A safe correction to an unconfirmed stock draft row.
+
+    ``expected_session_updated_at`` is deliberately carried by the client.  A
+    stock draft is shared state, so a stale browser must not overwrite a newer
+    draft correction made by another owner or manager.
+    """
+
+    scanned_quantity: Optional[int] = Field(default=None, ge=0, le=100000)
     condition: Optional[str] = Field(default=None, min_length=2, max_length=40)
     unit_cost: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    product_variant_id: Optional[UUID] = None
+    barcode: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    confirm_shared_barcode: bool = False
+    merge_with_existing: bool = False
+    expected_session_updated_at: Optional[datetime] = None
+
+    @field_validator("barcode")
+    @classmethod
+    def normalize_optional_barcode(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Barcode is required")
+        return normalized
+
+
+class StockScanItemDelete(BaseModel):
+    expected_session_updated_at: Optional[datetime] = None
 
 
 class BarcodeAssignment(BaseModel):
@@ -84,6 +167,7 @@ class BarcodeAssignment(BaseModel):
 
 
 class BarcodeTransferRequest(BaseModel):
+    source_variant_id: Optional[UUID] = None
     target_variant_id: UUID
     confirm_transfer: bool = False
 

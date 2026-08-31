@@ -54,6 +54,10 @@ export default function BarcodeScannerInput({
     // Many scanners send both keydown Enter and a form submit. Suppress that duplicate only.
     if (barcode === lastValueRef.current && now - lastScanAtRef.current < 250) return;
     lastValueRef.current = barcode; lastScanAtRef.current = now;
+    if (barcode.length > 40 || (/^\d+$/.test(barcode) && barcode.length > 20)) {
+      setValue(""); report("ERROR", "Barcode looks invalid. Please scan again."); if (soundEnabled) beep(false);
+      window.requestAnimationFrame(() => inputRef.current?.focus()); return;
+    }
     controllerRef.current?.abort();
     const controller = new AbortController(); controllerRef.current = controller;
     setValue(""); report("LOOKING_UP", "Looking up barcode…");
@@ -64,8 +68,8 @@ export default function BarcodeScannerInput({
     } catch (cause) {
       if (controller.signal.aborted) return;
       const text = cause instanceof Error ? cause.message : "Barcode could not be processed";
-      const unknown = /not found|not registered|barcode_not_found/i.test(text);
-      report(unknown ? "UNKNOWN" : "ERROR", unknown ? "Barcode not registered" : text);
+      const unknown = /not found|not registered|not assigned|barcode_not_found/i.test(text);
+      report(unknown ? "UNKNOWN" : "ERROR", unknown ? "Barcode available" : text);
       if (soundEnabled) beep(false);
     } finally {
       if (!controller.signal.aborted) window.requestAnimationFrame(() => inputRef.current?.focus());
@@ -74,7 +78,7 @@ export default function BarcodeScannerInput({
 
   function onSubmit(event: FormEvent) { event.preventDefault(); void submit(); }
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) { if (event.key === "Enter") { event.preventDefault(); void submit(); } }
-  const colour = status === "READY" ? "text-muted" : status === "LOOKING_UP" ? "text-primary-700" : status === "FOUND" ? "text-success" : "text-danger";
+  const colour = status === "READY" ? "text-muted" : status === "LOOKING_UP" ? "text-primary-700" : status === "FOUND" || status === "UNKNOWN" ? "text-success" : "text-danger";
 
   return <form onSubmit={onSubmit} className={`rounded-xl border border-primary-200 bg-primary-50/60 shadow-sm ${compact ? "p-2" : "p-3"}`} role="search">
     <div className={`flex items-center gap-3 ${compact ? "min-h-10" : ""}`}><div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-primary-700 text-white"><ScanLine size={19} /></div><label className="min-w-0 flex-1">{compact ? <span className="sr-only">{label}</span> : <span className="text-sm font-semibold text-foreground">{label}</span>}<input ref={inputRef} autoFocus={autoFocus} aria-label={label} className={`${compact ? "w-full" : "mt-1 w-full"} border-0 bg-transparent p-0 text-sm outline-none placeholder:text-slate-400`} placeholder={placeholder} value={value} disabled={disabled || status === "LOOKING_UP"} onChange={(event) => setValue(event.target.value)} onKeyDown={onKeyDown} autoComplete="off" /></label><Button type="submit" size="sm" variant="secondary" disabled={disabled || status === "LOOKING_UP"}>{status === "LOOKING_UP" ? "Looking up" : "Add"}</Button><button type="button" className="text-muted hover:text-foreground" title={soundEnabled ? "Turn scanner sound off" : "Turn scanner sound on"} aria-label={soundEnabled ? "Turn scanner sound off" : "Turn scanner sound on"} onClick={() => setSoundEnabled((current) => !current)}>{soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}</button></div>

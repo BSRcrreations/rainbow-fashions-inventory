@@ -11,7 +11,7 @@ from app.models.purchase_audit import PurchaseAudit
 from app.models.stock_history import StockHistory
 from app.models.stock_audit_event import StockAuditEvent
 from app.models.stock_scan import StockScanSession, StockScanSessionItem
-from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit
+from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit, ProductBarcodeVariantTarget
 from app.models.store import Store
 from app.models.supplier import Supplier
 from app.models.supplier import SupplierPayment
@@ -26,6 +26,7 @@ from app.models.stock_import import StockImport, StockImportBackup, StockImportR
 from app.models.destructive_action import DeletePasswordAttempt, DestructiveActionAudit, DestructiveIdempotencyRecord, StoreSecuritySetting
 from app.models.opening_stock_import import OpeningStockImport, OpeningStockImportAudit, OpeningStockImportError, OpeningStockImportRow
 from app.models.inventory_reconciliation import InventoryReconciliationAudit
+from app.models.catalog_migration_import import CatalogMigrationImport
 
 __all__ = [
     "Brand",
@@ -49,6 +50,7 @@ __all__ = [
     "StockScanSessionItem",
     "ProductBarcode",
     "ProductBarcodeAudit",
+    "ProductBarcodeVariantTarget",
     "Store",
     "Supplier",
     "SupplierPayment",
@@ -75,4 +77,5 @@ __all__ = [
     "OpeningStockImportError",
     "OpeningStockImportAudit",
     "InventoryReconciliationAudit",
+    "CatalogMigrationImport",
 ]

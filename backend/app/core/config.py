@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+import re
 from typing import Optional, Union
 
 from pydantic import Field, field_validator
@@ -9,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "Rainbow Fashions Inventory"
     app_env: str = "development"
+    git_sha: str = "unknown"
     api_v1_prefix: str = "/api/v1"
     debug: bool = True
 
@@ -75,6 +77,14 @@ class Settings(BaseSettings):
         if provider not in {"mock", "local", "tesseract"}:
             raise ValueError("OCR provider must be one of: mock, local, tesseract")
         return provider
+
+    @field_validator("git_sha")
+    @classmethod
+    def validate_git_sha(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value == "unknown" or re.fullmatch(r"[0-9a-f]{7,64}", value):
+            return value
+        raise ValueError("GIT_SHA must be a hexadecimal Git commit SHA or 'unknown'.")
 
     @field_validator("delete_auth_password_hash")
     @classmethod

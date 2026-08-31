@@ -19,6 +19,11 @@ def test_variant_update_schema_rejects_zero_pack_conversion():
         ProductVariantUpdate(scan_unit="PACK", pieces_per_pack=0)
 
 
+@pytest.mark.parametrize("size", ["32B", "34C", "Free Size", "Custom Size", "Brand 44-DD"])
+def test_variant_update_accepts_flexible_and_custom_sizes(size):
+    assert ProductVariantUpdate(size=size).size == size
+
+
 def test_add_details_schema_requires_reviewed_product_identity_but_never_stock_quantity():
     payload = ProductVariantDetailsCreate(
         product_id=uuid4(), barcode="NEW-DETAILS-1", internal_sku="NEW-DETAILS-1",
@@ -49,3 +54,16 @@ def test_variant_delete_requires_its_own_explicit_confirmation():
         service.permanently_delete(uuid4(), "DELETE", SimpleNamespace(), "request-1")
     assert error.value.status_code == 422
     assert error.value.detail["code"] == "DELETE_CONFIRMATION_REQUIRED"
+
+
+def test_duplicate_variant_error_identifies_the_existing_exact_variant_without_merging():
+    existing = SimpleNamespace(id=uuid4(), size="XL", color="Black", current_stock=7, is_active=True)
+
+    error = VariantManagementService._duplicate_variant_error(existing)
+
+    assert error.status_code == 409
+    assert error.detail["code"] == "VARIANT_ALREADY_EXISTS"
+    assert error.detail["message"] == "XL / Black already exists for this product."
+    assert error.detail["existing_variant"] == {
+        "id": str(existing.id), "size": "XL", "color": "Black", "current_stock": 7, "is_active": True,
+    }

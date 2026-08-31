@@ -4,10 +4,11 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
 
+from fastapi import HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import bad_request
+from app.core.exceptions import bad_request, error_payload
 from app.models.customer import CustomerPayment
 from app.models.enums import PurchaseStatus, SaleStatus
 from app.models.expense import Expense
@@ -23,14 +24,23 @@ class ReportService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def summary(self, current_user: User, start_date: Optional[date] = None, end_date: Optional[date] = None) -> BusinessReportsSummary:
+    def summary(
+        self,
+        current_user: User,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        request_id: str | None = None,
+    ) -> BusinessReportsSummary:
         store_id = current_user.store_id
         if store_id is None:
             raise bad_request("Current user is not assigned to a store")
         end_date = end_date or date.today()
         start_date = start_date or end_date - timedelta(days=30)
         if start_date > end_date:
-            raise bad_request("Start date cannot be after end date")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=error_payload("End date cannot be earlier than Start date.", "invalid_date_range", request_id=request_id),
+            )
 
         sales_total = self._sales_total(store_id, start_date, end_date)
         cost_total = self._sales_cost(store_id, start_date, end_date)
@@ -43,6 +53,7 @@ class ReportService:
         cash_sales = self._cash_sales_total(store_id, start_date, end_date)
 
         return BusinessReportsSummary(
+            has_report_data=self._has_report_data(store_id, start_date, end_date),
             profit_and_loss=ProfitAndLossReport(start_date=start_date, end_date=end_date, sales_total=sales_total, purchase_total=purchase_total, expense_total=expense_total, gross_profit=gross_profit, net_profit=net_profit),
             cash_flow=CashFlowReport(start_date=start_date, end_date=end_date, cash_sales=cash_sales, supplier_payments=supplier_payments, customer_payments=customer_payments, expenses=expense_total, net_cash_flow=cash_sales + customer_payments - supplier_payments - expense_total),
             inventory_valuation=self.inventory_valuation(current_user),
@@ -86,3 +97,17 @@ class ReportService:
 
     def _supplier_payment_total(self, store_id, start_date: date, end_date: date) -> Decimal:
         return Decimal(self.db.query(func.coalesce(func.sum(SupplierPayment.amount), 0)).filter(SupplierPayment.store_id == store_id, func.date(SupplierPayment.payment_date) >= start_date, func.date(SupplierPayment.payment_date) <= end_date).scalar() or 0)
+
+    def _has_report_data(self, store_id, start_date: date, end_date: date) -> bool:
+        """Return whether the selected period has a business transaction.
+
+        Inventory is intentionally excluded: stock on hand is a current-value
+        snapshot, not evidence that the selected period has activity.
+        """
+        return any((
+            self.db.query(Sale.id).filter(Sale.store_id == store_id, func.date(Sale.sale_date) >= start_date, func.date(Sale.sale_date) <= end_date, Sale.status.notin_([SaleStatus.CANCELLED, SaleStatus.VOIDED])).first() is not None,
+            self.db.query(Purchase.id).filter(Purchase.store_id == store_id, Purchase.purchase_date >= start_date, Purchase.purchase_date <= end_date, Purchase.status.notin_([PurchaseStatus.CANCELLED, PurchaseStatus.VOIDED])).first() is not None,
+            self.db.query(Expense.id).filter(Expense.store_id == store_id, Expense.expense_date >= start_date, Expense.expense_date <= end_date).first() is not None,
+            self.db.query(CustomerPayment.id).filter(CustomerPayment.store_id == store_id, func.date(CustomerPayment.payment_date) >= start_date, func.date(CustomerPayment.payment_date) <= end_date).first() is not None,
+            self.db.query(SupplierPayment.id).filter(SupplierPayment.store_id == store_id, func.date(SupplierPayment.payment_date) >= start_date, func.date(SupplierPayment.payment_date) <= end_date).first() is not None,
+        ))

@@ -37,3 +37,24 @@ def test_negative_variant_stock_is_critical() -> None:
     item = InventoryReconciliationService(None)._product_items(product(-1, -1, -1, 0), STORE_ID)[0]
     assert item.category == "NEGATIVE_STOCK"
     assert item.severity == "CRITICAL"
+
+
+def test_zero_stock_product_without_variants_is_a_legacy_catalog_warning() -> None:
+    record = SimpleNamespace(id=uuid4(), name="Catalog-only legacy", current_stock=0, variants=[], inventory_items=[])
+
+    item = InventoryReconciliationService(None)._product_items(record, STORE_ID)[0]
+
+    assert item.category == "LEGACY_CATALOG_ONLY"
+    assert item.severity == "WARNING"
+    assert not item.repair_eligible
+
+
+def test_zero_stock_product_without_inventory_aggregate_is_a_legacy_warning() -> None:
+    record = product(0, 0, 0, 0)
+    record.inventory_items = []
+
+    item = InventoryReconciliationService(None)._product_items(record, STORE_ID)[0]
+
+    assert item.category == "LEGACY_STORE_INVENTORY_ABSENT"
+    assert item.severity == "WARNING"
+    assert not item.repair_eligible

@@ -86,6 +86,8 @@ def bootstrap_owner(
         store = Store(name=store_name, code=store_code, is_active=True)
         db.add(store)
         db.flush()
+    else:
+        store.is_active = True
 
     if existing_user is None:
         db.add(

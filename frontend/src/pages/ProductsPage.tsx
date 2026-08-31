@@ -7,6 +7,8 @@ import BarcodeScannerInput from "../components/BarcodeScannerInput";
 import BarcodeLabelDialog from "../components/BarcodeLabelDialog";
 import VariantManagementDialog from "../components/VariantManagementDialog";
 import ProductBarcodeDetailsDialog from "../components/ProductBarcodeDetailsDialog";
+import BarcodeLookupDialog from "../components/BarcodeLookupDialog";
+import DeletePasswordDialog from "../components/DeletePasswordDialog";
 import Dialog from "../components/Dialog";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
@@ -37,7 +39,7 @@ interface BulkDeleteBlocked {
 }
 
 interface BulkDeleteCheck {
-  deletable: Array<{ product_id: string; product_name: string }>;
+  deletable: Array<{ product_id: string; product_name: string; classification: "ZERO_STOCK_INVENTORY_ONLY"; references: Record<string, number> }>;
   blocked: BulkDeleteBlocked[];
   request_id: string;
 }
@@ -149,12 +151,17 @@ export default function ProductsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteCheck, setDeleteCheck] = useState<BulkDeleteCheck | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deletePasswordOpen, setDeletePasswordOpen] = useState(false);
+  const [deletePasswordError, setDeletePasswordError] = useState("");
+  const [deleteIdempotencyKey, setDeleteIdempotencyKey] = useState("");
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
   const [purgeConfirmation, setPurgeConfirmation] = useState("");
   const [deleteResult, setDeleteResult] = useState<BulkDeleteResult | null>(null);
   const [printTarget, setPrintTarget] = useState<Product | null>(null);
   const [managedVariant, setManagedVariant] = useState<{ product: Product; variant: ProductVariant } | null>(null);
   const [newBarcode, setNewBarcode] = useState("");
   const [error, setError] = useState("");
+  const [barcodeLookupOpen, setBarcodeLookupOpen] = useState(false);
 
   useEffect(() => {
     setPage(1);
@@ -299,10 +306,10 @@ export default function ProductsPage() {
     }
     const sizes = form.sizes.map((value) => value.trim()).filter(Boolean);
     const colors = form.colors.map((value) => value.trim()).filter(Boolean);
-    if (form.has_sizes && !sizes.length) return "Add at least one size or turn off sizes";
-    if (form.has_colors && !colors.length) return "Add at least one color or turn off colors";
-    if (new Set(sizes.map((value) => value.toLocaleLowerCase())).size !== sizes.length) return "Sizes must be unique";
-    if (new Set(colors.map((value) => value.toLocaleLowerCase())).size !== colors.length) return "Colors must be unique";
+    if (!editing && form.has_sizes && !sizes.length) return "Add at least one size or turn off sizes";
+    if (!editing && form.has_colors && !colors.length) return "Add at least one color or turn off colors";
+    if (!editing && new Set(sizes.map((value) => value.toLocaleLowerCase())).size !== sizes.length) return "Sizes must be unique";
+    if (!editing && new Set(colors.map((value) => value.toLocaleLowerCase())).size !== colors.length) return "Colors must be unique";
     const purchasePrice = Number(form.purchase_price);
     const sellingPrice = Number(form.selling_price);
     const currentStock = Number(form.current_stock);
@@ -405,6 +412,8 @@ export default function ProductsPage() {
     setError("");
     setDeleteCheck(null);
     setDeleteConfirmation("");
+    setDeletePasswordError("");
+    setDeleteIdempotencyKey(crypto.randomUUID());
     setPurgeConfirmation("");
     setDeleteDialogOpen(true);
     try {
@@ -417,24 +426,43 @@ export default function ProductsPage() {
     }
   }
 
-  async function confirmPermanentDelete() {
+  function confirmPermanentDelete() {
     const eligibleIds = deleteCheck?.deletable.map((item) => item.product_id) ?? [];
     if (!eligibleIds.length || deleteConfirmation !== "DELETE") return;
+    setDeletePasswordError("");
+    setDeletePasswordOpen(true);
+  }
+
+  async function submitPermanentDelete(deletePassword: string) {
+    const eligibleIds = deleteCheck?.deletable.map((item) => item.product_id) ?? [];
+    if (!eligibleIds.length || !deleteIdempotencyKey) return;
+    setDeleteSubmitting(true);
+    setDeletePasswordError("");
     try {
-      const result = await api.post<BulkDeleteResult>("/products/bulk-delete", { product_ids: eligibleIds, confirmation: deleteConfirmation }, { "X-Request-ID": deleteCheck?.request_id ?? "" });
+      const result = await api.post<BulkDeleteResult>("/products/bulk-delete", {
+        product_ids: eligibleIds,
+        confirmation: "DELETE",
+        delete_password: deletePassword,
+      }, {
+        "X-Request-ID": deleteCheck?.request_id ?? "",
+        "Idempotency-Key": deleteIdempotencyKey,
+      });
       setDeleteResult({ ...result, blocked: [...(deleteCheck?.blocked ?? []), ...result.blocked] });
       setSelectedIds((current) => {
         const next = new Set(current);
         result.deleted.forEach((item) => next.delete(item.product_id));
         return next;
       });
+      setDeletePasswordOpen(false);
       setDeleteDialogOpen(false);
       invalidateProducts();
       toast.success(`${result.deleted.length} product${result.deleted.length === 1 ? "" : "s"} permanently deleted`);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to permanently delete products";
-      setError(message);
+      setDeletePasswordError(message);
       toast.error(message);
+    } finally {
+      setDeleteSubmitting(false);
     }
   }
 
@@ -628,6 +656,7 @@ export default function ProductsPage() {
               <FileUp size={16} /> Import original stock
               <input className="hidden" type="file" accept=".csv,.xlsx" onChange={(event) => void importFile(event)} />
             </label>
+            {canPermanentlyDelete ? <Button type="button" variant="secondary" size="sm" onClick={() => setBarcodeLookupOpen(true)} title="Find barcode"><Barcode size={16} /> Find Barcode</Button> : null}
             <Button type="button" variant="secondary" size="sm" onClick={() => void exportProducts("xlsx")} title="Export products"><Download size={16} /> Export</Button>
             <Button type="button" size="sm" onClick={beginCreate}><Plus size={16} /> New product</Button>
           </div>
@@ -743,7 +772,7 @@ export default function ProductsPage() {
         <label className="field-label">Product date<span>*</span><input className="field-input" type="date" value={form.product_date} onChange={(event) => setForm({ ...form, product_date: event.target.value })} disabled={saveMutation.isPending} /></label>
         <label className="field-label">HSN / SAC<input className="field-input" placeholder="Optional" value={form.hsn_sac} onChange={(event) => setForm((current) => ({ ...current, hsn_sac: event.target.value }))} disabled={saveMutation.isPending} /></label>
         <label className="field-label sm:col-span-2">Description<textarea className="field-input mt-1 min-h-20" placeholder="Optional product details" value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} disabled={saveMutation.isPending} /></label>
-        <div className="grid gap-3 rounded-lg border border-border bg-surface-subtle p-4 sm:col-span-2 sm:grid-cols-2">
+        {!editing ? <><div className="grid gap-3 rounded-lg border border-border bg-surface-subtle p-4 sm:col-span-2 sm:grid-cols-2">
           <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border bg-surface px-3 text-sm font-semibold text-slate-700">
             <input type="checkbox" checked={form.has_colors} onChange={(event) => setVariantEnabled("colors", event.target.checked)} disabled={saveMutation.isPending} />
             This product has Colors
@@ -754,7 +783,7 @@ export default function ProductsPage() {
           </label>
         </div>
         {form.has_colors ? <div className="space-y-3 rounded-lg border border-border p-4 sm:col-span-2"><div><div className="text-sm font-semibold text-foreground">Colors</div><div className="mt-1 text-xs text-muted">Add every color this product is available in.</div></div>{form.colors.map((color, index) => <div key={`color-${index}`} className="flex gap-2"><input className="field-input min-w-0 flex-1" aria-label={`Color ${index + 1}`} placeholder="e.g. Black" value={color} onChange={(event) => setVariantValue("colors", index, event.target.value)} disabled={saveMutation.isPending} />{form.colors.length > 1 ? <Button type="button" variant="ghost" size="icon" onClick={() => removeVariantValue("colors", index)} aria-label={`Remove color ${index + 1}`}><X size={17} /></Button> : null}</div>)}<Button type="button" variant="secondary" size="sm" onClick={() => addVariantValue("colors")} disabled={saveMutation.isPending}><Plus size={16} /> Add Another</Button></div> : null}
-        {form.has_sizes ? <div className="space-y-3 rounded-lg border border-border p-4 sm:col-span-2"><div><div className="text-sm font-semibold text-foreground">Sizes</div><div className="mt-1 text-xs text-muted">Add every size this product is available in.</div></div>{form.sizes.map((size, index) => <div key={`size-${index}`} className="flex gap-2"><input className="field-input min-w-0 flex-1" aria-label={`Size ${index + 1}`} placeholder="e.g. M" value={size} onChange={(event) => setVariantValue("sizes", index, event.target.value)} disabled={saveMutation.isPending} />{form.sizes.length > 1 ? <Button type="button" variant="ghost" size="icon" onClick={() => removeVariantValue("sizes", index)} aria-label={`Remove size ${index + 1}`}><X size={17} /></Button> : null}</div>)}<Button type="button" variant="secondary" size="sm" onClick={() => addVariantValue("sizes")} disabled={saveMutation.isPending}><Plus size={16} /> Add Another</Button></div> : null}
+        {form.has_sizes ? <div className="space-y-3 rounded-lg border border-border p-4 sm:col-span-2"><div><div className="text-sm font-semibold text-foreground">Sizes</div><div className="mt-1 text-xs text-muted">Add every size this product is available in.</div></div>{form.sizes.map((size, index) => <div key={`size-${index}`} className="flex gap-2"><input className="field-input min-w-0 flex-1" aria-label={`Size ${index + 1}`} placeholder="e.g. M" value={size} onChange={(event) => setVariantValue("sizes", index, event.target.value)} disabled={saveMutation.isPending} />{form.sizes.length > 1 ? <Button type="button" variant="ghost" size="icon" onClick={() => removeVariantValue("sizes", index)} aria-label={`Remove size ${index + 1}`}><X size={17} /></Button> : null}</div>)}<Button type="button" variant="secondary" size="sm" onClick={() => addVariantValue("sizes")} disabled={saveMutation.isPending}><Plus size={16} /> Add Another</Button></div> : null}</> : <div className="rounded-lg border border-teal-100 bg-teal-50/50 p-3 text-sm text-teal-950 sm:col-span-2">Sizes and colours belong to exact variants. Open a variant’s <strong>Manage</strong> action to correct them.</div>}
         <label className="field-label">Cost price<span>*</span><input className="field-input" placeholder="0.00" type="number" min="0" step="0.01" value={form.purchase_price} onChange={(event) => setForm({ ...form, purchase_price: event.target.value })} disabled={saveMutation.isPending} /></label>
         <label className="field-label">Selling price<span>*</span><input className="field-input" placeholder="0.00" type="number" min="0" step="0.01" value={form.selling_price} onChange={(event) => setForm({ ...form, selling_price: event.target.value })} disabled={saveMutation.isPending} /></label>
         <label className="field-label">Pricing<select className="field-input" value={form.pricing_type} onChange={(event) => setForm({ ...form, pricing_type: event.target.value as PricingType })} disabled={saveMutation.isPending}>
@@ -936,16 +965,29 @@ export default function ProductsPage() {
       )}
 
       <BarcodeLabelDialog open={Boolean(printTarget)} product={printTarget} onClose={() => setPrintTarget(null)} />
-      {managedVariant ? <VariantManagementDialog key={managedVariant.variant.id} open product={managedVariant.product} variant={managedVariant.variant} canPermanentlyDelete={canPermanentlyDelete} onClose={() => setManagedVariant(null)} onSaved={invalidateProducts} onEditProduct={() => { const product = managedVariant.product; setManagedVariant(null); beginEdit(product); }} /> : null}
+      {managedVariant ? <VariantManagementDialog key={managedVariant.variant.id} open product={managedVariant.product} variant={managedVariant.variant} canPermanentlyDelete={canPermanentlyDelete} onClose={() => setManagedVariant(null)} onSaved={invalidateProducts} onEditProduct={() => { const product = managedVariant.product; setManagedVariant(null); beginEdit(product); }} onUseExistingVariant={(variantId) => { const existing = managedVariant.product.variants.find((candidate) => candidate.id === variantId); if (existing) setManagedVariant({ product: managedVariant.product, variant: existing }); else { setManagedVariant(null); toast.error("Reload the product list before selecting the existing variant."); } }} /> : null}
       {newBarcode ? <ProductBarcodeDetailsDialog key={newBarcode} open barcode={newBarcode} onClose={() => setNewBarcode("")} onCreated={async (productId, variantId) => { invalidateProducts(); const product = await api.get<Product>(`/products/${productId}`); const variant = product.variants.find((candidate) => candidate.id === variantId); setNewBarcode(""); if (variant) setManagedVariant({ product, variant }); toast.success("Details added. No stock was created."); }} /> : null}
+      {canPermanentlyDelete ? <BarcodeLookupDialog open={barcodeLookupOpen} products={products} onClose={() => setBarcodeLookupOpen(false)} onManageVariant={(variantId) => { const product = products.find((candidate) => candidate.variants.some((variant) => variant.id === variantId)); const variant = product?.variants.find((candidate) => candidate.id === variantId); if (product && variant) { setManagedVariant({ product, variant }); setBarcodeLookupOpen(false); } }} onChanged={() => { void productsQuery.refetch(); }} /> : null}
       <Dialog open={deleteDialogOpen} title={`Permanently delete ${deleteCheck ? deleteCheck.deletable.length + deleteCheck.blocked.length : selectedCount} product${(deleteCheck ? deleteCheck.deletable.length + deleteCheck.blocked.length : selectedCount) === 1 ? "" : "s"}?`} description="This action cannot be undone." onClose={() => setDeleteDialogOpen(false)} maxWidth="lg">
         {!deleteCheck ? <SkeletonRows rows={3} /> : <div className="space-y-5">
-          {deleteCheck.deletable.length ? <section><h3 className="text-sm font-semibold text-foreground">Eligible for permanent deletion</h3><p className="mt-1 text-sm text-muted">The following products and their unused variants will be permanently removed.</p><ul className="mt-3 space-y-1 text-sm text-foreground">{deleteCheck.deletable.map((item) => <li key={item.product_id}>- {item.product_name}</li>)}</ul></section> : null}
-          {deleteCheck.blocked.length ? <section className="rounded-lg border border-amber-200 bg-amber-50 p-4"><h3 className="text-sm font-semibold text-amber-950">Blocked products</h3><p className="mt-1 text-sm text-amber-900">Product cannot be deleted because it has stock or transaction history.</p><ul className="mt-3 space-y-3 text-sm text-amber-900">{deleteCheck.blocked.map((item) => { const product = products.find((candidate) => candidate.id === item.product_id); const currentStock = product?.variants.reduce((sum, variant) => sum + variant.current_stock, 0) ?? 0; return <li key={item.product_id} className="rounded-lg bg-white/60 p-3"><div className="font-medium">{item.product_name}</div><div className="mt-1 text-xs">{item.reason}</div><div className="mt-2 grid gap-1 text-xs sm:grid-cols-2"><span>Current stock: {currentStock}</span><span>Variant count: {item.references.variants ?? product?.variants.length ?? 0}</span><span>Inventory transaction count: {item.references.inventory_transactions ?? 0}</span><span>Sales dependencies: {item.references.sale_items ?? 0}</span><span>Purchase dependencies: {item.references.purchase_items ?? 0}</span></div><div className="mt-3 flex flex-wrap gap-2"><Button type="button" size="sm" variant="secondary" onClick={() => openStockAdjustmentForProduct(product ?? null)}>Correct stock</Button><Button type="button" size="sm" variant="secondary" onClick={() => { if (product) void api.post(`/products/${product.id}/archive`).then(() => { toast.success("Product archived"); invalidateProducts(); setDeleteDialogOpen(false); }).catch((cause: unknown) => toast.error(cause instanceof Error ? cause.message : "Unable to archive product")); }}><Archive size={14} /> Archive product</Button><Button type="button" size="sm" variant="secondary" onClick={() => navigate(`/stock?product_id=${item.product_id}`)}><History size={14} /> View history</Button></div></li>; })}</ul></section> : null}
-          {deleteCheck.deletable.length ? <section className="rounded-lg border border-rose-200 bg-rose-50 p-4"><label className="field-label text-rose-950">Type DELETE to continue<input className="field-input mt-2" autoFocus value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><div className="mt-4 flex flex-wrap justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button><Button type="button" variant="destructive" disabled={deleteConfirmation !== "DELETE"} onClick={() => void confirmPermanentDelete()}>Permanently delete eligible</Button></div></section> : <div className="flex justify-end"><Button type="button" variant="secondary" onClick={() => setDeleteDialogOpen(false)}>Close</Button></div>}
+          {deleteCheck.deletable.length ? <section className="rounded-lg border border-rose-200 bg-rose-50 p-4"><h3 className="text-sm font-semibold text-rose-950">Can permanently delete</h3><p className="mt-1 text-sm text-rose-900">Zero stock • No sales • No purchases • Inventory-only history</p><p className="mt-2 text-sm text-rose-900">Inventory-only history from the incorrect entry will be removed. An audit snapshot will be retained.</p><ul className="mt-3 space-y-1 text-sm text-foreground">{deleteCheck.deletable.map((item) => <li key={item.product_id}>- {item.product_name}</li>)}</ul></section> : null}
+          {deleteCheck.blocked.length ? <section className="rounded-lg border border-amber-200 bg-amber-50 p-4"><h3 className="text-sm font-semibold text-amber-950">Cannot permanently delete</h3><p className="mt-1 text-sm text-amber-900">Protected products are left untouched. Each blocker is shown below.</p><ul className="mt-3 space-y-3 text-sm text-amber-900">{deleteCheck.blocked.map((item) => { const product = products.find((candidate) => candidate.id === item.product_id); const currentStock = product?.variants.reduce((sum, variant) => sum + variant.current_stock, 0) ?? 0; return <li key={item.product_id} className="rounded-lg bg-white/60 p-3"><div className="font-medium">{item.product_name}</div><div className="mt-1 text-xs">{item.reason}</div><div className="mt-2 grid gap-1 text-xs sm:grid-cols-2"><span>Current stock: {item.references.physical_stock ?? currentStock}</span><span>Active cost-lot pieces: {item.references.active_cost_lot_pieces ?? 0}</span><span>Sales dependencies: {item.references.sale_items ?? 0}</span><span>Purchase dependencies: {item.references.purchase_items ?? 0}</span><span>Protected transactions: {item.references.protected_transactions ?? 0}</span><span>Inventory-only history: {item.references.inventory_transactions ?? 0}</span></div><div className="mt-3 flex flex-wrap gap-2"><Button type="button" size="sm" variant="secondary" onClick={() => openStockAdjustmentForProduct(product ?? null)}>Correct stock</Button><Button type="button" size="sm" variant="secondary" onClick={() => { if (product) void api.post(`/products/${product.id}/archive`).then(() => { toast.success("Product archived"); invalidateProducts(); setDeleteDialogOpen(false); }).catch((cause: unknown) => toast.error(cause instanceof Error ? cause.message : "Unable to archive product")); }}><Archive size={14} /> Archive product</Button><Button type="button" size="sm" variant="secondary" onClick={() => navigate(`/stock?product_id=${item.product_id}`)}><History size={14} /> View history</Button></div></li>; })}</ul></section> : null}
+          {deleteCheck.deletable.length ? <section className="rounded-lg border border-rose-200 bg-rose-50 p-4"><label className="field-label text-rose-950">Type DELETE to continue<input className="field-input mt-2" autoFocus value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} /></label><div className="mt-4 flex flex-wrap justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button><Button type="button" variant="destructive" disabled={deleteConfirmation !== "DELETE"} onClick={confirmPermanentDelete}>Permanently delete wrong entry</Button></div></section> : <div className="flex justify-end"><Button type="button" variant="secondary" onClick={() => setDeleteDialogOpen(false)}>Close</Button></div>}
           {canPermanentlyDelete && Array.from(selectedIds).some((id) => products.find((product) => product.id === id)?.is_test_data) ? <section className="border-t border-border pt-5"><h3 className="text-sm font-semibold text-foreground">Purge selected test products</h3><p className="mt-1 text-sm text-muted">Only explicitly marked test products can use this owner-only workflow.</p><label className="field-label mt-3">Type PURGE TEST DATA to continue<input className="field-input mt-2" value={purgeConfirmation} onChange={(event) => setPurgeConfirmation(event.target.value)} /></label><div className="mt-3 flex justify-end"><Button type="button" variant="destructive" disabled={purgeConfirmation !== "PURGE TEST DATA"} onClick={() => void purgeSelectedTestProducts()}>Purge selected test products</Button></div></section> : null}
         </div>}
       </Dialog>
+      <DeletePasswordDialog
+        open={deletePasswordOpen}
+        title="Confirm permanent wrong-entry deletion"
+        summary="This product has no stock, sales or purchase dependencies. Inventory-only history from the incorrect entry will be removed. An audit snapshot will be retained."
+        submitLabel="Permanently delete wrong entry"
+        loading={deleteSubmitting}
+        error={deletePasswordError}
+        requestId={deleteCheck?.request_id}
+        onClose={() => { setDeletePasswordOpen(false); setDeletePasswordError(""); }}
+        onSubmit={(password) => void submitPermanentDelete(password)}
+        onConfigurePassword={() => navigate("/settings/security")}
+      />
       <Dialog open={Boolean(deleteResult)} title="Deletion completed" onClose={() => setDeleteResult(null)} maxWidth="md">
         <div className="space-y-4"><section><h3 className="text-sm font-semibold text-foreground">Deleted</h3>{deleteResult?.deleted.length ? <ul className="mt-2 space-y-1 text-sm">{deleteResult.deleted.map((item) => <li key={item.product_id}>- {item.product_name}</li>)}</ul> : <p className="mt-2 text-sm text-muted">No products were deleted.</p>}</section>{deleteResult?.blocked.length ? <section><h3 className="text-sm font-semibold text-foreground">Could not delete</h3><ul className="mt-2 space-y-2 text-sm">{deleteResult.blocked.map((item) => <li key={item.product_id}><div className="font-medium">{item.product_name}</div><div className="text-muted">{item.reason}</div></li>)}</ul></section> : null}<div className="flex justify-end"><Button type="button" onClick={() => setDeleteResult(null)}>Close</Button></div></div>
       </Dialog>

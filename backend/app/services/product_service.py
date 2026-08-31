@@ -124,11 +124,11 @@ class ProductService:
             raise not_found("Product")
         return product
 
-    def get_by_barcode(self, barcode: str) -> Product:
+    def get_by_barcode(self, barcode: str, store_id: UUID | None = None) -> Product:
         normalized = barcode.strip()
         if not normalized:
             raise bad_request("Barcode is required")
-        product = self.repo.get_by_barcode_with_relations(normalized)
+        product = self.repo.get_by_barcode_with_relations(normalized, store_id) if store_id is not None else self.repo.get_by_barcode_with_relations(normalized)
         if not product:
             raise not_found("Product for this barcode")
         return product

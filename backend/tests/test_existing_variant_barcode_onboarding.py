@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import inspect
 from types import SimpleNamespace
@@ -13,7 +14,7 @@ from pydantic import ValidationError
 from app.models.enums import StockScanStatus
 from app.models.product_barcode import ProductBarcode, ProductBarcodeAudit
 from app.models.stock_history import StockHistory
-from app.schemas.stock_scan import BarcodeProductOnboarding, BarcodeTransferLineRead, BulkBarcodeTransferRequest
+from app.schemas.stock_scan import BarcodeProductOnboarding, BarcodeTransferLineRead, BulkBarcodeTransferRequest, StockScanItemUpdate, VariantStockStageRequest
 from app.services.stock_scan_service import StockScanService
 
 
@@ -178,6 +179,97 @@ def test_existing_variant_creates_a_mapping_and_adds_only_the_draft_line():
     assert result.id
 
 
+def test_select_product_first_new_barcode_assigns_and_stages_without_stock_movement():
+    service, db, session, store_id = configured_service()
+    variant = active_variant(store_id)
+    before_stock = variant.current_stock
+    service._editable_session = MagicMock(return_value=session)
+    service._variant_for_store = MagicMock(return_value=variant)
+    service._barcode_mapping = MagicMock(return_value=None)
+    service._ensure_barcode_target = MagicMock()
+    service._add_mapping_to_session = MagicMock()
+
+    service.stage_selected_variant(session.id, VariantStockStageRequest(product_variant_id=variant.id, barcode="RF-SELECTED-1", quantity=12), user(store_id))
+
+    service._add_mapping_to_session.assert_called_once()
+    assert service._add_mapping_to_session.call_args.args[3] == 12
+    assert variant.current_stock == before_stock
+    db.commit.assert_called_once()
+
+
+def test_shared_barcode_requires_confirmation_before_adding_a_new_size_target():
+    service, db, session, store_id = configured_service()
+    product_id = uuid4()
+    existing = active_variant(store_id); existing.product_id = product_id; existing.size = "S"; existing.color = "Black"
+    target = active_variant(store_id); target.product_id = product_id; target.product.name = "PR Full"; target.size = "M"; target.color = "Black"
+    mapping = SimpleNamespace(id=uuid4(), barcode="8905072572016", product_id=product_id, product_variant_id=existing.id, active=True)
+    service._editable_session = MagicMock(return_value=session)
+    service._variant_for_store = MagicMock(return_value=target)
+    service._barcode_mapping = MagicMock(return_value=mapping)
+    service._barcode_targets = MagicMock(return_value=[existing])
+
+    with pytest.raises(HTTPException) as error:
+        service.stage_selected_variant(session.id, VariantStockStageRequest(product_variant_id=target.id, barcode=mapping.barcode, quantity=1), user(store_id))
+
+    assert error.value.detail["code"] == "SHARED_BARCODE_CONFIRMATION_REQUIRED"
+    assert error.value.detail["targets"][0]["size"] == "S"
+    assert target.current_stock == 9
+    db.commit.assert_not_called()
+
+
+def test_cross_product_barcode_requires_explicit_mapping_confirmation_without_staging_inventory():
+    service, db, session, store_id = configured_service()
+    existing = active_variant(store_id); existing.product.name = "Sports Bra"; existing.product.brand = SimpleNamespace(name="Within"); existing.size = "36B"; existing.color = "White"
+    target = active_variant(store_id); target.product.name = "PR Full"; target.size = "M"; target.color = "Black"
+    mapping = SimpleNamespace(id=uuid4(), barcode="8905072572016", product_id=existing.product_id, product_variant_id=existing.id, active=True)
+    service._editable_session = MagicMock(return_value=session)
+    service._variant_for_store = MagicMock(return_value=target)
+    service._barcode_mapping = MagicMock(return_value=mapping)
+    service._barcode_targets = MagicMock(return_value=[existing])
+
+    with pytest.raises(HTTPException) as error:
+        service.stage_selected_variant(session.id, VariantStockStageRequest(product_variant_id=target.id, barcode=mapping.barcode, quantity=1), user(store_id))
+
+    assert error.value.detail["code"] == "SHARED_BARCODE_CONFIRMATION_REQUIRED"
+    assert error.value.detail["targets"][0]["product_name"] == "Sports Bra"
+    assert target.current_stock == 9
+    db.commit.assert_not_called()
+
+
+def test_draft_edit_reuses_an_existing_shared_barcode_target_without_duplicate_link():
+    service, _, _, store_id = configured_service()
+    variant = active_variant(store_id); variant.color = "Black"; variant.product.name = "OE Intimacy"
+    mapping = SimpleNamespace(id=uuid4(), barcode="8905072572016", product_id=variant.product_id, product_variant_id=variant.id, active=True)
+    service._barcode_mapping = MagicMock(return_value=mapping)
+    service._barcode_targets = MagicMock(return_value=[variant])
+    service._ensure_barcode_target = MagicMock()
+
+    result = service._draft_mapping_for_variant(mapping.barcode, variant, store_id, user(store_id), False)
+
+    assert result is mapping
+    service._ensure_barcode_target.assert_not_called()
+    assert mapping.active is True
+
+
+def test_stale_draft_edit_is_rejected_before_any_inventory_work():
+    session = SimpleNamespace(updated_at=datetime.now(timezone.utc))
+
+    with pytest.raises(HTTPException) as error:
+        StockScanService._assert_draft_version(session, session.updated_at - timedelta(seconds=1))
+
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "STOCK_DRAFT_STALE"
+
+
+def test_draft_edit_schema_supports_variant_barcode_and_quantity_correction():
+    variant_id = uuid4()
+    payload = StockScanItemUpdate(product_variant_id=variant_id, barcode="  RF-CORRECT-1 ", scanned_quantity=8, expected_session_updated_at=datetime.now(timezone.utc))
+
+    assert payload.product_variant_id == variant_id
+    assert payload.barcode == "RF-CORRECT-1"
+    assert payload.scanned_quantity == 8
+
+
 def test_new_variant_blocks_an_exact_duplicate_variant_before_creating_anything():
     service, db, _, store_id = configured_service()
     product = SimpleNamespace(id=uuid4(), store_id=store_id)
@@ -273,16 +365,18 @@ def test_existing_variant_reuses_its_current_mapping_and_adds_the_scan():
     assert not any(isinstance(item.args[0], ProductBarcode) for item in db.add.call_args_list)
 
 
-def test_existing_variant_rejects_a_barcode_mapped_to_a_different_variant():
+def test_existing_variant_adds_a_target_for_a_barcode_mapped_to_a_different_variant():
     service, _, _, store_id = configured_service()
     variant = active_variant(store_id)
+    mapping = SimpleNamespace(id=uuid4(), barcode="0012345678905", product_variant_id=uuid4(), active=True)
     service._variant_for_store = MagicMock(return_value=variant)
-    service._barcode_mapping = MagicMock(return_value=SimpleNamespace(product_variant_id=uuid4(), active=True))
+    service._barcode_mapping = MagicMock(return_value=mapping)
+    service._ensure_barcode_target = MagicMock()
+    service._add_mapping_to_session = MagicMock()
 
-    with pytest.raises(HTTPException, match="already assigned to another product variant") as error:
-        service.onboard_product(existing_payload(product_variant_id=variant.id), user(store_id))
+    service.onboard_product(existing_payload(product_variant_id=variant.id), user(store_id))
 
-    assert error.value.status_code == 409
+    service._ensure_barcode_target.assert_called_once()
 
 
 def test_existing_variant_rejects_a_confirmed_session_without_mutating_it():

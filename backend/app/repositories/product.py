@@ -5,12 +5,13 @@ from decimal import Decimal
 from typing import Literal, Optional
 from uuid import UUID
 
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import joinedload, selectinload
 
 from app.models.brand import Brand
 from app.models.category import Category
 from app.models.product import Product
+from app.models.product_barcode import ProductBarcode
 from app.models.product_variant import ProductVariant
 from app.models.stock_history import StockHistory
 from app.models.subcategory import SubCategory
@@ -90,9 +91,10 @@ class ProductRepository(BaseRepository[Product]):
                         or_(
                             ProductVariant.color.ilike(pattern),
                             ProductVariant.size.ilike(pattern),
-                            ProductVariant.barcode.ilike(pattern),
+                            and_(ProductVariant.barcode.ilike(pattern), ~ProductVariant.barcode_mappings.any(ProductBarcode.barcode.ilike(pattern))),
                             ProductVariant.internal_sku.ilike(pattern),
                             ProductVariant.manufacturer_sku.ilike(pattern),
+                            ProductVariant.barcode_mappings.any(and_(ProductBarcode.active.is_(True), ProductBarcode.barcode.ilike(pattern))),
                         )
                     ),
                     Product.barcode.ilike(pattern),
@@ -166,17 +168,32 @@ class ProductRepository(BaseRepository[Product]):
             query = query.filter(Product.id != exclude_id)
         return query.first()
 
-    def get_by_barcode(self, barcode: str, exclude_id: Optional[UUID] = None) -> Optional[Product]:
-        query = self.db.query(Product).filter(func.lower(Product.barcode) == barcode.strip().lower())
+    def get_by_barcode(self, barcode: str, exclude_id: Optional[UUID] = None, store_id: Optional[UUID] = None) -> Optional[Product]:
+        normalized = barcode.strip().lower()
+        query = self.db.query(Product).filter(or_(
+            func.lower(Product.barcode) == normalized,
+            Product.variants.any(and_(func.lower(ProductVariant.barcode) == normalized, ~ProductVariant.barcode_mappings.any(func.lower(ProductBarcode.barcode) == normalized))),
+            Product.variants.any(ProductVariant.barcode_mappings.any(and_(ProductBarcode.active.is_(True), func.lower(ProductBarcode.barcode) == normalized))),
+        ))
+        if store_id is not None:
+            query = query.filter(Product.store_id == store_id)
         if exclude_id:
             query = query.filter(Product.id != exclude_id)
         return query.first()
 
-    def get_by_barcode_with_relations(self, barcode: str) -> Optional[Product]:
+    def get_by_barcode_with_relations(self, barcode: str, store_id: Optional[UUID] = None) -> Optional[Product]:
+        normalized = barcode.strip().lower()
+        filters = or_(
+            func.lower(Product.barcode) == normalized,
+            Product.variants.any(and_(func.lower(ProductVariant.barcode) == normalized, ~ProductVariant.barcode_mappings.any(func.lower(ProductBarcode.barcode) == normalized))),
+            Product.variants.any(ProductVariant.barcode_mappings.any(and_(ProductBarcode.active.is_(True), func.lower(ProductBarcode.barcode) == normalized))),
+        )
+        if store_id is not None:
+            filters = and_(filters, Product.store_id == store_id)
         return (
             self.db.query(Product)
             .options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand), selectinload(Product.variants))
-            .filter(func.lower(Product.barcode) == barcode.strip().lower())
+            .filter(filters)
             .first()
         )
 

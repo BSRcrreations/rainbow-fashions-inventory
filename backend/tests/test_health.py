@@ -2,7 +2,8 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-from app.main import READY_TABLES, app
+from app.core.config import Settings
+from app.main import READY_TABLES, app, settings
 
 
 client = TestClient(app)
@@ -21,6 +22,19 @@ def test_liveness_alias_returns_ok() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "service": "backend"}
+
+
+def test_version_exposes_only_deployment_identity() -> None:
+    response = client.get("/version")
+
+    assert response.status_code == 200
+    assert response.json() == {"git_sha": settings.git_sha, "environment": settings.app_env}
+    assert response.headers["X-App-Version"] == settings.git_sha
+
+
+def test_git_sha_accepts_only_commit_identifiers_or_unknown() -> None:
+    assert Settings(git_sha="64D0ADE").git_sha == "64d0ade"
+    assert Settings(git_sha="unknown").git_sha == "unknown"
 
 
 def test_readiness_health_returns_ok_when_database_query_succeeds() -> None:

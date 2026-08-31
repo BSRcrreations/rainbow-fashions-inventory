@@ -176,6 +176,7 @@ class ProductVariantRead(ORMBaseModel):
     is_active: bool
     scan_unit: Literal["PIECE", "PACK"] = "PIECE"
     pieces_per_pack: int = 1
+    barcodes: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -289,6 +290,7 @@ class ProductBulkIds(BaseModel):
 
 class ProductBulkDeleteRequest(ProductBulkIds):
     confirmation: str = Field(min_length=1, max_length=40)
+    delete_password: str = Field(min_length=1, max_length=256)
 
 
 class ProductBulkPurgeTestDataRequest(ProductBulkIds):

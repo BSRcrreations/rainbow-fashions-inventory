@@ -17,15 +17,24 @@ from app.schemas.stock import (
     StockAdjustmentCreate,
     StockCorrectionCreate,
     StockHistoryRead,
+    InventoryValuationRead,
     StockResetConfirmRequest,
     StockResetPreviewRequest,
     StockResetPreviewResponse,
     StockResetResponse,
+    VariantCorrectionMoveRequest,
+    VariantCorrectionMoveResponse,
+    VariantCorrectionPreviewResponse,
 )
 from app.services.stock_service import StockService
 
 
 router = APIRouter(prefix="/stock", tags=["Stock"])
+
+
+@router.get("/valuation", response_model=InventoryValuationRead)
+def inventory_valuation(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+    return StockService(db).inventory_valuation(current_user)
 
 
 @router.get("/history/export")
@@ -78,6 +87,28 @@ def stock_history(
 @router.post("/adjustments", response_model=StockHistoryRead, status_code=status.HTTP_201_CREATED)
 def adjust_stock(payload: StockAdjustmentCreate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
     return StockService(db).adjust(payload, current_user)
+
+
+@router.post("/variant-corrections/preview", response_model=VariantCorrectionPreviewResponse)
+def preview_variant_correction(
+    payload: VariantCorrectionMoveRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_manager_or_owner),
+):
+    """Validate and show a correction only; this endpoint never changes stock."""
+    return StockService(db).preview_variant_correction(payload, current_user, request.state.request_id)
+
+
+@router.post("/variant-corrections", response_model=VariantCorrectionMoveResponse, status_code=status.HTTP_201_CREATED)
+def move_variant_stock(
+    payload: VariantCorrectionMoveRequest,
+    request: Request,
+    idempotency_key: str = Header(default="", alias="Idempotency-Key"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_manager_or_owner),
+):
+    return StockService(db).move_variant_stock(payload, current_user, idempotency_key, request.state.request_id)
 
 
 @router.post("/reset-preview", response_model=StockResetPreviewResponse)

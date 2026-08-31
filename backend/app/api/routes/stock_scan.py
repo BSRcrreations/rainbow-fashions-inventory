@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
@@ -18,20 +19,28 @@ from app.schemas.stock_scan import (
     BulkBarcodeTransferRequest,
     BulkBarcodeTransferResultRead,
     BarcodeImageResolutionRead,
+    BarcodeDeletionCheckRead,
+    BarcodePermanentDeleteRequest,
+    BarcodeLookupRead,
     BarcodeOnboarding,
     BarcodeProductOnboarding,
     ProductVariantBarcodeRead,
     StockScanConfirmRequest,
+    StockScanItemDelete,
     StockScanItemUpdate,
     StockScanRequest,
     StockScanSessionCreate,
     StockScanSessionRead,
     StockScanSessionUpdate,
     StockScanValidationRead,
+    VariantStockStageRequest,
+    SharedBarcodeTargetRead,
 )
 from app.schemas.stock import StockHistoryRead
 from app.schemas.product import ProductVariantDeleteRequest, ProductVariantDetailsCreate, ProductVariantRead, ProductVariantUpdate
 from app.services.stock_scan_service import StockScanService
+from app.services.barcode_resolution_service import BarcodeResolutionService
+from app.services.barcode_deletion_service import BarcodeDeletionService
 from app.services.variant_management_service import VariantManagementService
 
 
@@ -92,9 +101,31 @@ def onboard_barcode(payload: BarcodeOnboarding, db: Session = Depends(get_db), c
     return StockScanService(db).onboard_barcode(payload, current_user)
 
 
+@barcodes_router.get("/lookup/{barcode}", response_model=BarcodeLookupRead)
+def lookup_barcode(barcode: str, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> BarcodeLookupRead:
+    """Owner-only source of truth used before correcting a barcode assignment."""
+    return BarcodeResolutionService(db).lookup(barcode, current_user)
+
+
+@barcodes_router.get("/lookup/{barcode}/deletion-check", response_model=BarcodeDeletionCheckRead)
+def barcode_deletion_check(barcode: str, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> BarcodeDeletionCheckRead:
+    return BarcodeDeletionService(db).check(barcode, current_user)
+
+
+@barcodes_router.post("/lookup/{barcode}/permanent-delete")
+def permanently_delete_barcode(barcode: str, payload: BarcodePermanentDeleteRequest, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> dict:
+    return BarcodeDeletionService(db).permanently_delete(barcode, payload.confirmation, current_user)
+
+
 @barcodes_router.delete("/{barcode_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_barcode(barcode_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
+def remove_barcode(barcode_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> Response:
     StockScanService(db).remove_barcode(barcode_id, current_user, request.state.request_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@barcodes_router.delete("/{barcode_id}/targets/{variant_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_barcode_target(barcode_id: UUID, variant_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> Response:
+    StockScanService(db).remove_barcode_target(barcode_id, variant_id, current_user, request.state.request_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -103,7 +134,7 @@ def transfer_barcode(barcode_id: UUID, payload: BarcodeTransferRequest, request:
     if not payload.confirm_transfer:
         from app.core.exceptions import bad_request
         raise bad_request("Confirm the barcode transfer before continuing", "BARCODE_TRANSFER_CONFIRMATION_REQUIRED")
-    return StockScanService(db).transfer_barcode(barcode_id, payload.target_variant_id, current_user, request.state.request_id)
+    return StockScanService(db).transfer_barcode(barcode_id, payload.source_variant_id, payload.target_variant_id, current_user, request.state.request_id)
 
 
 @barcodes_router.post("/bulk-transfer/preview", response_model=BulkBarcodeTransferPreviewRead)
@@ -155,6 +186,16 @@ def scan_barcode(session_id: UUID, payload: StockScanRequest, db: Session = Depe
     return StockScanService(db).scan(session_id, payload, current_user)
 
 
+@router.post("/sessions/{session_id}/stage-variant", response_model=StockScanSessionRead)
+def stage_selected_variant(session_id: UUID, payload: VariantStockStageRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
+    return StockScanService(db).stage_selected_variant(session_id, payload, current_user, request.state.request_id)
+
+
+@barcodes_router.get("/{barcode}/shared-targets", response_model=list[SharedBarcodeTargetRead])
+def shared_barcode_targets(barcode: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> list[SharedBarcodeTargetRead]:
+    return StockScanService(db).shared_barcode_targets(barcode, current_user)
+
+
 @router.post("/sessions/{session_id}/batch-barcodes", response_model=StockScanSessionRead)
 def batch_barcodes(session_id: UUID, payload: BatchBarcodeRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
     try:
@@ -172,8 +213,8 @@ def update_scan_item(session_id: UUID, item_id: UUID, payload: StockScanItemUpda
 
 
 @router.delete("/sessions/{session_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_scan_item(session_id: UUID, item_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
-    StockScanService(db).delete_item(session_id, item_id, current_user)
+def delete_scan_item(session_id: UUID, item_id: UUID, payload: Optional[StockScanItemDelete] = None, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
+    StockScanService(db).delete_item(session_id, item_id, current_user, payload.expected_session_updated_at if payload else None)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

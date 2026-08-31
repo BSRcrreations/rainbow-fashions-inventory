@@ -39,6 +39,10 @@ class InventoryValuationReport(BaseModel):
 
 
 class BusinessReportsSummary(BaseModel):
+    # A zero-valued report is different from a report that has no transactions
+    # in the selected period.  The client uses this to render a useful empty
+    # state instead of presenting an apparently broken all-zero dashboard.
+    has_report_data: bool
     profit_and_loss: ProfitAndLossReport
     cash_flow: CashFlowReport
     inventory_valuation: InventoryValuationReport

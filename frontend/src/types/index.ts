@@ -111,6 +111,7 @@ export interface ProductVariant {
   is_active: boolean;
   scan_unit?: "PIECE" | "PACK";
   pieces_per_pack?: number;
+  barcodes?: string[];
   created_at: string;
   updated_at: string;
 }
@@ -374,6 +375,10 @@ export interface SalesDashboard {
   out_of_stock: Array<{ id: string; name: string; current_stock: number; minimum_stock: number }>;
 }
 
+export interface InventoryValuation {
+  inventory_value: string;
+}
+
 export interface PaginatedProducts {
   items: Product[];
   meta: {
@@ -415,6 +420,36 @@ export interface StockResetPreviewResponse {
 
 export interface StockResetResponse extends StockResetPreviewResponse {
   stock_history_ids: string[];
+  already_completed: boolean;
+}
+
+export type VariantCorrectionReason = "WRONG_SIZE_ENTERED" | "INCORRECT_VARIANT_SELECTED" | "INCORRECT_BARCODE_ASSIGNMENT" | "DATA_ENTRY_MISTAKE" | "TEST_DATA" | "OTHER";
+
+export interface VariantCorrectionVariant {
+  variant_id: string;
+  product_id: string;
+  product_name: string;
+  size?: string | null;
+  color?: string | null;
+  sku: string;
+  barcode: string;
+  before_stock: number;
+  after_stock: number;
+}
+
+export interface VariantCorrectionPreview {
+  source: VariantCorrectionVariant;
+  destination: VariantCorrectionVariant;
+  quantity: number;
+  reason: string;
+  notes?: string | null;
+  reference: string;
+  request_id: string;
+}
+
+export interface VariantCorrectionResult extends VariantCorrectionPreview {
+  source_history_id: string;
+  destination_history_id: string;
   already_completed: boolean;
 }
 
@@ -694,6 +729,7 @@ export interface Expense {
 }
 
 export interface ReportsSummary {
+  has_report_data: boolean;
   profit_and_loss: {
     start_date: string;
     end_date: string;

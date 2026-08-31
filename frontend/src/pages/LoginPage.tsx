@@ -10,6 +10,11 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [sessionNotice] = useState(() => {
+    const notice = window.sessionStorage.getItem("rainbow_session_expired_notice");
+    window.sessionStorage.removeItem("rainbow_session_expired_notice");
+    return notice;
+  });
 
   if (user) return <Navigate to="/" replace />;
 
@@ -34,6 +39,7 @@ export default function LoginPage() {
           <h1 className="text-2xl font-semibold text-slate-950">Rainbow fashions</h1>
           <p className="mt-1 text-sm text-slate-500">Inventory Management</p>
         </div>
+        {sessionNotice ? <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" role="status">{sessionNotice}</div> : null}
         <label className="mb-4 block">
           <span className="mb-1 block text-sm font-medium text-slate-700">Email</span>
           <div className="flex items-center rounded-md border border-line bg-white px-3">

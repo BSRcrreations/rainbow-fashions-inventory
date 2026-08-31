@@ -19,6 +19,13 @@ def test_test_nginx_configuration_is_isolated_and_proxies_loopback_test_port() -
     assert "proxy_pass http://127.0.0.1:8000" not in config
 
 
+def test_frontend_proxy_exposes_only_the_safe_version_endpoint() -> None:
+    config = (ROOT / "frontend" / "nginx.conf").read_text(encoding="utf-8")
+
+    assert "location = /version" in config
+    assert "proxy_pass http://backend:8000/version;" in config
+
+
 def test_production_nginx_configuration_is_isolated_and_proxies_loopback_production_port() -> None:
     config = PRODUCTION_CONFIG.read_text(encoding="utf-8")
 

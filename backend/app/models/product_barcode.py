@@ -54,3 +54,17 @@ class ProductBarcodeAudit(Base):
     request_id: Mapped[Optional[str]] = mapped_column(String(80))
     metadata_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ProductBarcodeVariantTarget(Base):
+    """An exact variant allowed to use a shared manufacturer barcode."""
+
+    __tablename__ = "product_barcode_variant_targets"
+    __table_args__ = (UniqueConstraint("product_barcode_id", "product_variant_id", name="uq_barcode_variant_target"),)
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    store_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("stores.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_barcode_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("product_barcodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_variant_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("product_variants.id", ondelete="RESTRICT"), nullable=False, index=True)
+    created_by: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

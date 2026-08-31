@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from app.core.security import verify_password
+from app.models.store import Store
 from app.models.user import User
 from scripts.bootstrap_owner import BootstrapInputError, bootstrap_owner, main, validate_password
 
@@ -108,6 +109,35 @@ def test_bootstrap_is_idempotent_without_update_option():
     assert result.message == "Owner already exists; no changes made."
     assert session.added == []
     assert session.commits == 0
+
+
+def test_explicit_owner_repair_reactivates_the_store_and_owner():
+    password = _generated_password()
+    store = Store(name="Inactive test store", code="TEST", is_active=False)
+    existing_owner = User(
+        store_id=uuid4(),
+        full_name="Inactive Owner",
+        email=f"owner-{uuid4().hex}@example.test",
+        password_hash="generated-for-test-only",
+        is_active=False,
+    )
+    session = FakeSession(existing_owner, store)
+
+    result = bootstrap_owner(
+        session,
+        email=existing_owner.email,
+        password=password,
+        store_name="Test Store",
+        store_code="TEST",
+        update_existing=True,
+    )
+
+    assert not result.created
+    assert result.message == "Existing owner updated."
+    assert existing_owner.is_active
+    assert existing_owner.store_id == store.id
+    assert store.is_active
+    assert verify_password(password, existing_owner.password_hash)
 
 
 def test_password_never_appears_in_command_output():

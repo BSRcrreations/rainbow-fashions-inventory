@@ -264,7 +264,7 @@ export default function BarcodeOnboardingDialog({
   const showVariantFields = action !== "EXISTING_VARIANT";
 
   return (
-    <Dialog open={open} onClose={onClose} title="Barcode not registered" description="Create or select the exact sellable product without leaving this stock draft." maxWidth="xl">
+    <Dialog open={open} onClose={onClose} title="Assign available barcode" description="Choose the exact sellable product without leaving this stock draft." maxWidth="xl">
       <label className="field-label">
         Scanned barcode
         <input className="field-input" value={barcode} readOnly />
