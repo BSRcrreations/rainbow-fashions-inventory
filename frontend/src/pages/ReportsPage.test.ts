@@ -14,9 +14,9 @@ describe("ReportsPage resilient report states", () => {
   it("renders loading, retry, safe server error, and empty report states", () => {
     expect(page).toContain('Generating your report…');
     expect(page).toContain('> Retry</Button>');
-    expect(page).toContain('Unable to generate the report right now. Please try again.');
-    expect(page).toContain('Error reference ID: {error.requestId}');
-    expect(page).toContain('No sales or transactions found for this period.');
+    expect(page).toContain('Unable to generate this report right now.');
+    expect(page).toContain('Reference ID: {error.requestId}');
+    expect(page).toContain('No transactions found for this period.');
   });
 
   it("uses the requested network message and never relies on an untrusted server error for reports", () => {

@@ -25,10 +25,10 @@ function reportError(error: unknown): { message: string; requestId?: string; isS
     if (error.status === 0) return { message: "Unable to connect to the server. Check your connection and try again.", isServerError: false, isUnauthorized: false };
     if (error.status === 401) return { message: "Your session has expired. Redirecting to sign in…", isServerError: false, isUnauthorized: true };
     if (error.code === "invalid_date_range") return { message: "End date cannot be earlier than Start date.", isServerError: false, isUnauthorized: false };
-    if (error.code === "report_calculation_failed" || error.status >= 500) return { message: "Unable to generate the report right now. Please try again.", requestId: error.requestId, isServerError: true, isUnauthorized: false };
+    if (error.code === "report_calculation_failed" || error.status >= 500) return { message: "Unable to generate this report right now.", requestId: error.requestId, isServerError: true, isUnauthorized: false };
     return { message: error.message, isServerError: false, isUnauthorized: false };
   }
-  return { message: "Unable to generate the report right now. Please try again.", isServerError: true, isUnauthorized: false };
+  return { message: "Unable to generate this report right now.", isServerError: true, isUnauthorized: false };
 }
 
 export default function ReportsPage() {
@@ -63,12 +63,12 @@ export default function ReportsPage() {
 
       {reportsQuery.isFetching ? <div className="flex items-center gap-2 text-sm text-muted" aria-live="polite"><RefreshCw size={16} className="animate-spin" /> Generating your report…</div> : null}
       {reportsQuery.isLoading ? <SkeletonRows rows={6} /> : error ? (
-        <section className="rounded-lg border border-red-200 bg-red-50 p-5 text-sm text-error" role="alert">
-          <div className="flex items-start gap-3"><AlertCircle size={19} className="mt-0.5 shrink-0" /><div><p>{error.message}</p>{error.isServerError && error.requestId ? <p className="mt-2 text-xs text-red-700">Error reference ID: {error.requestId}</p> : null}</div></div>
-          {!error.isUnauthorized ? <Button type="button" variant="secondary" className="mt-4" onClick={() => void reportsQuery.refetch()} disabled={reportsQuery.isFetching}><RefreshCw size={16} /> Retry</Button> : null}
+        <section className="flex flex-wrap items-center gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-error" role="alert">
+          <div className="flex min-w-0 items-center gap-2"><AlertCircle size={17} className="shrink-0" /><div><span>{error.message}</span>{error.isServerError && error.requestId ? <span className="ml-2 text-xs text-red-700">Reference ID: {error.requestId}</span> : null}</div></div>
+          {!error.isUnauthorized ? <Button type="button" size="sm" variant="secondary" onClick={() => void reportsQuery.refetch()} disabled={reportsQuery.isFetching}><RefreshCw size={16} /> Retry</Button> : null}
         </section>
       ) : reportsQuery.data && !reportsQuery.data.has_report_data ? (
-        <EmptyState icon={ReceiptText} title="No sales or transactions found for this period." description="Try a different date range, or record a sale, purchase, expense, or payment to generate a report." />
+        <EmptyState icon={ReceiptText} title="No transactions found for this period." description="Try a different date range, or record a sale, purchase, expense, or payment to generate a report." />
       ) : reportsQuery.data ? (
         <>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

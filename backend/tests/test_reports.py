@@ -9,6 +9,8 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.sql.elements import BindParameter
+from sqlalchemy.sql.visitors import iterate
 
 from app.api.deps import get_current_user
 from app.api.routes import reports as reports_route
@@ -18,6 +20,9 @@ from app.services.report_service import ReportService
 
 
 class _EmptyReportQuery:
+    def join(self, *args, **kwargs):
+        return self
+
     def filter(self, *args, **kwargs):
         return self
 
@@ -59,6 +64,63 @@ def test_report_summary_rejects_reversed_dates_with_safe_message() -> None:
     }
 
 
+def test_purchase_total_uses_confirmed_status_without_requiring_voided_enum_value() -> None:
+    class Query:
+        conditions = ()
+
+        def filter(self, *conditions):
+            self.conditions = conditions
+            return self
+
+        def scalar(self):
+            return 0
+
+    class Session:
+        query_result = Query()
+
+        def query(self, *args, **kwargs):
+            return self.query_result
+
+    session = Session()
+    ReportService(session)._purchase_total(uuid4(), date(2026, 8, 2), date(2026, 9, 1))
+    values = [node.value for condition in session.query_result.conditions for node in iterate(condition) if isinstance(node, BindParameter)]
+
+    assert "CONFIRMED" in values
+    assert "VOIDED" not in values
+
+
+def test_inventory_valuation_delegates_purchase_value_to_active_cost_lots(monkeypatch) -> None:
+    class InventoryQuery:
+        def join(self, *args, **kwargs):
+            return self
+
+        def filter(self, *args, **kwargs):
+            return self
+
+        def one(self):
+            return (7, 1400)
+
+    class Session:
+        def query(self, *args, **kwargs):
+            return InventoryQuery()
+
+    store_id = uuid4()
+    calls = []
+
+    def active_lot_value(self, value_store_id):
+        calls.append(value_store_id)
+        return 900
+
+    monkeypatch.setattr("app.services.report_service.InventoryValuationService.current_value", active_lot_value)
+    valuation = ReportService(Session()).inventory_valuation(SimpleNamespace(store_id=store_id))
+
+    assert calls == [store_id]
+    assert valuation.total_stock == 7
+    assert valuation.purchase_value == 900
+    assert valuation.selling_value == 1400
+    assert valuation.potential_margin == 500
+
+
 def test_report_calculation_failure_is_logged_and_safely_classified(monkeypatch, caplog) -> None:
     def fail_summary(*args, **kwargs):
         raise OperationalError("SELECT internal_query", {"secret": "do-not-return"}, RuntimeError("database unavailable"))
@@ -79,7 +141,7 @@ def test_report_calculation_failure_is_logged_and_safely_classified(monkeypatch,
     assert response.headers["X-Request-ID"] == "report-calculation-test"
     assert response.json() == {
         "detail": {
-            "message": "Unable to generate the report right now. Please try again.",
+            "message": "Unable to generate this report right now.",
             "code": "report_calculation_failed",
             "request_id": "report-calculation-test",
         }

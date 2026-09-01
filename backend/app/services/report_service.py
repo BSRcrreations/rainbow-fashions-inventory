@@ -12,12 +12,13 @@ from app.core.exceptions import bad_request, error_payload
 from app.models.customer import CustomerPayment
 from app.models.enums import PurchaseStatus, SaleStatus
 from app.models.expense import Expense
-from app.models.product_variant import ProductVariant
+from app.models.product_variant import InventoryCostLot, ProductVariant
 from app.models.purchase import Purchase
 from app.models.sale import Sale
 from app.models.supplier import SupplierPayment
 from app.models.user import User
 from app.schemas.report import BusinessReportsSummary, CashFlowReport, InventoryValuationReport, ProfitAndLossReport
+from app.services.inventory_valuation_service import InventoryValuationService
 
 
 class ReportService:
@@ -65,16 +66,25 @@ class ReportService:
             raise bad_request("Current user is not assigned to a store")
         rows = (
             self.db.query(
-                func.coalesce(func.sum(ProductVariant.current_stock), 0),
-                func.coalesce(func.sum(ProductVariant.current_stock * ProductVariant.average_cost), 0),
-                func.coalesce(func.sum(ProductVariant.current_stock * ProductVariant.selling_price), 0),
+                func.coalesce(func.sum(InventoryCostLot.remaining_quantity), 0),
+                func.coalesce(
+                    func.sum(
+                        InventoryCostLot.remaining_quantity
+                        * func.coalesce(ProductVariant.selling_price, 0)
+                    ),
+                    0,
+                ),
             )
-            .filter(ProductVariant.store_id == store_id, ProductVariant.is_active.is_(True))
+            .join(ProductVariant, ProductVariant.id == InventoryCostLot.product_variant_id)
+            .filter(
+                InventoryCostLot.store_id == store_id,
+                InventoryCostLot.remaining_quantity > 0,
+            )
             .one()
         )
         total_stock = int(rows[0] or 0)
-        purchase_value = Decimal(rows[1] or 0)
-        selling_value = Decimal(rows[2] or 0)
+        purchase_value = InventoryValuationService(self.db).current_value(store_id)
+        selling_value = Decimal(rows[1] or 0)
         return InventoryValuationReport(total_stock=total_stock, purchase_value=purchase_value, selling_value=selling_value, potential_margin=selling_value - purchase_value)
 
     def _sales_total(self, store_id, start_date: date, end_date: date) -> Decimal:
@@ -87,7 +97,7 @@ class ReportService:
         return Decimal(self.db.query(func.coalesce(func.sum(Sale.total_amount), 0)).filter(Sale.store_id == store_id, func.date(Sale.sale_date) >= start_date, func.date(Sale.sale_date) <= end_date, Sale.payment_mode != "CREDIT", Sale.status.notin_([SaleStatus.CANCELLED, SaleStatus.VOIDED])).scalar() or 0)
 
     def _purchase_total(self, store_id, start_date: date, end_date: date) -> Decimal:
-        return Decimal(self.db.query(func.coalesce(func.sum(Purchase.total_amount), 0)).filter(Purchase.store_id == store_id, Purchase.purchase_date >= start_date, Purchase.purchase_date <= end_date, Purchase.status.notin_([PurchaseStatus.CANCELLED, PurchaseStatus.VOIDED])).scalar() or 0)
+        return Decimal(self.db.query(func.coalesce(func.sum(Purchase.total_amount), 0)).filter(Purchase.store_id == store_id, Purchase.purchase_date >= start_date, Purchase.purchase_date <= end_date, Purchase.status == PurchaseStatus.CONFIRMED).scalar() or 0)
 
     def _expense_total(self, store_id, start_date: date, end_date: date) -> Decimal:
         return Decimal(self.db.query(func.coalesce(func.sum(Expense.amount), 0)).filter(Expense.store_id == store_id, Expense.expense_date >= start_date, Expense.expense_date <= end_date).scalar() or 0)
@@ -106,7 +116,7 @@ class ReportService:
         """
         return any((
             self.db.query(Sale.id).filter(Sale.store_id == store_id, func.date(Sale.sale_date) >= start_date, func.date(Sale.sale_date) <= end_date, Sale.status.notin_([SaleStatus.CANCELLED, SaleStatus.VOIDED])).first() is not None,
-            self.db.query(Purchase.id).filter(Purchase.store_id == store_id, Purchase.purchase_date >= start_date, Purchase.purchase_date <= end_date, Purchase.status.notin_([PurchaseStatus.CANCELLED, PurchaseStatus.VOIDED])).first() is not None,
+            self.db.query(Purchase.id).filter(Purchase.store_id == store_id, Purchase.purchase_date >= start_date, Purchase.purchase_date <= end_date, Purchase.status == PurchaseStatus.CONFIRMED).first() is not None,
             self.db.query(Expense.id).filter(Expense.store_id == store_id, Expense.expense_date >= start_date, Expense.expense_date <= end_date).first() is not None,
             self.db.query(CustomerPayment.id).filter(CustomerPayment.store_id == store_id, func.date(CustomerPayment.payment_date) >= start_date, func.date(CustomerPayment.payment_date) <= end_date).first() is not None,
             self.db.query(SupplierPayment.id).filter(SupplierPayment.store_id == store_id, func.date(SupplierPayment.payment_date) >= start_date, func.date(SupplierPayment.payment_date) <= end_date).first() is not None,

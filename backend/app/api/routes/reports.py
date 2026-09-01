@@ -37,7 +37,7 @@ def reports_summary(request: Request, start_date: Optional[date] = None, end_dat
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=error_payload("Unable to generate the report right now. Please try again.", "report_calculation_failed", request_id=request_id),
+            detail=error_payload("Unable to generate this report right now.", "report_calculation_failed", request_id=request_id),
         ) from exc
 
 
