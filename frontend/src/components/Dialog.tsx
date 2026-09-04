@@ -12,6 +12,7 @@ interface DialogProps {
   maxWidth?: "md" | "lg" | "xl";
   contentClassName?: string;
   fullHeight?: boolean;
+  fullScreen?: boolean;
 }
 
 const widths = {
@@ -52,7 +53,7 @@ const focusableSelector = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
-export default function Dialog({ open, title, description, children, onClose, maxWidth = "lg", contentClassName, fullHeight = false }: DialogProps) {
+export default function Dialog({ open, title, description, children, onClose, maxWidth = "lg", contentClassName, fullHeight = false, fullScreen = false }: DialogProps) {
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLElement>(null);
@@ -107,13 +108,13 @@ export default function Dialog({ open, title, description, children, onClose, ma
   if (!open) return null;
 
   return createPortal(
-    <div className="ds-dialog-backdrop flex items-end justify-center overflow-y-auto p-2 sm:items-center sm:p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeRef.current(); }}>
+    <div className={`ds-dialog-backdrop flex items-end justify-center overflow-y-auto ${fullScreen ? "p-0" : "p-2 sm:items-center sm:p-4"}`} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeRef.current(); }}>
       <section
         ref={dialogRef}
         aria-describedby={description ? descriptionId : undefined}
         aria-labelledby={titleId}
         aria-modal="true"
-        className={`ds-dialog flex w-full flex-col overflow-hidden ${fullHeight ? "h-[calc(100svh-1rem)] sm:h-[min(88svh,52rem)]" : "max-h-[calc(100svh-1rem)] sm:max-h-[min(88svh,52rem)]"} ${widths[maxWidth]}`}
+        className={`ds-dialog flex w-full flex-col overflow-hidden ${fullScreen ? "h-[100dvh] max-w-none rounded-none" : fullHeight ? "h-[calc(100svh-1rem)] sm:h-[min(88svh,52rem)]" : "max-h-[calc(100svh-1rem)] sm:max-h-[min(88svh,52rem)]"} ${fullScreen ? "" : widths[maxWidth]}`}
         role="dialog"
         tabIndex={-1}
       >

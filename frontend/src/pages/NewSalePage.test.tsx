@@ -210,16 +210,17 @@ const cartLine: CartLine = {
   quantity: 3,
 };
 
-function renderCart(cart: CartLine[]) {
+function renderCart(cart: CartLine[], discountType: "NONE" | "PERCENTAGE" | "FIXED_AMOUNT" = "PERCENTAGE", discountValue = "10") {
   const subtotal = cart.reduce((total, line) => total + Number(line.variant.selling_price) * line.quantity, 0);
+  const previewType = discountType === "NONE" ? "PERCENTAGE" : discountType;
   return renderToStaticMarkup(<CurrentSalePanel
     cart={cart}
     customerName=""
     paymentMode="CASH"
-    discountType="PERCENTAGE"
-    discountValue="10"
+    discountType={discountType}
+    discountValue={discountValue}
     subtotal={subtotal}
-    preview={previewSaleDiscount(subtotal, "PERCENTAGE", "10")}
+    preview={previewSaleDiscount(subtotal, previewType, discountType === "NONE" ? "0" : discountValue)}
     pending={false}
     onCustomer={() => undefined}
     onPayment={() => undefined}
@@ -241,14 +242,13 @@ describe("Current Sale cart panel", () => {
     expect(markup).not.toContain("Softa Padded Bra");
   });
 
-  it("renders the cart line before customer, payment, discount, and totals", () => {
+  it("renders the checkout review with cart items on the left and one payment action", () => {
     const markup = renderCart([cartLine]);
 
     expect(markup).not.toContain("Your cart is empty");
     expect(markup).toContain('data-testid="cart-item-list"');
     expect(markup).toContain("min-h-0");
     expect(markup).toContain("flex-1");
-    expect(markup).toContain("overflow-x-hidden");
     expect(markup).toContain("overflow-y-auto");
     expect(markup).toContain("Softa Padded Bra");
     expect(markup).toContain("Brand: WithIn");
@@ -257,19 +257,36 @@ describe("Current Sale cart panel", () => {
     expect(markup).toContain("MRP ₹395.00 · ₹395.00 × 3");
     expect(markup).toContain("Available stock: 8 · Stock after sale: 5");
     expect(markup).toContain("₹1,185.00");
-    expect(markup).toContain("1 line · 3 units");
+    expect(markup).toContain("Product lines");
+    expect(markup).toContain("Total units");
+    expect(markup).toContain("Cart subtotal");
     expect(markup).toContain("Decrease Softa Padded Bra");
     expect(markup).toContain("Increase Softa Padded Bra");
     expect(markup).toContain(">Remove<");
     expect(markup.indexOf("Softa Padded Bra")).toBeLessThan(markup.indexOf("Customer"));
-    expect(markup.indexOf("Customer")).toBeLessThan(markup.indexOf("Payment method"));
-    expect(markup.indexOf("Payment method")).toBeLessThan(markup.indexOf("Discount type"));
+    expect(markup.indexOf("Customer")).toBeLessThan(markup.indexOf("Payment"));
+    expect(markup.indexOf("Payment")).toBeLessThan(markup.indexOf("Discount type"));
     expect(markup.indexOf("Discount type")).toBeLessThan(markup.indexOf("Subtotal"));
     expect(markup).toContain('data-testid="checkout-footer"');
     expect(markup).toContain("sticky bottom-0");
     expect(markup).toContain("Grand Total");
-    expect(markup).toContain("Complete Sale");
-    expect(markup).toContain("Save Bill");
-    expect(markup).toContain("Save &amp; Print Bill");
+    expect(markup).toContain("Confirm Sale");
+    expect(markup).toContain("Phone number");
+    expect(markup).toContain("Customer details");
+    expect(markup).toContain("Cash");
+    expect(markup).toContain("UPI");
+    expect(markup).not.toContain(">Card<");
+    expect(markup).not.toContain(">Bank<");
+    expect(markup).not.toContain("Save Bill");
+    expect(markup).not.toContain("Save &amp; Print Bill");
+  });
+
+  it("hides irrelevant discount inputs when no discount is selected", () => {
+    const markup = renderCart([cartLine], "NONE", "0");
+
+    expect(markup).toContain('<option value="NONE" selected="">None</option>');
+    expect(markup).not.toContain("Discount value");
+    expect(markup).not.toContain(">5%<");
+    expect(markup).not.toContain(">10%<");
   });
 });
