@@ -28,6 +28,11 @@ def create_customer(payload: CustomerCreate, db: Session = Depends(get_db), curr
     return CustomerService(db).create(payload, current_user)
 
 
+@router.get("/lookup", response_model=Optional[CustomerRead])
+def lookup_customer_by_phone(phone: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return CustomerService(db).lookup_by_phone(phone, current_user)
+
+
 @router.get("/{customer_id}", response_model=CustomerDetailRead)
 def get_customer(customer_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return CustomerService(db).detail(customer_id, current_user)

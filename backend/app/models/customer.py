@@ -31,6 +31,13 @@ class Customer(Base):
     credit_limit: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2))
     notes: Mapped[Optional[str]] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # SMS delivery is intentionally not coupled to POS checkout. These fields
+    # prepare customer records for a separate, audited offers service.
+    sms_opt_out: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sms_opted_out_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    sms_suppression_reason: Mapped[Optional[str]] = mapped_column(String(300))
+    last_sms_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_purchase_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

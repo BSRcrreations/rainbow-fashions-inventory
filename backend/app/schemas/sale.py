@@ -43,13 +43,15 @@ class SaleCreate(BaseModel):
     invoice_number: Optional[str] = Field(default=None, max_length=120)
     customer_id: Optional[UUID] = None
     customer_name: Optional[str] = Field(default=None, max_length=180)
+    customer_phone: Optional[str] = Field(default=None, max_length=30)
+    customer_details: Optional[str] = Field(default=None, max_length=2000)
     payment_mode: PaymentMode
     discount_type: str = "PERCENTAGE"
     discount_value: Decimal = Field(default=Decimal("0"))
     sale_date: Optional[datetime] = None
     items: list[SaleItemCreate] = Field(min_length=1)
 
-    @field_validator("invoice_number", "customer_name", mode="before")
+    @field_validator("invoice_number", "customer_name", "customer_phone", "customer_details", mode="before")
     @classmethod
     def normalize_optional_text(cls, value: Optional[str]) -> Optional[str]:
         if not isinstance(value, str):

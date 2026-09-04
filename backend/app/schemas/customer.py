@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.schemas.common import ORMBaseModel
+from app.services.customer_phone import normalize_customer_phone
 
 
 class CustomerBase(BaseModel):
@@ -24,13 +25,20 @@ class CustomerBase(BaseModel):
     credit_limit: Optional[Decimal] = Field(default=None, ge=0)
     notes: Optional[str] = None
     is_active: bool = True
+    sms_opt_out: bool = False
+    sms_suppression_reason: Optional[str] = Field(default=None, max_length=300)
 
-    @field_validator("name", "phone", "alternate_phone", "gst_number", "city", "state", "postal_code", mode="before")
+    @field_validator("name", "alternate_phone", "gst_number", "city", "state", "postal_code", mode="before")
     @classmethod
     def normalize_text(cls, value: Optional[str]) -> Optional[str]:
         if not isinstance(value, str):
             return value
         return value.strip() or None
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def normalize_phone(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_customer_phone(value)
 
 
 class CustomerCreate(CustomerBase):
@@ -51,13 +59,20 @@ class CustomerUpdate(BaseModel):
     credit_limit: Optional[Decimal] = Field(default=None, ge=0)
     notes: Optional[str] = None
     is_active: Optional[bool] = None
+    sms_opt_out: Optional[bool] = None
+    sms_suppression_reason: Optional[str] = Field(default=None, max_length=300)
 
-    @field_validator("name", "phone", "alternate_phone", "gst_number", "city", "state", "postal_code", mode="before")
+    @field_validator("name", "alternate_phone", "gst_number", "city", "state", "postal_code", mode="before")
     @classmethod
     def normalize_text(cls, value: Optional[str]) -> Optional[str]:
         if not isinstance(value, str):
             return value
         return value.strip() or None
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def normalize_phone(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_customer_phone(value)
 
 
 class CustomerPaymentCreate(BaseModel):
@@ -89,6 +104,9 @@ class CustomerRead(CustomerBase, ORMBaseModel):
     credit_sales_total: Decimal = Decimal("0")
     paid_total: Decimal = Decimal("0")
     balance_due: Decimal = Decimal("0")
+    sms_opted_out_at: Optional[datetime] = None
+    last_sms_sent_at: Optional[datetime] = None
+    last_purchase_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

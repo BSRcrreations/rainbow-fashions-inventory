@@ -162,6 +162,13 @@ class CustomerService:
             raise not_found("Customer")
         return customer
 
+    def lookup_by_phone(self, phone: str, current_user: User) -> Optional[CustomerRead]:
+        store_id = _store_id(current_user)
+        customer = self.repo.get_by_phone(store_id, phone)
+        if not customer or not customer.is_active:
+            return None
+        return self._read(customer, store_id)
+
     def detail(self, customer_id: UUID, current_user: User) -> CustomerDetailRead:
         store_id = _store_id(current_user)
         customer = self.get(customer_id, current_user)
@@ -175,6 +182,8 @@ class CustomerService:
         if payload.phone and self.repo.get_by_phone(store_id, payload.phone):
             raise conflict("Customer phone number already exists")
         customer = Customer(store_id=store_id, **payload.model_dump())
+        if customer.sms_opt_out:
+            customer.sms_opted_out_at = datetime.now(timezone.utc)
         self.repo.add(customer)
         self.db.commit()
         self.db.refresh(customer)
@@ -188,6 +197,11 @@ class CustomerService:
             duplicate = self.repo.get_by_phone(store_id, data["phone"])
             if duplicate and duplicate.id != customer.id:
                 raise conflict("Customer phone number already exists")
+        if data.get("sms_opt_out") is True and not customer.sms_opt_out:
+            customer.sms_opted_out_at = datetime.now(timezone.utc)
+        elif data.get("sms_opt_out") is False:
+            customer.sms_opted_out_at = None
+            data["sms_suppression_reason"] = None
         for key, value in data.items():
             setattr(customer, key, value)
         self.db.commit()

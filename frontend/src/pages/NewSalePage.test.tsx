@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { CurrentSalePanel, ProductGroupCard, ProductVisual } from "./NewSalePage";
+import { CompactCartPreview, CurrentSalePanel, ProductGroupCard, ProductVisual } from "./NewSalePage";
 import { orderVariantsBySize, productCardMrpText, productCardVariantSummary } from "./newSaleCard";
 import { catalogItemFromBarcode, firstSellableProduct, isQuickAddProduct, mergeCartVariant, productForVariant } from "./newSaleLogic";
 import type { CartLine } from "./newSaleLogic";
@@ -234,6 +234,31 @@ function renderCart(cart: CartLine[], discountType: "NONE" | "PERCENTAGE" | "FIX
   />);
 }
 
+function renderCompactCart(cart: CartLine[]) {
+  return renderToStaticMarkup(<CompactCartPreview cart={cart} onCheckout={() => undefined} onChangeQuantity={() => undefined} onRemove={() => undefined} onClear={() => undefined} />);
+}
+
+describe("Compact sale cart", () => {
+  it("keeps every cart line editable before checkout", () => {
+    const secondLine = { ...cartLine, product: { ...cartLine.product, name: "Flexi Kurthi Pant" }, variant: { ...cartLine.variant, variant_id: "flexi-medium", size: "M", selling_price: "599", available_stock: 3 }, quantity: 2 };
+    const markup = renderCompactCart([cartLine, secondLine]);
+
+    expect(markup).toContain('data-testid="compact-cart-line-softa-34"');
+    expect(markup).toContain('data-testid="compact-cart-line-flexi-medium"');
+    expect(markup).toContain("Softa Padded Bra");
+    expect(markup).toContain("Size: 34");
+    expect(markup).toContain("Flexi Kurthi Pant");
+    expect(markup).toContain("M");
+    expect(markup).toContain("₹599.00");
+    expect(markup).toContain("₹1,198.00");
+    expect(markup).toContain("Increase Flexi Kurthi Pant in cart");
+    expect(markup).toContain("Decrease Flexi Kurthi Pant in cart");
+    expect(markup).toContain("Remove Flexi Kurthi Pant from cart");
+    expect(markup).toContain("Clear Cart");
+    expect(markup).toContain("Checkout");
+  });
+});
+
 describe("Current Sale cart panel", () => {
   it("shows the empty state only when the cart has no lines", () => {
     const markup = renderCart([]);
@@ -262,7 +287,7 @@ describe("Current Sale cart panel", () => {
     expect(markup).toContain("Cart subtotal");
     expect(markup).toContain("Decrease Softa Padded Bra");
     expect(markup).toContain("Increase Softa Padded Bra");
-    expect(markup).toContain(">Remove<");
+    expect(markup).toContain('aria-label="Remove Softa Padded Bra"');
     expect(markup.indexOf("Softa Padded Bra")).toBeLessThan(markup.indexOf("Customer"));
     expect(markup.indexOf("Customer")).toBeLessThan(markup.indexOf("Payment"));
     expect(markup.indexOf("Payment")).toBeLessThan(markup.indexOf("Discount type"));
@@ -272,7 +297,7 @@ describe("Current Sale cart panel", () => {
     expect(markup).toContain("Grand Total");
     expect(markup).toContain("Confirm Sale");
     expect(markup).toContain("Phone number");
-    expect(markup).toContain("Customer details");
+    expect(markup).toContain("Address / Notes");
     expect(markup).toContain("Cash");
     expect(markup).toContain("UPI");
     expect(markup).not.toContain(">Card<");

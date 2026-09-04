@@ -688,6 +688,11 @@ export interface Customer {
   credit_limit?: string | null;
   notes?: string | null;
   is_active: boolean;
+  sms_opt_out: boolean;
+  sms_opted_out_at?: string | null;
+  sms_suppression_reason?: string | null;
+  last_sms_sent_at?: string | null;
+  last_purchase_at?: string | null;
   credit_sales_total: string;
   paid_total: string;
   balance_due: string;

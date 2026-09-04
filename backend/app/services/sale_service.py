@@ -32,6 +32,7 @@ from app.repositories.sale import SaleRepository
 from app.schemas.sale import SaleCatalogProduct, SaleCatalogVariant, SaleCreate, SaleListResponse, SaleReturnCreate, SaleUpdate, SaleVoidRequest, SalesDashboardResponse, SalesMetric
 from app.services.discount_calculator import money
 from app.services.inventory_valuation_service import InventoryValuationService
+from app.services.customer_phone import normalize_customer_phone
 from app.services.sale_discount import SaleDiscountError, calculate_sale_discount
 
 
@@ -107,7 +108,7 @@ class SaleService:
         invoice_number = payload.invoice_number or self._generate_invoice_number()
         if self.repo.get_by_invoice(invoice_number, store_id):
             raise conflict("Invoice number already exists")
-        customer = self._customer_for_sale(payload.customer_id, payload.customer_name, payload.payment_mode, store_id)
+        customer = self._customer_for_sale(payload.customer_id, payload.customer_name, payload.customer_phone, payload.customer_details, payload.payment_mode, store_id, payload.sale_date)
         prepared, price_overrides = self._prepare_items(payload.items, store_id, current_user, request_id)
         subtotal, cost_amount, _ = self._totals(prepared, Decimal("0"))
         discount_amount = self._checkout_discount(subtotal, payload.discount_type, payload.discount_value, request_id)
@@ -243,7 +244,7 @@ class SaleService:
         invoice_number = payload.invoice_number or self._generate_invoice_number()
         if self.repo.get_by_invoice(invoice_number, store_id):
             raise conflict("Invoice number already exists")
-        customer = self._customer_for_sale(payload.customer_id, payload.customer_name, payload.payment_mode, store_id)
+        customer = self._customer_for_sale(payload.customer_id, payload.customer_name, payload.customer_phone, payload.customer_details, payload.payment_mode, store_id, payload.sale_date)
         variant_ids = [item.product_variant_id for item in payload.items]
         if len(variant_ids) != len(set(variant_ids)):
             raise bad_request("A variant can appear only once in a sale")
@@ -330,7 +331,7 @@ class SaleService:
         if len(product_ids) != len(set(product_ids)):
             raise bad_request("A product can appear only once in a sale")
         prepared, price_overrides = self._prepare_items(payload.items, store_id, current_user, validate_stock=False)
-        customer = self._customer_for_sale(payload.customer_id, payload.customer_name, payload.payment_mode, store_id)
+        customer = self._customer_for_sale(payload.customer_id, payload.customer_name, None, None, payload.payment_mode, store_id, None)
         subtotal, cost_amount, total_amount = self._totals(prepared, payload.discount)
         old_items = {item.product_id: item for item in sale.items}
         new_items = {product.id: (product, inventory, quantity, price, line_total) for product, inventory, quantity, price, line_total in prepared}
@@ -703,14 +704,49 @@ class SaleService:
             raise bad_request("Current user is not assigned to a store")
         return current_user.store_id
 
-    def _customer_for_sale(self, customer_id: Optional[UUID], customer_name: Optional[str], payment_mode: str, store_id: UUID) -> Optional[Customer]:
-        if not customer_id:
-            if payment_mode == "CREDIT":
-                raise bad_request("Credit sales must be linked to a customer")
-            return None
-        customer = self.db.query(Customer).filter(Customer.id == customer_id, Customer.store_id == store_id).first()
-        if not customer or not customer.is_active:
-            raise bad_request("Select an active customer")
+    def _customer_for_sale(
+        self,
+        customer_id: Optional[UUID],
+        customer_name: Optional[str],
+        customer_phone: Optional[str],
+        customer_details: Optional[str],
+        payment_mode: str,
+        store_id: UUID,
+        sale_date: Optional[datetime],
+    ) -> Optional[Customer]:
+        """Resolve/create the customer inside the sale transaction.
+
+        A new customer is never committed independently of the sale. Therefore
+        cancellation, stock failure, and payment/API failure cannot create an
+        orphaned customer, and idempotent checkout retries still create one sale.
+        """
+        phone = normalize_customer_phone(customer_phone)
+        customer: Optional[Customer] = None
+        if phone:
+            customer = self.db.query(Customer).filter(Customer.store_id == store_id, Customer.phone == phone).with_for_update().first()
+            if not customer:
+                # Support customer records created before phone normalization.
+                for candidate in self.db.query(Customer).filter(Customer.store_id == store_id, Customer.phone.is_not(None)).with_for_update().all():
+                    if normalize_customer_phone(candidate.phone) == phone:
+                        customer = candidate
+                        if candidate.phone != phone:
+                            candidate.phone = phone
+                        break
+            if customer and not customer.is_active:
+                raise bad_request("Select an active customer")
+            if not customer and customer_name:
+                customer = Customer(store_id=store_id, name=customer_name, phone=phone, notes=customer_details or None)
+                self.db.add(customer)
+                self.db.flush()
+        elif customer_id:
+            customer = self.db.query(Customer).filter(Customer.id == customer_id, Customer.store_id == store_id).with_for_update().first()
+            if not customer or not customer.is_active:
+                raise bad_request("Select an active customer")
+
+        if not customer and payment_mode == "CREDIT":
+            raise bad_request("Credit sales must be linked to a customer")
+        if customer:
+            customer.last_purchase_at = sale_date or datetime.now(timezone.utc)
         return customer
 
     def _locked_sale(self, sale_id: UUID, store_id: UUID) -> Sale:

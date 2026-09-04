@@ -11,6 +11,7 @@ from app.models.customer import Customer
 from app.models.expense import Expense, ExpenseCategory
 from app.models.supplier import Supplier
 from app.repositories.base import BaseRepository
+from app.services.customer_phone import normalize_customer_phone
 
 
 class SupplierRepository(BaseRepository[Supplier]):
@@ -39,7 +40,13 @@ class CustomerRepository(BaseRepository[Customer]):
         return self.db.query(Customer).options(selectinload(Customer.payments)).filter(Customer.id == customer_id, Customer.store_id == store_id).first()
 
     def get_by_phone(self, store_id: UUID, phone: str) -> Optional[Customer]:
-        return self.db.query(Customer).filter(Customer.store_id == store_id, func.lower(Customer.phone) == phone.strip().lower()).first()
+        normalized = normalize_customer_phone(phone)
+        if not normalized:
+            return None
+        # Existing installations may contain formatted legacy numbers. Compare
+        # their canonical form too, then all new writes remain directly indexed.
+        customers = self.db.query(Customer).filter(Customer.store_id == store_id, Customer.phone.is_not(None)).all()
+        return next((customer for customer in customers if normalize_customer_phone(customer.phone) == normalized), None)
 
     def list_for_store(self, store_id: UUID, search: Optional[str], include_inactive: bool, skip: int, limit: int) -> list[Customer]:
         query = self.db.query(Customer).filter(Customer.store_id == store_id)
