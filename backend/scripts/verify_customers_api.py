@@ -1,7 +1,7 @@
 """Exercise the authenticated Customers list route against the active database.
 
 This TEST/verification helper makes a read-only request with an explicit
-reference ID.  It prints only the safe API response supplied to a client.
+reference ID. It prints only the safe API response supplied to a client.
 """
 
 from __future__ import annotations
