@@ -131,6 +131,58 @@ verify_domain_preflight:
     expire_in: 7 days
     paths: [domain-diagnostics/]
 
+test_customers_runtime_preflight:
+  stage: validate
+  tags: [rainbow-test]
+  resource_group: rainbow-fashions-test
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "shop-inventory" && $CI_COMMIT_REF_PROTECTED == "true"'
+    - when: never
+  script:
+    # Exercise the currently deployed TEST customer-list route against its
+    # actual database before replacing that release.  It is a GET-only check
+    # and prints only status, request reference, and safe server diagnostics.
+    - export DEPLOY_ENVIRONMENT=test DEPLOY_PATH=/opt/rainbow-fashions-test COMPOSE_PROJECT_NAME=rainbow_test BACKEND_ENV_FILE=/opt/rainbow-fashions-test/shared/backend.env COMPOSE_OVERRIDE=docker-compose.test.yml UPLOADS_HOST_PATH=/opt/rainbow-fashions-test/runtime/uploads OPENING_STOCK_IMPORTS_HOST_PATH=/opt/rainbow-fashions-test/runtime/opening-stock-imports BACKUP_STATUS_HOST_PATH=/opt/rainbow-fashions-test/runtime/backups/status
+    - cd "$DEPLOY_PATH/current"
+    - |
+      docker compose --env-file /dev/null -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f "$COMPOSE_OVERRIDE" exec -T backend python - <<'PY'
+      import json
+      import sys
+
+      from fastapi.testclient import TestClient
+
+      from app.api.deps import get_current_user
+      from app.database.session import SessionLocal
+      from app.main import app
+      from app.models.user import User
+
+      request_id = "test-customers-runtime-preflight"
+      db = SessionLocal()
+      try:
+          user = db.query(User).filter(User.store_id.is_not(None)).first()
+      finally:
+          db.close()
+      if user is None:
+          raise RuntimeError("TEST customer preflight requires a store-assigned user")
+
+      app.dependency_overrides[get_current_user] = lambda: user
+      try:
+          with TestClient(app, raise_server_exceptions=False) as client:
+              response = client.get("/api/v1/customers?search=", headers={"X-Request-ID": request_id})
+      finally:
+          app.dependency_overrides.pop(get_current_user, None)
+
+      result = {
+          "endpoint": "GET /api/v1/customers?search=",
+          "http_status": response.status_code,
+          "request_id": response.headers.get("X-Request-ID"),
+          "response": response.json(),
+      }
+      print(json.dumps(result, sort_keys=True))
+      if response.status_code != 200:
+          sys.exit(1)
+      PY
+
 docker_compose_build:
   stage: docker
   image: docker:27-cli
