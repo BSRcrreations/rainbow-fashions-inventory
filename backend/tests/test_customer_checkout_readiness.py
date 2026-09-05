@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.customer import CustomerCreate
+from app.schemas.customer import CustomerCreate, CustomerRead
 from app.schemas.sale import SaleCreate
 from app.services.customer_phone import normalize_customer_phone
 from app.services.sale_service import SaleService
@@ -18,6 +18,15 @@ def test_phone_normalization_uses_one_store_duplicate_key() -> None:
     assert CustomerCreate(name="Test Customer", phone="+91 98765-43210").phone == "9876543210"
     with pytest.raises(ValidationError):
         CustomerCreate(name="Test Customer", phone="123")
+
+
+def test_customer_response_keeps_historical_one_character_names_listable() -> None:
+    now = datetime(2026, 9, 5)
+    customer = CustomerRead.model_validate(SimpleNamespace(id=uuid4(), store_id=uuid4(), name="a", created_at=now, updated_at=now))
+
+    assert customer.name == "a"
+    with pytest.raises(ValidationError):
+        CustomerCreate(name="a")
 
 
 def test_sale_payload_accepts_optional_customer_details_without_creating_on_input() -> None:

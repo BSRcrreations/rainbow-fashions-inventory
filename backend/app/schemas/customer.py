@@ -99,6 +99,10 @@ class CustomerPaymentRead(CustomerPaymentCreate, ORMBaseModel):
 
 
 class CustomerRead(CustomerBase, ORMBaseModel):
+    # Read existing records without imposing the stricter minimum that applies
+    # to new customer creation.  Historical data can contain a one-character
+    # name and should remain visible/editable rather than breaking the list.
+    name: str = Field(min_length=1, max_length=180)
     id: UUID
     store_id: UUID
     credit_sales_total: Decimal = Decimal("0")

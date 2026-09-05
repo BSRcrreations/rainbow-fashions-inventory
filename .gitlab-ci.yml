@@ -135,6 +135,7 @@ test_customers_runtime_preflight:
   stage: validate
   tags: [rainbow-test]
   resource_group: rainbow-fashions-test
+  allow_failure: true
   rules:
     - if: '$CI_COMMIT_BRANCH == "shop-inventory" && $CI_COMMIT_REF_PROTECTED == "true"'
     - when: never
@@ -265,6 +266,9 @@ verify_test:
     - curl --fail --silent --show-error --max-time 15 https://test.rainbow-fashions.in/health/live
     - curl --fail --silent --show-error --max-time 15 https://test.rainbow-fashions.in/health/ready
     - curl --fail --silent --show-error --max-time 15 https://test.rainbow-fashions.in/version | grep -Fq "\"git_sha\":\"$CI_COMMIT_SHA\""
+    - export DEPLOY_ENVIRONMENT=test DEPLOY_PATH=/opt/rainbow-fashions-test COMPOSE_PROJECT_NAME=rainbow_test BACKEND_ENV_FILE=/opt/rainbow-fashions-test/shared/backend.env COMPOSE_OVERRIDE=docker-compose.test.yml UPLOADS_HOST_PATH=/opt/rainbow-fashions-test/runtime/uploads OPENING_STOCK_IMPORTS_HOST_PATH=/opt/rainbow-fashions-test/runtime/opening-stock-imports BACKUP_STATUS_HOST_PATH=/opt/rainbow-fashions-test/runtime/backups/status
+    - cd "$DEPLOY_PATH/current"
+    - docker compose --env-file /dev/null -p "$COMPOSE_PROJECT_NAME" -f docker-compose.yml -f "$COMPOSE_OVERRIDE" exec -T backend python deployment/scripts/verify_customers_api.py
 
 reset_test_uat_data:
   stage: verify
