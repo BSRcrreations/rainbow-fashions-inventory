@@ -2,10 +2,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CompactCartPreview, CurrentSalePanel, ProductGroupCard, ProductVisual } from "./NewSalePage";
 import { orderVariantsBySize, productCardMrpText, productCardVariantSummary } from "./newSaleCard";
+import { checkoutCustomerPayload, isCurrentCustomerLookup } from "./newSaleCustomer";
 import { catalogItemFromBarcode, firstSellableProduct, isQuickAddProduct, mergeCartVariant, productForVariant } from "./newSaleLogic";
 import type { CartLine } from "./newSaleLogic";
 import { previewSaleDiscount } from "./saleDiscount";
 import type { ProductVariantBarcode, SaleCatalogProduct, SaleCatalogVariant } from "../types";
+import type { Customer } from "../types";
 
 const baseProduct: SaleCatalogProduct = {
   product_id: "prisma-leggings",
@@ -38,6 +40,7 @@ describe("ProductVisual", () => {
 
 const smallVariant: SaleCatalogVariant = { variant_id: "variant-small", product_id: "prisma-leggings", size: "S", color: "Black", sku: "LEG-S", barcode: "8901", selling_price: "499", available_stock: 2, classification_review_required: false, is_active: true };
 const largeVariant: SaleCatalogVariant = { ...smallVariant, variant_id: "variant-large", size: "L", barcode: "8902" };
+const existingCustomer: Customer = { id: "customer-a", store_id: "store-1", name: "a", phone: "9000000001", opening_credit: "0", is_active: true, sms_opt_out: false, credit_sales_total: "0", paid_total: "0", balance_due: "0", created_at: "2026-09-05T00:00:00Z", updated_at: "2026-09-05T00:00:00Z" };
 
 function renderProductCard(product: SaleCatalogProduct) {
   return renderToStaticMarkup(<ProductGroupCard product={product} selected={false} onChoose={() => undefined} />);
@@ -92,6 +95,30 @@ describe("New Sale cart behavior", () => {
     const exactVariant = { ...largeVariant, product_id: "separate-product" };
 
     expect(productForVariant(baseProduct, exactVariant).product_id).toBe("separate-product");
+  });
+});
+
+describe("Checkout customer lookup safety", () => {
+  it("does not reuse an existing customer while a newly typed phone is waiting for lookup", () => {
+    const payload = checkoutCustomerPayload({ customerPhone: "9000000099", customerName: "UAT New Customer 20260906", customerDetails: "", lookupPhone: "9000000001", lookupCustomer: existingCustomer });
+
+    expect(isCurrentCustomerLookup("9000000099", "9000000001")).toBe(false);
+    expect(payload).toEqual({ customer_id: null, customer_name: "UAT New Customer 20260906", customer_phone: "9000000099", customer_details: null });
+  });
+
+  it("uses the matching existing customer only after the lookup belongs to the current phone", () => {
+    const payload = checkoutCustomerPayload({ customerPhone: "+91 90000-00001", customerName: "", customerDetails: "", lookupPhone: "9000000001", lookupCustomer: existingCustomer });
+
+    expect(isCurrentCustomerLookup("+91 90000-00001", "9000000001")).toBe(true);
+    expect(payload.customer_id).toBe("customer-a");
+    expect(payload.customer_name).toBe("a");
+    expect(payload.customer_phone).toBe("9000000001");
+  });
+
+  it("builds a fresh walk-in draft without carrying a cancelled checkout customer into the next sale", () => {
+    const payload = checkoutCustomerPayload({ customerPhone: "", customerName: "", customerDetails: "", lookupPhone: "9000000001", lookupCustomer: existingCustomer });
+
+    expect(payload).toEqual({ customer_id: null, customer_name: null, customer_phone: null, customer_details: null });
   });
 });
 

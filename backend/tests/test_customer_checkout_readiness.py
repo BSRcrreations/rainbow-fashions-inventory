@@ -66,3 +66,21 @@ def test_existing_customer_is_reused_for_same_normalized_phone() -> None:
 
     assert customer is existing
     db.add.assert_not_called()
+
+
+def test_new_phone_never_reuses_a_stale_customer_id() -> None:
+    store_id = uuid4()
+    existing = SimpleNamespace(id=uuid4(), store_id=store_id, phone="9000000001", is_active=True, last_purchase_at=None)
+    db = MagicMock()
+    phone_query = db.query.return_value.filter.return_value.with_for_update.return_value
+    phone_query.first.return_value = None
+    phone_query.all.return_value = []
+    service = SaleService.__new__(SaleService)
+    service.db = db
+
+    customer = service._customer_for_sale(existing.id, "UAT New Customer 20260906", "9000000099", None, "CASH", store_id, None)
+
+    assert customer is not existing
+    assert customer.name == "UAT New Customer 20260906"
+    assert customer.phone == "9000000099"
+    db.add.assert_called_once_with(customer)
