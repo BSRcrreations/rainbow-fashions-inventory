@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import require_report_reader
 from app.core.exceptions import error_payload
 from app.database.session import get_db
 from app.models.user import User
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/summary", response_model=BusinessReportsSummary)
-def reports_summary(request: Request, start_date: Optional[date] = None, end_date: Optional[date] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def reports_summary(request: Request, start_date: Optional[date] = None, end_date: Optional[date] = None, db: Session = Depends(get_db), current_user: User = Depends(require_report_reader)):
     request_id = request.state.request_id
     try:
         return ReportService(db).summary(current_user, start_date, end_date, request_id)
@@ -42,5 +42,25 @@ def reports_summary(request: Request, start_date: Optional[date] = None, end_dat
 
 
 @router.get("/inventory-valuation", response_model=InventoryValuationReport)
-def inventory_valuation(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def inventory_valuation(db: Session = Depends(get_db), current_user: User = Depends(require_report_reader)):
     return ReportService(db).inventory_valuation(current_user)
+
+
+@router.get("/export.xlsx")
+def export_business_workbook(start_date: date, end_date: date, db: Session = Depends(get_db), current_user: User = Depends(require_report_reader)):
+    from fastapi import Response
+    from app.services.report_export_service import ReportExportService
+    return Response(ReportExportService(db).workbook(current_user,start_date,end_date), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition":"attachment; filename=rainbow-business-reports.xlsx"})
+
+
+@router.get("/low-stock")
+def low_stock_report(page: int = 1, category_id: Optional[str] = None, brand_id: Optional[str] = None, supplier_id: Optional[str] = None, db: Session = Depends(get_db), current_user: User = Depends(require_report_reader)):
+    from uuid import UUID
+    from app.core.exceptions import bad_request
+    from app.services.report_export_service import ReportExportService
+    try:
+        ids = [UUID(value) if value else None for value in (category_id,brand_id,supplier_id)]
+    except ValueError:
+        raise bad_request("Choose a valid category, brand or supplier.")
+    if page<1: raise bad_request("Choose a valid page.")
+    return ReportExportService(db).low_stock(current_user,page,*ids)

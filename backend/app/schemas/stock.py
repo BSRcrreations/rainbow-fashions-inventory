@@ -18,7 +18,7 @@ class InventoryValuationRead(BaseModel):
 class StockAdjustmentCreate(BaseModel):
     product_id: Optional[UUID] = None
     product_variant_id: Optional[UUID] = None
-    qty: int = Field(gt=0)
+    qty: int = Field(ge=0)
     direction: str = Field(pattern="^(INCREASE|DECREASE)$")
     adjustment_type: Literal["ADD_STOCK", "REMOVE_STOCK", "SET_COUNTED_QUANTITY"] = "ADD_STOCK"
     reason: Literal["CUSTOMER_RETURN", "SUPPLIER_RETURN", "DAMAGE", "MANUAL_ADJUSTMENT"] = "MANUAL_ADJUSTMENT"
@@ -26,6 +26,8 @@ class StockAdjustmentCreate(BaseModel):
 
     @model_validator(mode="after")
     def require_stock_target(self) -> "StockAdjustmentCreate":
+        if self.qty == 0 and self.adjustment_type != "SET_COUNTED_QUANTITY":
+            raise ValueError("Enter a positive quantity for a stock change")
         if not self.product_id and not self.product_variant_id:
             raise ValueError("Product variant is required")
         return self

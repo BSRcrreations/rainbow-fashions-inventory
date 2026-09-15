@@ -140,6 +140,7 @@ class Stage1ValidationTests(unittest.TestCase):
         service._generate_invoice_number = MagicMock(return_value=sale.invoice_number)
         service._create = MagicMock(return_value=sale)
 
+        service.repo.get_detail.return_value = sale
         first = service.create(payload, user, idempotency_key="checkout-once")
         record = db.add.call_args.args[0]
         db.query.return_value.filter_by.return_value.first.return_value = record

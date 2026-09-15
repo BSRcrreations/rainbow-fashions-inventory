@@ -1,0 +1,8 @@
+chromium barcode sale PASS
+chromium search sale PASS
+chromium opening template, upload, preview totals PASS (no confirmation)
+chromium 11 key screens at tablet/phone widths: no page overflow; no page errors PASS
+webkit barcode sale PASS
+webkit search sale PASS
+webkit opening template, upload, preview totals PASS (no confirmation)
+webkit 11 key screens at tablet/phone widths: no page overflow; no page errors PASS

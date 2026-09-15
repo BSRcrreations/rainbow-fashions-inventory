@@ -31,6 +31,16 @@ backend_tests:
   image: python:3.12-slim
   tags: [rainbow-ci]
   extends: .validation_rules
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    APP_ENV: testing
+    POSTGRES_DB: rainbow_ci_test
+    POSTGRES_USER: rainbow_ci
+    POSTGRES_HOST_AUTH_METHOD: trust
+    DATABASE_URL: postgresql+psycopg://rainbow_ci@postgres:5432/rainbow_ci_test
+    RAINBOW_TEST_DATABASE_URL: postgresql+psycopg://rainbow_ci@postgres:5432/rainbow_ci_test
   cache:
     key: backend-pip
     paths: [.cache/pip]
@@ -39,18 +49,21 @@ backend_tests:
     - apt-get update
     - apt-get install -y --no-install-recommends build-essential git libpq-dev
     - rm -rf /var/lib/apt/lists/*
-    - python -m pip install --upgrade pip
-    - pip install -r backend/requirements.txt
+    - python -m pip install --upgrade "pip>=26.2" "setuptools>=83.0.0"
+    - pip install -r backend/requirements.txt pip-audit
   script:
     - cd backend
+    - pip-audit -r requirements.txt
     - python -m compileall app
+    - alembic upgrade head
     - pytest
+    - python scripts/verify_retail_concurrency.py
     - test "$(alembic heads | grep -c '(head)')" -eq 1
     - python -c "from app.main import app; assert app.openapi().get('openapi')"
 
 frontend_quality:
   stage: validate
-  image: node:20-alpine
+  image: node:22-alpine
   tags: [rainbow-ci]
   extends: .validation_rules
   cache: []

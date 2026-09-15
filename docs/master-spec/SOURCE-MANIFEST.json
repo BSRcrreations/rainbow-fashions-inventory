@@ -1,0 +1,507 @@
+{
+  "base_commit": "1eb44105c6ef52e339acfe5195990e08fdb479ef",
+  "candidate": "uncommitted working tree",
+  "algorithm": "SHA-256",
+  "files": [
+    {
+      "path": ".gitlab-ci.yml",
+      "sha256": "f3bb67360809d92f61c6e893e098b3167e8f82e771908089dfa815bc2d0fe916"
+    },
+    {
+      "path": "backend/Dockerfile",
+      "sha256": "195287eb2f63ea71fdfc5231522abeb7a571bfa0c6476a03f27eddd3d999b403"
+    },
+    {
+      "path": "backend/alembic/sql/20260715_legacy_baseline.sql",
+      "sha256": "54fc764a8bae3484e2f302f94baf9e1c1ae97eb0dcadef729d145e26ac0bbf25"
+    },
+    {
+      "path": "backend/alembic/versions/20260715_0000_legacy_baseline.py",
+      "sha256": "8e9559706cdfd2fda87a92463bb369af6965b873d52869589002a25c5ce24dd8"
+    },
+    {
+      "path": "backend/alembic/versions/20260716_0001_add_product_image_url.py",
+      "sha256": "d2826cbe008d420d561c7be0496fb281eaede13ed5af0808ad000546783689aa"
+    },
+    {
+      "path": "backend/alembic/versions/20260728_0013_purchase_item_classification_and_tenancy.py",
+      "sha256": "3e1014264fdf9b7e60f80116c59fb32d9502047e5de0502722355fb2edf41ee8"
+    },
+    {
+      "path": "backend/alembic/versions/20260729_0030_seed_leggings_opening_stock.py",
+      "sha256": "d36b2020d72db2756d9e56a066f39ac1b671fe1696188ae2fa09112639c1859b"
+    },
+    {
+      "path": "backend/alembic/versions/20260909_0049_shop_operations.py",
+      "sha256": "31faf047b895e9031c550fe9dc76b3d213c1cd162d5d8e0b584ef040f7f93482"
+    },
+    {
+      "path": "backend/alembic/versions/20260909_0050_retail_transactions.py",
+      "sha256": "c72295a67c38f1df21c4c9e92e1497aef5da34143aa401ecd2b934399d54f8ce"
+    },
+    {
+      "path": "backend/alembic/versions/20260909_0051_daily_stock.py",
+      "sha256": "42d626d399abbecd47bbe72494e29f5c3090c7801fa21f3a5b4d7c8d51e55907"
+    },
+    {
+      "path": "backend/alembic/versions/20260910_0052_receipt_tax_snapshots.py",
+      "sha256": "1b57f7dff881fd23ef3f199e7506a8ea2b3a8ed29bc69c21e7a5501544b339a3"
+    },
+    {
+      "path": "backend/alembic/versions/20260910_0053_variant_minimum_stock.py",
+      "sha256": "1f8029abef28ae12f87c74407081caa6b9c5014ac0032144c5d350103e14e8d5"
+    },
+    {
+      "path": "backend/app/ai/local_ocr.py",
+      "sha256": "75bcf75eb9c147cfb1f8265493e898b94f54d0bbea27469c68272c720b5d7ed5"
+    },
+    {
+      "path": "backend/app/api/deps.py",
+      "sha256": "9840bc988dcdc126799b8576bb56729161690b397bfa87d9a41b67c38bd9baa8"
+    },
+    {
+      "path": "backend/app/api/routes/customers.py",
+      "sha256": "cc9690335daf743a6b7de35495b21c7e7b30b11d8c1bb4d9ad4ca1a8eb0500ac"
+    },
+    {
+      "path": "backend/app/api/routes/dashboard.py",
+      "sha256": "03db62ee39c3c406de022645820b94637f77465594cdf7cd591abad646635d46"
+    },
+    {
+      "path": "backend/app/api/routes/expenses.py",
+      "sha256": "eeda15d3bbebe9e06f23855a768399497cd8b7376f8582f892f0d23f9f150230"
+    },
+    {
+      "path": "backend/app/api/routes/opening_stock_imports.py",
+      "sha256": "9b6911d11adbedb3019c76332cecfc6d65a4b427220f16a72ef45eb7b9d19141"
+    },
+    {
+      "path": "backend/app/api/routes/operations.py",
+      "sha256": "82daeb679a239a3a2b4ed1a3bc8f905f0e07ce6a2f465479d304eb4aed6df5bf"
+    },
+    {
+      "path": "backend/app/api/routes/products.py",
+      "sha256": "bb1ec0b2a4fdbcd537ed5fa269e0c2e5209e0bd3297541d907e13b410258f31f"
+    },
+    {
+      "path": "backend/app/api/routes/purchase_documents.py",
+      "sha256": "1a17ffdab9455c284b60a6b94e2f26e34bab43a1af78c7a45861f224bc9a7d68"
+    },
+    {
+      "path": "backend/app/api/routes/purchases.py",
+      "sha256": "50735a81d2160482e0e7d1754b76acae7ed0465e075d5d52476998a40409468b"
+    },
+    {
+      "path": "backend/app/api/routes/reports.py",
+      "sha256": "7c4cb81a0ac61198fad0ae2982be81520478bc32e7ebe790fb30faf671bc124d"
+    },
+    {
+      "path": "backend/app/api/routes/sales.py",
+      "sha256": "7cde25bd1f283bcc4a355172cfc6c84664fc09e84771a2f0c9fe56a70ac23255"
+    },
+    {
+      "path": "backend/app/api/routes/stock.py",
+      "sha256": "2e4e84a136cd002251bdc1a54b23a649acdc6120732e68c4cf1cedd5f43e8bf6"
+    },
+    {
+      "path": "backend/app/api/routes/stock_scan.py",
+      "sha256": "cd7722727a86d9da3d0dd5a3de78949b38429ddeed5ba37b0969914b4823bc5f"
+    },
+    {
+      "path": "backend/app/api/routes/suppliers.py",
+      "sha256": "07d2799d512159e891253c15c8e0877dbac45ed971603f1a799ece7a1e443204"
+    },
+    {
+      "path": "backend/app/core/security.py",
+      "sha256": "011a4551352beab8e85be155a44c5cd8e9c4fa6d5f893b3659beeed049d4d1f5"
+    },
+    {
+      "path": "backend/app/main.py",
+      "sha256": "45d54d31ae0c8f79ab9a61170aeffe53ca93e146f571fd2f9080dc825591e066"
+    },
+    {
+      "path": "backend/app/models/__init__.py",
+      "sha256": "9f510f5b79d2b0e49dfffe0d3d61f0c6835a38a0b955656119e4919b75093bcf"
+    },
+    {
+      "path": "backend/app/models/enums.py",
+      "sha256": "5db009a691bea4e95ef0b88d17387af2185c7de5bfc22b969f194ff6e3cc4b58"
+    },
+    {
+      "path": "backend/app/models/operations.py",
+      "sha256": "97c5ab24467879fce48d3f1a67322bb8bfe476c50aa778b6d80ad7c16e83c74d"
+    },
+    {
+      "path": "backend/app/models/product_variant.py",
+      "sha256": "99a258bf203dabd8a30211a7e7285c82e67b1ebadf87a174e84606f5b70bcdf2"
+    },
+    {
+      "path": "backend/app/models/purchase.py",
+      "sha256": "2149e3d13cbe7ce8c31e1ce2665b2ca4943b793e71cb6e4db27394020c9f49a4"
+    },
+    {
+      "path": "backend/app/models/purchase_return.py",
+      "sha256": "f1494f6bd01f7b4bb000b334afd28f49084480a1bfbceb13a0023ea94402f1ff"
+    },
+    {
+      "path": "backend/app/models/sale.py",
+      "sha256": "9bf06022505115a361109aa0dde9eb3738442e4d16f5273f76135a7ddc5d2a3d"
+    },
+    {
+      "path": "backend/app/repositories/product.py",
+      "sha256": "48932d46684cd080fcc56d65351668d7c3c2a2cb2d5be0c88dbcd41d5e911aa1"
+    },
+    {
+      "path": "backend/app/repositories/purchase.py",
+      "sha256": "a0ee09eb463324d614f15ca2742771c2ecb71256f699acc32447861ef6059df6"
+    },
+    {
+      "path": "backend/app/repositories/sale.py",
+      "sha256": "fc1eb3bb369ebbc6c16f0ee95a159b73a48df19ebbf4d8f08a01b0d9ce7dc184"
+    },
+    {
+      "path": "backend/app/schemas/backup.py",
+      "sha256": "20464c66af25bd7a0a58f779c500f61d547dd6bd96163e4c602fc2a73ed78ff6"
+    },
+    {
+      "path": "backend/app/schemas/inventory_reconciliation.py",
+      "sha256": "e92e035ba7d7a0bc58c5ae77799d9a57313a5d2f68d91dba2307a4da81acaace"
+    },
+    {
+      "path": "backend/app/schemas/operations.py",
+      "sha256": "65d61797bd1690967ea37b2d995466e633d58a5c8bfda57b878e8e774b94d11d"
+    },
+    {
+      "path": "backend/app/schemas/product.py",
+      "sha256": "791d06336be6101f7bf86816821a1417d958afbbe30e560aab694408c2d35b37"
+    },
+    {
+      "path": "backend/app/schemas/purchase.py",
+      "sha256": "5e2064ef483a8bc0ad1d1443cd25aee7463a769c5586ff369ca646ba0c2aafd6"
+    },
+    {
+      "path": "backend/app/schemas/sale.py",
+      "sha256": "3b50f78060ca69793a0613ef5f8faff16f0e1e74c70bfbe6643c7895cd2c95c7"
+    },
+    {
+      "path": "backend/app/schemas/stock.py",
+      "sha256": "efd6d12bb728f775e417e3d497c42a9d506c2a109a0b6f068da54596aa2b0c15"
+    },
+    {
+      "path": "backend/app/schemas/stock_scan.py",
+      "sha256": "f0191ce4263ab4da921c6d9c74c4e6afd3ddce4f85efaacc5882a4c832ca09ee"
+    },
+    {
+      "path": "backend/app/services/auth_service.py",
+      "sha256": "0c583885cfa0089f04399c7da5e7e79c00ae164c6b266089e6d1f60b647e6ced"
+    },
+    {
+      "path": "backend/app/services/backup_status_service.py",
+      "sha256": "7f917a8587325a5dec3cfbe759936954dbb099d9e35550b59b0576a8d2d1d41d"
+    },
+    {
+      "path": "backend/app/services/business_service.py",
+      "sha256": "a69e5eda7bc7fe4f6391cc30603b63a26121c18f5dcfc739428fe4fc1f44d16e"
+    },
+    {
+      "path": "backend/app/services/dashboard_service.py",
+      "sha256": "b212bd395236ed30f99c267ec780b11c68b742e7439b659b071b076125e1b116"
+    },
+    {
+      "path": "backend/app/services/inventory_reconciliation_service.py",
+      "sha256": "f1fb71f871abe8ed66479e419b1f7f1c5d509420a3c9c77b287d70b21e5129b1"
+    },
+    {
+      "path": "backend/app/services/opening_stock_import_service.py",
+      "sha256": "79eb61d370dfdc6d93cfbd4194b81d4d5479fe168601e29e9d7719a7bef732aa"
+    },
+    {
+      "path": "backend/app/services/operations_service.py",
+      "sha256": "d31806f8e87389fc9926cfdca91c7a3221d96b55c9c85f4be16d8d76ee33640c"
+    },
+    {
+      "path": "backend/app/services/product_service.py",
+      "sha256": "352c16743df9018036492069b8502a6c4628df5944efe260d6fe44add4837c8f"
+    },
+    {
+      "path": "backend/app/services/purchase_document_service.py",
+      "sha256": "4f0d2619b8cee73cc710b4d934bd86790b8c28b2533a4ed131fe1a708e8808ce"
+    },
+    {
+      "path": "backend/app/services/purchase_service.py",
+      "sha256": "cbfc041531ab96c4f83097b36d55c7a1115793effa4885fc987be2e3835bdcdb"
+    },
+    {
+      "path": "backend/app/services/report_export_service.py",
+      "sha256": "175a2b5893aee2c1e2991d3d1486a1b7b780dbe62da3d21ed1fef84080fbe9c4"
+    },
+    {
+      "path": "backend/app/services/report_service.py",
+      "sha256": "7d8927dcbeeb76a6e962703dc76617b71a2ef77e88182eb1fe8d05894ba74361"
+    },
+    {
+      "path": "backend/app/services/sale_discount.py",
+      "sha256": "3b8c90f17c1b73540f827b3cf06b1cb6ceaf9b2df737f32b4711c5c08706ac62"
+    },
+    {
+      "path": "backend/app/services/sale_service.py",
+      "sha256": "2281d7e83d8f9f9d4e4c82105e369cbe2c43bc56587e98ce89c1c98eb8797d42"
+    },
+    {
+      "path": "backend/app/services/shop_summary_service.py",
+      "sha256": "1801d2b26f369ab16d5f9ee5bedd0bbbbbea188037c2ad68e11fa88ca163af15"
+    },
+    {
+      "path": "backend/app/services/stock_scan_service.py",
+      "sha256": "bbc39aa5b1ced24ae19462e0a92f6da323c82b8252f9b872873c5d0b5298b8e3"
+    },
+    {
+      "path": "backend/app/services/stock_service.py",
+      "sha256": "b8540c26e7a9d30b84680a50afb8f481940ce74ac3aa7d3e9f759412df9ad6d2"
+    },
+    {
+      "path": "backend/app/services/transaction_idempotency.py",
+      "sha256": "bb99178499a324a3a82a96c37fba71b2d61a9a1d14beb19e5772268d044d30b9"
+    },
+    {
+      "path": "backend/app/services/variant_management_service.py",
+      "sha256": "c014fa39593c3714e67877727c377b93a6cbab01c208f68856dd08a35b35a974"
+    },
+    {
+      "path": "backend/requirements.txt",
+      "sha256": "e745f387b13eef45d67e3dde20a2f81f1538d047a0d7726d59ad92198059b79f"
+    },
+    {
+      "path": "backend/scripts/bootstrap_test_database.py",
+      "sha256": "b1414423447f8f2f3ae04ab8602060a384de97a5b28f2544e63beb1f915b41c8"
+    },
+    {
+      "path": "backend/scripts/verify_retail_concurrency.py",
+      "sha256": "5e2e11b6032cefe98b70fa379ff57303c74d04d238cdb0d50bcac6483e3c5f60"
+    },
+    {
+      "path": "backend/tests/conftest.py",
+      "sha256": "d6db7ac714d9688338e87ae29f5d158b5c5a624c04697a42d7c3950291ed95bb"
+    },
+    {
+      "path": "backend/tests/test_batch_barcodes.py",
+      "sha256": "8c213304ef21caf8afd5e924812fedc14188806e43aeb960287364937956f7d4"
+    },
+    {
+      "path": "backend/tests/test_existing_variant_barcode_onboarding.py",
+      "sha256": "22efa2777f26f5667a15f65e5916f11684b51f5bfa3c2d24e09326c06b47c15d"
+    },
+    {
+      "path": "backend/tests/test_local_ocr.py",
+      "sha256": "ab2700a9f4ce3d2c18923d8aeea5604f38e3534669d7340d18416e34114b22ff"
+    },
+    {
+      "path": "backend/tests/test_master_retail_workflows.py",
+      "sha256": "5d07449cc3243da76a9daba1125eb2491aa5eaca59ac2f9309fdf1b71d9fa25f"
+    },
+    {
+      "path": "backend/tests/test_password_security.py",
+      "sha256": "1100319ecb2324496ad7e5ff063cc9877cdea0dec38e574f16121fe45f5c56e8"
+    },
+    {
+      "path": "backend/tests/test_reports.py",
+      "sha256": "e3142c78a6f79450c21d92ef625866a0e252d41c912b647ad81c15b245c53d3c"
+    },
+    {
+      "path": "backend/tests/test_stage1_validation.py",
+      "sha256": "1433d54a8fc55548200589229b841dc6dfb6d3535165f2cec84085abb39ec418"
+    },
+    {
+      "path": "deployment/scripts/deploy_release.sh",
+      "sha256": "28801d03cda9cd9aea3153d50174085b19824e5de5b38cb84d47642288f725ba"
+    },
+    {
+      "path": "frontend/Dockerfile",
+      "sha256": "c4fe66f879d96fd77c4817dc6c6f67eed1991f9fc88430aec3b735b58a69a9be"
+    },
+    {
+      "path": "frontend/package-lock.json",
+      "sha256": "f5b0219524e1c07c6ceb9746ccce0abafbccfa82e039a66681c8be60a624787e"
+    },
+    {
+      "path": "frontend/package.json",
+      "sha256": "5cdd737e06ab9a46410ad8a2ce7f6865e335305906c3c659c190e7c3ccf1688e"
+    },
+    {
+      "path": "frontend/src/App.tsx",
+      "sha256": "b9a21fd6283757580f90d5d0b5a143380ab876d9af2c2b818e0baf7aa847223d"
+    },
+    {
+      "path": "frontend/src/api/client.ts",
+      "sha256": "20a6cd974ef1947b3e6315cf87ba7ff5676871c1624955faf21e674796ba2eda"
+    },
+    {
+      "path": "frontend/src/components/BarcodeLabelDialog.tsx",
+      "sha256": "c37ce541145a865c11e408492a70cf6dd2323b778831d933e34a1aa88b48b59c"
+    },
+    {
+      "path": "frontend/src/components/ConnectionStatus.tsx",
+      "sha256": "e5bc729866a826636c0bee46b30fb785b7c4d72e55808075192989eeeae14ea1"
+    },
+    {
+      "path": "frontend/src/components/ErrorState.tsx",
+      "sha256": "443dd3f1db14131c9989aa22edcaee2a16c16dbb834649587e56e094fff8d49f"
+    },
+    {
+      "path": "frontend/src/components/LowStockReport.tsx",
+      "sha256": "44e39cf5d80a7788762446e3164365bf0ef99fae58b90791891e8664a7963819"
+    },
+    {
+      "path": "frontend/src/components/ThermalReceipt.tsx",
+      "sha256": "438a9844f95343efd0472e5c38d796381ebbc6778d5e9aef3a5a88fe456b46f4"
+    },
+    {
+      "path": "frontend/src/components/VariantManagementDialog.tsx",
+      "sha256": "6eb385f477ef11a3a59ece68d56dc94372e01afd0c0773343d8515b361107e42"
+    },
+    {
+      "path": "frontend/src/components/VariantPicker.tsx",
+      "sha256": "b6b6948e67dfcc21ea0e1f4b8e3769457f7361ad72f2086ba7df1e7441781d64"
+    },
+    {
+      "path": "frontend/src/hooks/useAuth.test.tsx",
+      "sha256": "2a52283872dfaf90392e5a77cbbc907aabd1a548cf20aa24a3d4fe54c80ac06d"
+    },
+    {
+      "path": "frontend/src/hooks/useAuth.tsx",
+      "sha256": "05300d9fc261b0a1628d04d3163cfaa9a729d4fe6f7647e95b5128c33f970f10"
+    },
+    {
+      "path": "frontend/src/hooks/useDraftAttachment.ts",
+      "sha256": "bc46ae1d085c1e58365e544e00080d7a6412103d9b02e9e7838df3a18d84fca0"
+    },
+    {
+      "path": "frontend/src/hooks/useDurableDraft.ts",
+      "sha256": "254e59a2d9c514347e43bcd04d6b0b2da4f469ee17e4612f7d7f6a7bbdc2004e"
+    },
+    {
+      "path": "frontend/src/hooks/useStoreSettings.ts",
+      "sha256": "b5a6e0c33c4861403483d51cbb51c07b404442ea004f6cb17235862194e648f2"
+    },
+    {
+      "path": "frontend/src/layouts/AppLayout.tsx",
+      "sha256": "6c3f2e398577763aac666fbb3f08a49392d0998dd452c2dab608a2f38579907f"
+    },
+    {
+      "path": "frontend/src/main.tsx",
+      "sha256": "88ce7bf250142c494e65698539c62fa23c26b4051f4f0d943afd26d57df18223"
+    },
+    {
+      "path": "frontend/src/pages/AuditLogPage.tsx",
+      "sha256": "f27830dfcc024edfe05a2688521b1ba23545cba70480056645de10edb179bee6"
+    },
+    {
+      "path": "frontend/src/pages/BackupStatusPage.tsx",
+      "sha256": "cadf0ee61be13fccbfeb0dd8c629e8d1a11e79d465f59450cdc7d42975739cef"
+    },
+    {
+      "path": "frontend/src/pages/DayClosingPage.tsx",
+      "sha256": "3c3eb0c1ae71c192a088ed0ec7e3cf9b37e55c09c4174f5fe44842c672d2deb8"
+    },
+    {
+      "path": "frontend/src/pages/InventoryIntegrityPage.tsx",
+      "sha256": "96fdca78fdabe11c7e8d49eb022011d45177cd13d7af549ac4180f8a06eb4cf8"
+    },
+    {
+      "path": "frontend/src/pages/NewSalePage.test.tsx",
+      "sha256": "ee5a83db68449fd8a80a7c6300f4b47f954f1fe18ef7d2fa669c4258d6ac1fa1"
+    },
+    {
+      "path": "frontend/src/pages/NewSalePage.tsx",
+      "sha256": "fd7b40a1b640d4feed8a2b6aaa143ced4e7be521a7d07fbb2e763ffb9efa13e2"
+    },
+    {
+      "path": "frontend/src/pages/OpeningStockImportPage.tsx",
+      "sha256": "104697f065f21108a23ed80d13b8888883474759334a6ed0eadc6cff0cd361c1"
+    },
+    {
+      "path": "frontend/src/pages/PrinterSettingsPage.tsx",
+      "sha256": "b921362822ae5afe9f3764de56b1b43fc3509efd61bf4d135208a6967efa8118"
+    },
+    {
+      "path": "frontend/src/pages/PurchaseDetailPage.tsx",
+      "sha256": "e4a190d0fe75827801a1d4659b7608382d230f4576e2f073d62d559745cce1c0"
+    },
+    {
+      "path": "frontend/src/pages/PurchaseReturnsPage.tsx",
+      "sha256": "f62f5ae46f9bfbc8e3f2597c0ad26d31a42389e1569739494a88a809960d5d60"
+    },
+    {
+      "path": "frontend/src/pages/PurchasesPage.tsx",
+      "sha256": "8aaab7b2ce97a291a587feea0afdcd70171d701cabb12c7b27e0dd3dc84cddcf"
+    },
+    {
+      "path": "frontend/src/pages/QuickEntryPage.tsx",
+      "sha256": "5078349dcedd83043d49764bd0da36fd7c4e80242fb6900abe0817f2ca64e9d6"
+    },
+    {
+      "path": "frontend/src/pages/ReportsPage.tsx",
+      "sha256": "b806be7d16eab72f6405089765fe9a90aa41f53e071ae8edb6986ef5bee6b499"
+    },
+    {
+      "path": "frontend/src/pages/ReturnsPage.tsx",
+      "sha256": "c724346dd9ff97829466d09faf7db110c0a730925cc1560f6af8fb2f4273d6ea"
+    },
+    {
+      "path": "frontend/src/pages/SalesDashboardPage.tsx",
+      "sha256": "ab723289d545d2163434096c294385ee74ef3d867e0be4a466b25b1de075a231"
+    },
+    {
+      "path": "frontend/src/pages/SalesHistoryPage.tsx",
+      "sha256": "5b5480c5ef64c3c461c58d75a55bc2260af55734b783eb68c3ddbf1045ac2aff"
+    },
+    {
+      "path": "frontend/src/pages/StockAdjustmentPage.tsx",
+      "sha256": "276acd5d58c5609be8fec8213b9ecc82081732e4096e1c6365447a388fcc21fb"
+    },
+    {
+      "path": "frontend/src/pages/StoreSettingsPage.tsx",
+      "sha256": "d9b456e9152d2c6425b9f7bde07fc757ac8ff8cff987721b5f93152c2d76c122"
+    },
+    {
+      "path": "frontend/src/pages/UsersPage.tsx",
+      "sha256": "42d8dc554461dd94c769e51005373ba499b7dc1fad0bfbe8ef492c090f056969"
+    },
+    {
+      "path": "frontend/src/pages/certification.behavior.test.tsx",
+      "sha256": "2004600d3f1749cad2f4eb4e48034c29ece1d5b5fd486f0bfbbe96ee68ab0655"
+    },
+    {
+      "path": "frontend/src/pages/newSaleLogic.ts",
+      "sha256": "fdc480c84cb7ba3678b346b2cfc04de4e2aa31f2eb9fa6eb508d39594f7dc021"
+    },
+    {
+      "path": "frontend/src/pages/retailWorkflows.behavior.test.tsx",
+      "sha256": "8f6cfaee0028a1d691aee99b8f7deccb307e97795dbfa13927d8bfae931cc5d5"
+    },
+    {
+      "path": "frontend/src/routes/ProtectedRoute.tsx",
+      "sha256": "6f6dc34973eaf0abcaad2639e86469e09cd7c57bba222ddfc9f6cdd342cad7e5"
+    },
+    {
+      "path": "frontend/src/routes/permissions.ts",
+      "sha256": "019f4a19dc60b1c6dedfa0a23a9327aa88930fbb6f30c1af8886f8d513e02e8f"
+    },
+    {
+      "path": "frontend/src/types/index.ts",
+      "sha256": "21e45ae42e1871155bf1cad72c259a1c5d935a30ba868aa946442eb576986c2f"
+    },
+    {
+      "path": "frontend/src/utils/draftStorage.ts",
+      "sha256": "310060440ad2c281a90b282caba532d59e79530abf5dae2668006423b81840f6"
+    },
+    {
+      "path": "frontend/src/utils/printing.ts",
+      "sha256": "dc60f42f8f9322d3d276ea3cab84879f5c1f8405bc2708c8b2eb0c9102654805"
+    },
+    {
+      "path": "frontend/src/utils/variantSelection.ts",
+      "sha256": "a772a24b6498d1033d3e9aff28cd0f61b6533d2ab04ad56e1e4902f464c7c37a"
+    }
+  ]
+}

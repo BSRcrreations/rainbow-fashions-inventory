@@ -1,3 +1,4 @@
+import ThermalReceipt from "../components/ThermalReceipt";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Download, FileText, MoreHorizontal, Plus, Printer, Search, ShoppingCart, Trash2 } from "lucide-react";
@@ -15,11 +16,10 @@ import { Button } from "../components/ui/button";
 import StatusBadge from "../components/StatusBadge";
 import DeletePasswordDialog from "../components/DeletePasswordDialog";
 import { useAuth } from "../hooks/useAuth";
-import type { PaginatedSales, Sale, SaleReturn } from "../types";
+import type { PaginatedSales, Sale } from "../types";
 import { money, shortDate } from "../utils/format";
 
 function downloadBlob(blob: Blob, name: string) { const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = name; anchor.click(); URL.revokeObjectURL(url); }
-function saleDiscountText(sale: Sale) { const amount = sale.discount_amount ?? sale.discount; return sale.discount_type === "PERCENTAGE" ? `${sale.discount_value ?? "0"}% — ${money(amount)}` : money(amount); }
 
 export default function SalesHistoryPage() {
   const toast = useToast();
@@ -37,9 +37,6 @@ export default function SalesHistoryPage() {
   const [selected, setSelected] = useState<Sale | null>(null);
   const [actionSale, setActionSale] = useState<Sale | null>(null);
   const [voidSale, setVoidSale] = useState<Sale | null>(null);
-  const [returnSale, setReturnSale] = useState<Sale | null>(null);
-  const [returnReason, setReturnReason] = useState("");
-  const [returnQuantities, setReturnQuantities] = useState<Record<string, number>>({});
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteIds, setDeleteIds] = useState<string[]>([]);
   const [deleteSummary, setDeleteSummary] = useState("");
@@ -53,7 +50,7 @@ export default function SalesHistoryPage() {
   const canManage = user?.role === "OWNER" || user?.role === "MANAGER";
   const refresh = () => { void queryClient.invalidateQueries({ queryKey: ["sales-history"] }); void queryClient.invalidateQueries({ queryKey: ["sales-dashboard"] }); void queryClient.invalidateQueries({ queryKey: ["stock-history"] }); };
   const voidMutation = useMutation({ mutationFn: (sale: Sale) => api.post<Sale>(`/sales/${sale.id}/void`, { reason: "Void sale from sales history", version: sale.version }), onSuccess: () => { toast.success("Sale voided and stock restored"); setVoidSale(null); refresh(); }, onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to void sale") });
-  const returnMutation = useMutation({ mutationFn: () => { if (!returnSale) throw new Error("Sale is unavailable"); if (returnReason.trim().length < 3) throw new Error("Return reason is required"); const items = returnSale.items.filter((item) => (returnQuantities[item.id] ?? 0) > 0).map((item) => ({ sale_item_id: item.id, quantity: returnQuantities[item.id] })); if (!items.length) throw new Error("Select at least one item quantity"); return api.post<SaleReturn>(`/sales/${returnSale.id}/returns`, { reason: returnReason.trim(), items }); }, onSuccess: () => { toast.success("Customer return recorded"); setReturnSale(null); setReturnReason(""); setReturnQuantities({}); refresh(); }, onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to record return") });
+
 
   async function beginDelete(ids: string[]) {
     try {
@@ -73,7 +70,6 @@ export default function SalesHistoryPage() {
   }
 
   async function exportSales(format: "xlsx" | "pdf") { try { const exportParams = new URLSearchParams(params); exportParams.delete("page"); exportParams.delete("page_size"); exportParams.set("format", format); downloadBlob(await api.getBlob(`/sales/export?${exportParams}`), `sales-history.${format}`); toast.success(`${format.toUpperCase()} export downloaded`); } catch (error) { toast.error(error instanceof Error ? error.message : "Export failed"); } }
-  function printInvoice() { window.print(); }
 
   return (
     <>
@@ -97,12 +93,12 @@ export default function SalesHistoryPage() {
       ) : <div className="rounded-lg border border-slate-200 bg-white py-4 text-center shadow-sm"><EmptyState icon={ShoppingCart} title="No completed sales yet" description="Start a new sale to create the first invoice and update inventory automatically." /><Button asChild><Link to="/sales"><Plus size={17} /> New Sale</Link></Button></div>}
 
       <Dialog open={Boolean(selected)} title={`Invoice ${selected?.invoice_number ?? ""}`} description={selected ? `${shortDate(selected.sale_date)} · ${selected.payment_mode}` : undefined} onClose={() => setSelected(null)} maxWidth="lg">
-        {selected ? <div id="printable-invoice"><div className="mb-5 flex justify-between gap-4 text-sm"><div><div className="font-semibold">Rainbow Fashions</div><div className="text-slate-500">Customer: {selected.customer_name || "Walk-in"}</div></div><div className="text-right"><div>Cashier: {selected.cashier?.full_name || "-"}</div><div className="text-slate-500">{new Date(selected.sale_date).toLocaleString("en-IN")}</div></div></div><div className="overflow-x-auto"><table className="w-full min-w-[480px] divide-y divide-line text-sm"><thead className="bg-slate-50 text-left"><tr><th className="px-3 py-2">Product</th><th className="px-3 py-2 text-right">Qty</th><th className="px-3 py-2 text-right">Price</th><th className="px-3 py-2 text-right">Total</th></tr></thead><tbody className="divide-y divide-line">{selected.items.map((item) => <tr key={item.id}><td className="px-3 py-2">{item.product_name}</td><td className="px-3 py-2 text-right">{item.quantity}</td><td className="px-3 py-2 text-right">{money(item.unit_price)}</td><td className="px-3 py-2 text-right">{money(item.line_total)}</td></tr>)}</tbody></table></div><div className="ml-auto mt-4 grid max-w-xs grid-cols-2 gap-2 text-sm"><span>Subtotal</span><strong className="text-right">{money(selected.subtotal)}</strong><span>Discount</span><strong className="text-right">{saleDiscountText(selected)}</strong><span className="border-t border-line pt-2">Total</span><strong className="border-t border-line pt-2 text-right text-lg">{money(selected.grand_total ?? selected.total_amount)}</strong></div><div className="mt-5 flex justify-end print:hidden"><Button type="button" onClick={printInvoice}><Printer size={16} /> Print / Reprint Bill</Button></div></div> : null}
+        {selected ? <ThermalReceipt sale={selected} /> : null}
       </Dialog>
-      <Dialog open={Boolean(actionSale)} title={`Actions · ${actionSale?.invoice_number ?? ""}`} onClose={() => setActionSale(null)} maxWidth="md"><div className="grid gap-2"><Button type="button" variant="secondary" onClick={() => { setSelected(actionSale); setActionSale(null); }}>View Invoice</Button>{canManage && actionSale?.status !== "VOIDED" && actionSale?.status !== "RETURNED" ? <Button asChild><Link to={`/sales/${actionSale?.id}/edit`}>Edit Sale</Link></Button> : null}{canManage && actionSale?.status !== "VOIDED" && actionSale?.status !== "RETURNED" ? <Button type="button" variant="secondary" onClick={() => { setReturnSale(actionSale); setActionSale(null); }}>Return / Exchange</Button> : null}<Button type="button" variant="secondary" onClick={() => { setSelected(actionSale); setActionSale(null); setTimeout(printInvoice, 0); }}><Printer size={16} /> Print / Reprint Bill</Button>{canManage && actionSale?.status !== "VOIDED" ? <Button type="button" variant="destructive" onClick={() => { setVoidSale(actionSale); setActionSale(null); }}>Void Sale</Button> : null}{user?.role === "OWNER" ? <Button type="button" variant="destructive" onClick={() => { if (actionSale) void beginDelete([actionSale.id]); setActionSale(null); }}><Trash2 size={16} /> Delete</Button> : null}</div></Dialog>
+      <Dialog open={Boolean(actionSale)} title={`Actions · ${actionSale?.invoice_number ?? ""}`} onClose={() => setActionSale(null)} maxWidth="md"><div className="grid gap-2"><Button type="button" variant="secondary" onClick={() => { setSelected(actionSale); setActionSale(null); }}>View Invoice</Button>{canManage && actionSale?.status !== "VOIDED" && actionSale?.status !== "RETURNED" ? <Button asChild><Link to={`/sales/${actionSale?.id}/edit`}>Edit Sale</Link></Button> : null}{canManage && actionSale?.status !== "VOIDED" && actionSale?.status !== "RETURNED" ? <Button asChild variant="secondary"><Link to={`/sales/returns?invoice=${encodeURIComponent(actionSale?.invoice_number ?? "")}`}>Return / Exchange</Link></Button> : null}<Button type="button" variant="secondary" onClick={() => { setSelected(actionSale); setActionSale(null); }}><Printer size={16} /> Print / Reprint Bill</Button>{canManage && actionSale?.status !== "VOIDED" ? <Button type="button" variant="destructive" onClick={() => { setVoidSale(actionSale); setActionSale(null); }}>Void Sale</Button> : null}{user?.role === "OWNER" ? <Button type="button" variant="destructive" onClick={() => { if (actionSale) void beginDelete([actionSale.id]); setActionSale(null); }}><Trash2 size={16} /> Delete</Button> : null}</div></Dialog>
       <DeletePasswordDialog open={deleteIds.length > 0} title={`Delete ${deleteIds.length} sale${deleteIds.length === 1 ? "" : "s"}?`} summary={deleteSummary} submitLabel="Delete sale" loading={deleting} error={deleteError} requestId={deleteRequestId} onClose={() => { setDeleteIds([]); setDeleteError(""); setDeleteRequestId(undefined); }} onSubmit={(password) => void confirmDelete(password)} />
       <ConfirmDialog open={Boolean(voidSale)} title="Void this sale?" description="This returns all unreturned items to stock and keeps the invoice for audit history." confirmLabel="Void sale" loading={voidMutation.isPending} onCancel={() => setVoidSale(null)} onConfirm={() => voidSale && voidMutation.mutate(voidSale)} />
-      <Dialog open={Boolean(returnSale)} title={`Return · ${returnSale?.invoice_number ?? ""}`} description="Select quantities to restore to inventory." onClose={() => setReturnSale(null)} maxWidth="md">{returnSale ? <div className="space-y-3">{returnSale.items.map((item) => <label key={item.id} className="flex items-center justify-between gap-4 rounded-lg border border-line p-3"><span><strong className="block">{item.product_name}</strong><span className="text-xs text-muted">Sold {item.quantity} · {money(item.unit_price)} each</span></span><input className="field-input w-20" type="number" min="0" max={item.quantity} value={returnQuantities[item.id] ?? 0} onChange={(event) => setReturnQuantities((current) => ({ ...current, [item.id]: Math.min(item.quantity, Math.max(0, Number(event.target.value) || 0)) }))} /></label>)}<label className="field-label">Return reason<input required className="field-input" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} /></label><Button className="w-full" onClick={() => returnMutation.mutate()} disabled={returnMutation.isPending}>{returnMutation.isPending ? "Recording return" : "Record return"}</Button></div> : null}</Dialog>
+
     </>
   );
 }

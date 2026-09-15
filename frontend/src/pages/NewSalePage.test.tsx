@@ -327,8 +327,8 @@ describe("Current Sale cart panel", () => {
     expect(markup).toContain("Address / Notes");
     expect(markup).toContain("Cash");
     expect(markup).toContain("UPI");
-    expect(markup).not.toContain(">Card<");
-    expect(markup).not.toContain(">Bank<");
+    expect(markup).toContain(">Card<");
+    expect(markup).toContain(">Bank<");
     expect(markup).not.toContain("Save Bill");
     expect(markup).not.toContain("Save &amp; Print Bill");
   });

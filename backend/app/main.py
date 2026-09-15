@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.staticfiles import StaticFiles
 
-from app.api.routes import auth, brands, categories, customers, dashboard, expenses, inventory_reconciliation, opening_stock_imports, products, purchases, reports, sales, security, stock, stock_imports, stock_scan, subcategories, suppliers, purchase_documents
+from app.api.routes import operations, auth, brands, categories, customers, dashboard, expenses, inventory_reconciliation, opening_stock_imports, products, purchases, reports, sales, security, stock, stock_imports, stock_scan, subcategories, suppliers, purchase_documents
 from app.core.config import get_settings
 from app.core.exceptions import error_payload
 from app.core.logging import configure_logging
@@ -106,6 +106,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     payload["request_id"] = getattr(request.state, "request_id", None)
     return JSONResponse(status_code=500, content={"detail": payload})
 
+app.include_router(operations.router, prefix=settings.api_v1_prefix)
 app.include_router(auth.router, prefix=settings.api_v1_prefix)
 app.include_router(dashboard.router, prefix=settings.api_v1_prefix)
 app.include_router(categories.router, prefix=settings.api_v1_prefix)

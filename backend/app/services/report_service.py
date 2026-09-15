@@ -14,7 +14,8 @@ from app.models.enums import PurchaseStatus, SaleStatus
 from app.models.expense import Expense
 from app.models.product_variant import InventoryCostLot, ProductVariant
 from app.models.purchase import Purchase
-from app.models.sale import Sale
+from app.models.sale import Sale, SaleItem, SaleReturn, SaleReturnItem
+from app.models.purchase_return import PurchaseReturn
 from app.models.supplier import SupplierPayment
 from app.models.user import User
 from app.schemas.report import BusinessReportsSummary, CashFlowReport, InventoryValuationReport, ProfitAndLossReport
@@ -43,20 +44,22 @@ class ReportService:
                 detail=error_payload("End date cannot be earlier than Start date.", "invalid_date_range", request_id=request_id),
             )
 
-        sales_total = self._sales_total(store_id, start_date, end_date)
-        cost_total = self._sales_cost(store_id, start_date, end_date)
-        purchase_total = self._purchase_total(store_id, start_date, end_date)
+        sales_total = self._sales_total(store_id, start_date, end_date) - self._return_total(store_id, start_date, end_date)
+        cost_total = self._sales_cost(store_id, start_date, end_date) - self._returned_cost(store_id, start_date, end_date)
+        purchase_total = self._purchase_total(store_id, start_date, end_date) - Decimal(self.db.query(func.coalesce(func.sum(PurchaseReturn.credit_amount), 0)).filter(PurchaseReturn.store_id == store_id, func.date(func.timezone("Asia/Kolkata", PurchaseReturn.created_at)) >= start_date, func.date(func.timezone("Asia/Kolkata", PurchaseReturn.created_at)) <= end_date).scalar() or 0)
         expense_total = self._expense_total(store_id, start_date, end_date)
         gross_profit = sales_total - cost_total
         net_profit = gross_profit - expense_total
         customer_payments = self._customer_payment_total(store_id, start_date, end_date)
         supplier_payments = self._supplier_payment_total(store_id, start_date, end_date)
-        cash_sales = self._cash_sales_total(store_id, start_date, end_date)
+        cash_sales = self._cash_sales_total(store_id, start_date, end_date) - self._return_total(store_id, start_date, end_date, cash_only=True)
+        cash_expenses = Decimal(self.db.query(func.coalesce(func.sum(Expense.amount), 0)).filter(Expense.store_id == store_id, Expense.payment_mode == "CASH", Expense.expense_date >= start_date, Expense.expense_date <= end_date).scalar() or 0)
+        supplier_payments += Decimal(self.db.query(func.coalesce(func.sum(Purchase.amount_paid), 0)).filter(Purchase.store_id == store_id, Purchase.status == PurchaseStatus.CONFIRMED, Purchase.payment_mode == "CASH", Purchase.purchase_date >= start_date, Purchase.purchase_date <= end_date).scalar() or 0)
 
         return BusinessReportsSummary(
             has_report_data=self._has_report_data(store_id, start_date, end_date),
             profit_and_loss=ProfitAndLossReport(start_date=start_date, end_date=end_date, sales_total=sales_total, purchase_total=purchase_total, expense_total=expense_total, gross_profit=gross_profit, net_profit=net_profit),
-            cash_flow=CashFlowReport(start_date=start_date, end_date=end_date, cash_sales=cash_sales, supplier_payments=supplier_payments, customer_payments=customer_payments, expenses=expense_total, net_cash_flow=cash_sales + customer_payments - supplier_payments - expense_total),
+            cash_flow=CashFlowReport(start_date=start_date, end_date=end_date, cash_sales=cash_sales, supplier_payments=supplier_payments, customer_payments=customer_payments, expenses=cash_expenses, net_cash_flow=cash_sales + customer_payments - supplier_payments - cash_expenses),
             inventory_valuation=self.inventory_valuation(current_user),
         )
 
@@ -88,13 +91,13 @@ class ReportService:
         return InventoryValuationReport(total_stock=total_stock, purchase_value=purchase_value, selling_value=selling_value, potential_margin=selling_value - purchase_value)
 
     def _sales_total(self, store_id, start_date: date, end_date: date) -> Decimal:
-        return Decimal(self.db.query(func.coalesce(func.sum(Sale.total_amount), 0)).filter(Sale.store_id == store_id, func.date(Sale.sale_date) >= start_date, func.date(Sale.sale_date) <= end_date, Sale.status.notin_([SaleStatus.CANCELLED, SaleStatus.VOIDED])).scalar() or 0)
+        return Decimal(self.db.query(func.coalesce(func.sum(Sale.total_amount), 0)).filter(Sale.store_id == store_id, func.date(func.timezone("Asia/Kolkata", Sale.sale_date)) >= start_date, func.date(func.timezone("Asia/Kolkata", Sale.sale_date)) <= end_date, Sale.status.notin_([SaleStatus.CANCELLED, SaleStatus.VOIDED])).scalar() or 0)
 
     def _sales_cost(self, store_id, start_date: date, end_date: date) -> Decimal:
-        return Decimal(self.db.query(func.coalesce(func.sum(Sale.cost_amount), 0)).filter(Sale.store_id == store_id, func.date(Sale.sale_date) >= start_date, func.date(Sale.sale_date) <= end_date, Sale.status.notin_([SaleStatus.CANCELLED, SaleStatus.VOIDED])).scalar() or 0)
+        return Decimal(self.db.query(func.coalesce(func.sum(Sale.cost_amount), 0)).filter(Sale.store_id == store_id, func.date(func.timezone("Asia/Kolkata", Sale.sale_date)) >= start_date, func.date(func.timezone("Asia/Kolkata", Sale.sale_date)) <= end_date, Sale.status.notin_([SaleStatus.CANCELLED, SaleStatus.VOIDED])).scalar() or 0)
 
     def _cash_sales_total(self, store_id, start_date: date, end_date: date) -> Decimal:
-        return Decimal(self.db.query(func.coalesce(func.sum(Sale.total_amount), 0)).filter(Sale.store_id == store_id, func.date(Sale.sale_date) >= start_date, func.date(Sale.sale_date) <= end_date, Sale.payment_mode != "CREDIT", Sale.status.notin_([SaleStatus.CANCELLED, SaleStatus.VOIDED])).scalar() or 0)
+        return Decimal(self.db.query(func.coalesce(func.sum(Sale.total_amount), 0)).filter(Sale.store_id == store_id, func.date(func.timezone("Asia/Kolkata", Sale.sale_date)) >= start_date, func.date(func.timezone("Asia/Kolkata", Sale.sale_date)) <= end_date, Sale.payment_mode == "CASH", Sale.status.notin_([SaleStatus.CANCELLED, SaleStatus.VOIDED])).scalar() or 0)
 
     def _purchase_total(self, store_id, start_date: date, end_date: date) -> Decimal:
         return Decimal(self.db.query(func.coalesce(func.sum(Purchase.total_amount), 0)).filter(Purchase.store_id == store_id, Purchase.purchase_date >= start_date, Purchase.purchase_date <= end_date, Purchase.status == PurchaseStatus.CONFIRMED).scalar() or 0)
@@ -103,10 +106,19 @@ class ReportService:
         return Decimal(self.db.query(func.coalesce(func.sum(Expense.amount), 0)).filter(Expense.store_id == store_id, Expense.expense_date >= start_date, Expense.expense_date <= end_date).scalar() or 0)
 
     def _customer_payment_total(self, store_id, start_date: date, end_date: date) -> Decimal:
-        return Decimal(self.db.query(func.coalesce(func.sum(CustomerPayment.amount), 0)).filter(CustomerPayment.store_id == store_id, func.date(CustomerPayment.payment_date) >= start_date, func.date(CustomerPayment.payment_date) <= end_date).scalar() or 0)
+        return Decimal(self.db.query(func.coalesce(func.sum(CustomerPayment.amount), 0)).filter(CustomerPayment.store_id == store_id, CustomerPayment.payment_mode == "CASH", func.date(func.timezone("Asia/Kolkata", CustomerPayment.payment_date)) >= start_date, func.date(func.timezone("Asia/Kolkata", CustomerPayment.payment_date)) <= end_date).scalar() or 0)
 
     def _supplier_payment_total(self, store_id, start_date: date, end_date: date) -> Decimal:
-        return Decimal(self.db.query(func.coalesce(func.sum(SupplierPayment.amount), 0)).filter(SupplierPayment.store_id == store_id, func.date(SupplierPayment.payment_date) >= start_date, func.date(SupplierPayment.payment_date) <= end_date).scalar() or 0)
+        return Decimal(self.db.query(func.coalesce(func.sum(SupplierPayment.amount), 0)).filter(SupplierPayment.store_id == store_id, SupplierPayment.payment_mode == "CASH", func.date(func.timezone("Asia/Kolkata", SupplierPayment.payment_date)) >= start_date, func.date(func.timezone("Asia/Kolkata", SupplierPayment.payment_date)) <= end_date).scalar() or 0)
+
+    def _return_total(self, store_id, start_date, end_date, cash_only=False):
+        query = self.db.query(func.coalesce(func.sum(SaleReturn.refund_amount), 0)).join(Sale, Sale.id == SaleReturn.sale_id).filter(SaleReturn.store_id == store_id, Sale.status != SaleStatus.VOIDED, func.date(func.timezone("Asia/Kolkata", SaleReturn.created_at)) >= start_date, func.date(func.timezone("Asia/Kolkata", SaleReturn.created_at)) <= end_date)
+        if cash_only:
+            query = query.filter(SaleReturn.refund_method == "CASH")
+        return Decimal(query.scalar() or 0)
+
+    def _returned_cost(self, store_id, start_date, end_date):
+        return Decimal(self.db.query(func.coalesce(func.sum(SaleReturnItem.quantity * SaleItem.unit_cost), 0)).join(SaleReturn, SaleReturn.id == SaleReturnItem.sale_return_id).join(SaleItem, SaleItem.id == SaleReturnItem.sale_item_id).join(Sale, Sale.id == SaleReturn.sale_id).filter(SaleReturn.store_id == store_id, Sale.status != SaleStatus.VOIDED, SaleReturnItem.restock.is_(True), func.date(func.timezone("Asia/Kolkata", SaleReturn.created_at)) >= start_date, func.date(func.timezone("Asia/Kolkata", SaleReturn.created_at)) <= end_date).scalar() or 0)
 
     def _has_report_data(self, store_id, start_date: date, end_date: date) -> bool:
         """Return whether the selected period has a business transaction.
@@ -115,9 +127,11 @@ class ReportService:
         snapshot, not evidence that the selected period has activity.
         """
         return any((
-            self.db.query(Sale.id).filter(Sale.store_id == store_id, func.date(Sale.sale_date) >= start_date, func.date(Sale.sale_date) <= end_date, Sale.status.notin_([SaleStatus.CANCELLED, SaleStatus.VOIDED])).first() is not None,
+            self.db.query(SaleReturn.id).filter(SaleReturn.store_id == store_id, func.date(func.timezone("Asia/Kolkata", SaleReturn.created_at)) >= start_date, func.date(func.timezone("Asia/Kolkata", SaleReturn.created_at)) <= end_date).first() is not None,
+            self.db.query(PurchaseReturn.id).filter(PurchaseReturn.store_id == store_id, func.date(func.timezone("Asia/Kolkata", PurchaseReturn.created_at)) >= start_date, func.date(func.timezone("Asia/Kolkata", PurchaseReturn.created_at)) <= end_date).first() is not None,
+            self.db.query(Sale.id).filter(Sale.store_id == store_id, func.date(func.timezone("Asia/Kolkata", Sale.sale_date)) >= start_date, func.date(func.timezone("Asia/Kolkata", Sale.sale_date)) <= end_date, Sale.status.notin_([SaleStatus.CANCELLED, SaleStatus.VOIDED])).first() is not None,
             self.db.query(Purchase.id).filter(Purchase.store_id == store_id, Purchase.purchase_date >= start_date, Purchase.purchase_date <= end_date, Purchase.status == PurchaseStatus.CONFIRMED).first() is not None,
             self.db.query(Expense.id).filter(Expense.store_id == store_id, Expense.expense_date >= start_date, Expense.expense_date <= end_date).first() is not None,
-            self.db.query(CustomerPayment.id).filter(CustomerPayment.store_id == store_id, func.date(CustomerPayment.payment_date) >= start_date, func.date(CustomerPayment.payment_date) <= end_date).first() is not None,
-            self.db.query(SupplierPayment.id).filter(SupplierPayment.store_id == store_id, func.date(SupplierPayment.payment_date) >= start_date, func.date(SupplierPayment.payment_date) <= end_date).first() is not None,
+            self.db.query(CustomerPayment.id).filter(CustomerPayment.store_id == store_id, CustomerPayment.payment_mode == "CASH", func.date(func.timezone("Asia/Kolkata", CustomerPayment.payment_date)) >= start_date, func.date(func.timezone("Asia/Kolkata", CustomerPayment.payment_date)) <= end_date).first() is not None,
+            self.db.query(SupplierPayment.id).filter(SupplierPayment.store_id == store_id, SupplierPayment.payment_mode == "CASH", func.date(func.timezone("Asia/Kolkata", SupplierPayment.payment_date)) >= start_date, func.date(func.timezone("Asia/Kolkata", SupplierPayment.payment_date)) <= end_date).first() is not None,
         ))

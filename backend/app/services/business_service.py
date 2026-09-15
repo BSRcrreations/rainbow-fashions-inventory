@@ -13,7 +13,8 @@ from app.models.customer import Customer, CustomerPayment
 from app.models.enums import PurchaseStatus, SaleStatus
 from app.models.expense import Expense, ExpenseCategory
 from app.models.purchase import Purchase
-from app.models.sale import Sale
+from app.models.purchase_return import PurchaseReturn
+from app.models.sale import Sale, SaleReturn
 from app.models.supplier import Supplier, SupplierPayment
 from app.models.user import User
 from app.repositories.business import CustomerRepository, ExpenseCategoryRepository, ExpenseRepository, SupplierRepository
@@ -103,17 +104,18 @@ class SupplierService:
     def _totals(self, supplier: Supplier, store_id: UUID) -> tuple[Decimal, Decimal, Decimal]:
         purchase_total = _money(
             self.db.query(func.coalesce(func.sum(Purchase.total_amount), 0))
-            .filter(Purchase.store_id == store_id, Purchase.supplier_id == supplier.id, Purchase.status.notin_([PurchaseStatus.CANCELLED, PurchaseStatus.VOIDED]))
+            .filter(Purchase.store_id == store_id, Purchase.supplier_id == supplier.id, Purchase.status == PurchaseStatus.CONFIRMED)
             .scalar()
         )
         purchase_paid = _money(
             self.db.query(func.coalesce(func.sum(Purchase.amount_paid), 0))
-            .filter(Purchase.store_id == store_id, Purchase.supplier_id == supplier.id, Purchase.status.notin_([PurchaseStatus.CANCELLED, PurchaseStatus.VOIDED]))
+            .filter(Purchase.store_id == store_id, Purchase.supplier_id == supplier.id, Purchase.status == PurchaseStatus.CONFIRMED)
             .scalar()
         )
         ledger_paid = _money(self.db.query(func.coalesce(func.sum(SupplierPayment.amount), 0)).filter(SupplierPayment.store_id == store_id, SupplierPayment.supplier_id == supplier.id).scalar())
         paid_total = purchase_paid + ledger_paid
-        balance = _money(supplier.opening_balance) + purchase_total - paid_total
+        returned = _money(self.db.query(func.sum(PurchaseReturn.credit_amount)).filter(PurchaseReturn.store_id == store_id, PurchaseReturn.supplier_id == supplier.id).scalar())
+        balance = _money(supplier.opening_balance) + purchase_total - paid_total - returned
         return purchase_total, paid_total, balance
 
     def _read(self, supplier: Supplier, store_id: UUID) -> SupplierRead:
@@ -129,7 +131,7 @@ class SupplierService:
             entries.append(SupplierLedgerEntry(id=supplier.id, entry_type="OPENING", entry_date=supplier.created_at, reference=None, description="Opening balance", debit=balance, credit=Decimal("0"), balance=balance))
         purchases = (
             self.db.query(Purchase)
-            .filter(Purchase.store_id == store_id, Purchase.supplier_id == supplier.id, Purchase.status.notin_([PurchaseStatus.CANCELLED, PurchaseStatus.VOIDED]))
+            .filter(Purchase.store_id == store_id, Purchase.supplier_id == supplier.id, Purchase.status == PurchaseStatus.CONFIRMED)
             .order_by(Purchase.purchase_date, Purchase.created_at)
             .all()
         )
@@ -139,6 +141,8 @@ class SupplierService:
             events.append((event_date, "PURCHASE", purchase.id, purchase.invoice_number, purchase.supplier_name or supplier.name, purchase.total_amount, Decimal("0")))
             if purchase.amount_paid:
                 events.append((event_date, "PAYMENT", purchase.id, purchase.invoice_number, "Paid on invoice", Decimal("0"), purchase.amount_paid))
+        for returned in self.db.query(PurchaseReturn).filter(PurchaseReturn.store_id == store_id, PurchaseReturn.supplier_id == supplier.id).all():
+            events.append((returned.created_at, "PURCHASE_RETURN", returned.id, returned.credit_note, returned.reason, Decimal("0"), returned.credit_amount))
         for payment in supplier.payments:
             events.append((payment.payment_date, "PAYMENT", payment.id, payment.reference, payment.notes or payment.payment_mode, Decimal("0"), payment.amount))
         for event_date, entry_type, entry_id, reference, description, debit, credit in sorted(events, key=lambda event: event[0]):
@@ -234,7 +238,8 @@ class CustomerService:
             .scalar()
         )
         paid_total = _money(self.db.query(func.coalesce(func.sum(CustomerPayment.amount), 0)).filter(CustomerPayment.store_id == store_id, CustomerPayment.customer_id == customer.id).scalar())
-        balance = _money(customer.opening_credit) + credit_sales - paid_total
+        returned = _money(self.db.query(func.sum(SaleReturn.refund_amount)).join(Sale, SaleReturn.sale_id == Sale.id).filter(SaleReturn.store_id == store_id, Sale.customer_id == customer.id, Sale.payment_mode == "CREDIT", Sale.status.notin_([SaleStatus.CANCELLED, SaleStatus.VOIDED])).scalar())
+        balance = _money(customer.opening_credit) + credit_sales - paid_total - returned
         return credit_sales, paid_total, balance
 
     def _read(self, customer: Customer, store_id: UUID) -> CustomerRead:
@@ -257,6 +262,8 @@ class CustomerService:
         )
         for sale in sales:
             events.append((sale.sale_date, "CREDIT_SALE", sale.id, sale.invoice_number, "Credit sale", sale.total_amount, Decimal("0")))
+        for returned in self.db.query(SaleReturn).join(Sale, SaleReturn.sale_id == Sale.id).filter(SaleReturn.store_id == store_id, Sale.customer_id == customer.id, Sale.payment_mode == "CREDIT", Sale.status.notin_([SaleStatus.CANCELLED, SaleStatus.VOIDED])).all():
+            events.append((returned.created_at, "SALE_RETURN", returned.id, None, returned.reason, Decimal("0"), returned.refund_amount))
         for payment in customer.payments:
             events.append((payment.payment_date, "PAYMENT", payment.id, payment.reference, payment.notes or payment.payment_mode, Decimal("0"), payment.amount))
         for event_date, entry_type, entry_id, reference, description, debit, credit in sorted(events, key=lambda event: event[0]):

@@ -11,6 +11,10 @@ class ReconciliationItem(BaseModel):
     product_id: UUID
     variant_id: Optional[UUID] = None
     product_name: str
+    size: Optional[str] = None
+    color: Optional[str] = None
+    expected_variant_stock: Optional[int] = None
+    movement_count: int = 0
     variant_stock: int
     product_stock: int
     product_inventory_stock: Optional[int] = None

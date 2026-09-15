@@ -28,6 +28,9 @@ class SaleItemCreate(BaseModel):
     quantity: int = Field(gt=0)
     unit_price: Optional[Decimal] = Field(default=None, ge=0)
 
+    discount_type: Literal["NONE", "PERCENTAGE", "FIXED_AMOUNT"] = "NONE"
+    discount_value: Decimal = Field(default=Decimal("0"), ge=0)
+
     @model_validator(mode="after")
     def require_sellable_item(self) -> "SaleItemCreate":
         if not self.product_id and not self.product_variant_id:
@@ -46,6 +49,7 @@ class SaleCreate(BaseModel):
     customer_phone: Optional[str] = Field(default=None, max_length=30)
     customer_details: Optional[str] = Field(default=None, max_length=2000)
     payment_mode: PaymentMode
+    payment_reference: Optional[str] = Field(default=None, max_length=140)
     discount_type: str = "PERCENTAGE"
     discount_value: Decimal = Field(default=Decimal("0"))
     sale_date: Optional[datetime] = None
@@ -96,6 +100,7 @@ class SaleVoidRequest(BaseModel):
 class SaleReturnItemCreate(BaseModel):
     sale_item_id: UUID
     quantity: int = Field(gt=0)
+    restock: bool = True
 
 
 class SaleReturnCreate(BaseModel):
@@ -118,6 +123,16 @@ class SaleItemRead(ORMBaseModel):
     unit_price: Decimal
     unit_cost: Decimal
     line_total: Decimal
+    discount_type: str = "NONE"
+    discount_value: Decimal = Decimal("0")
+    discount_amount: Decimal = Decimal("0")
+    brand_snapshot: Optional[str] = None
+    hsn_snapshot: Optional[str] = None
+    gst_rate_snapshot: Optional[Decimal] = None
+    taxable_value: Decimal = Decimal("0")
+    cgst_amount: Decimal = Decimal("0")
+    sgst_amount: Decimal = Decimal("0")
+    igst_amount: Decimal = Decimal("0")
     sku_snapshot: Optional[str] = None
     barcode_snapshot: Optional[str] = None
     size_snapshot: Optional[str] = None
@@ -169,6 +184,8 @@ class SaleRead(ORMBaseModel):
     customer_id: Optional[UUID] = None
     customer_name: Optional[str]
     payment_mode: str
+    payment_reference: Optional[str] = None
+    exchange_return_id: Optional[UUID] = None
     subtotal: Decimal
     discount: Decimal
     discount_type: str
@@ -198,6 +215,7 @@ class SaleAuditRead(ORMBaseModel):
 
 
 class SaleReturnItemRead(ORMBaseModel):
+    restock: bool = True
     id: UUID
     sale_item_id: UUID
     quantity: int
@@ -232,6 +250,8 @@ class SalesMetric(BaseModel):
 
 
 class CollectionSummary(BaseModel):
+    bank: Decimal = Decimal("0")
+    credit: Decimal = Decimal("0")
     cash: Decimal
     upi: Decimal
     card: Decimal
@@ -280,3 +300,24 @@ class SalesDashboardResponse(BaseModel):
     recent_sales: list[SaleRead]
     low_stock: list[InventoryAlertItem]
     out_of_stock: list[InventoryAlertItem]
+
+
+class SaleExchangeCreate(BaseModel):
+    reason: str = Field(min_length=3, max_length=300)
+    payment_mode: PaymentMode = "CASH"
+    payment_reference: Optional[str] = Field(default=None, max_length=140)
+    return_items: list[SaleReturnItemCreate] = Field(min_length=1)
+    items: list[SaleItemCreate] = Field(min_length=1)
+
+
+class SaleExchangeRead(BaseModel):
+    sale: SaleRead
+    sale_return: SaleReturnRead
+    amount_due: Decimal
+
+
+class SaleCatalogPage(BaseModel):
+    items: list[SaleCatalogProduct]
+    total: int
+    page: int
+    page_size: int

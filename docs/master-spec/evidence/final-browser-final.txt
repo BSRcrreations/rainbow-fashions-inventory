@@ -1,0 +1,8 @@
+chromium stock draft, shared size, navigation, reload, category sale and receipt PASS
+chromium quick purchase and recovered photo attachment PASS
+chromium PDF upload, formal draft recovery, shared size and confirmation PASS
+{"browser": "chromium", "result": "PASS", "page_errors": [], "receipt_and_label_popups": "PASS", "tablet_phone_overflow": "NONE", "scope": "isolated synthetic data"}
+webkit stock draft, shared size, navigation, reload, category sale and receipt PASS
+webkit quick purchase and recovered photo attachment PASS
+webkit PDF upload, formal draft recovery, shared size and confirmation PASS
+{"browser": "webkit", "result": "PASS", "page_errors": [], "receipt_and_label_popups": "PASS", "tablet_phone_overflow": "NONE", "scope": "isolated synthetic data"}

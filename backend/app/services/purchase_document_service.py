@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.ai.base import OCRProcessingError
 from app.ai.factory import get_ocr_service
 from app.ai.invoice_parser import InvoiceParser
+from app.core.config import get_settings
 from app.core.exceptions import bad_request, conflict, not_found
 from app.database.session import SessionLocal
 from app.models.enums import DocumentJobStatus
@@ -99,13 +100,11 @@ class PurchaseDocumentService:
             job.status, job.progress, job.message = DocumentJobStatus.OCR_RUNNING, 40, "Reading invoice text"
             db.commit()
             source_path = Path(uploaded.storage_path)
-            if source_path.suffix.lower() in {".heic", ".heif"}:
-                raise PurchaseDocumentProcessingError("HEIC_CONVERSION_NOT_AVAILABLE", "HEIC and HEIF recognition is not configured on this server.")
             raw_text = get_ocr_service().extract_text(source_path)
             job.status, job.progress, job.message = DocumentJobStatus.AI_EXTRACTION, 60, "Extracting structured invoice data"
             db.commit()
             invoice = InvoiceParser().parse(raw_text)
-            review_items = PurchaseService(db)._build_review_items(invoice)
+            review_items = PurchaseService(db)._build_review_items(invoice, job.store_id)
             job.status, job.progress, job.message = DocumentJobStatus.REVIEW_REQUIRED, 100, "Invoice draft is ready for review"
             job.result = jsonable_encoder({"extracted_invoice": invoice, "review_items": review_items, "warnings": []})
             job.completed_at = datetime.now(timezone.utc)

@@ -26,8 +26,8 @@ type ApiErrorField = { field?: string; loc?: Array<string | number>; message?: s
 
 function fallbackMessage(status: number): string {
   if (status === 403) return "You do not have permission to perform this action.";
-  if (status === 404) return "The requested invoice was not found.";
-  if (status === 409) return "This invoice was changed by another user. Reload it before saving.";
+  if (status === 404) return "This item could not be found. Refresh the page and try again.";
+  if (status === 409) return "This information has changed. Review the latest details before saving.";
   if (status === 422) return "Please correct the highlighted information and try again.";
   if (status >= 500) return "The server could not complete this request. Please try again.";
   return "The request could not be completed.";
@@ -35,7 +35,7 @@ function fallbackMessage(status: number): string {
 
 function safeRawMessage(raw: string, status: number): string {
   const message = raw.trim();
-  if (!message || message.length > 500 || /traceback|sqlalchemy|psycopg|<html|<!doctype/i.test(message)) return fallbackMessage(status);
+  if (!message || message.length > 500 || /traceback|sqlalchemy|psycopg|<html|<!doctype|\bSELECT\b.*\bFROM\b|\b[A-Z]+_[A-Z_]+\b|^\s*(?:\[|\{)/.test(message)) return fallbackMessage(status);
   return message;
 }
 
@@ -48,9 +48,9 @@ export async function toApiError(response: Response): Promise<ApiError> {
   const detailObject = detail && typeof detail === "object" && !Array.isArray(detail) ? detail as Record<string, unknown> : undefined;
   const validation = Array.isArray(detail) ? detail as ApiErrorField[] : detailObject?.fields ?? detailObject?.errors ?? detailObject?.field_errors;
   const fields = Array.isArray(validation) ? validation.map((field: ApiErrorField) => ({ field: field.field ?? field.loc?.filter((part: string | number) => part !== "body").join(".") ?? "field", message: field.message ?? field.msg ?? "Invalid value" })) : undefined;
-  const validationMessage = fields?.length ? fields.map((field) => `${field.field}: ${field.message}`).join("; ") : undefined;
+  const validationMessage = fields?.length ? "Please check the highlighted information and try again." : undefined;
   const detailMessage = typeof detail === "string" ? detail : typeof detailObject?.message === "string" ? detailObject.message : typeof body?.message === "string" ? body.message : undefined;
-  const message = validationMessage ?? detailMessage ?? (typeof payload === "string" ? safeRawMessage(payload, response.status) : fallbackMessage(response.status));
+  const message = safeRawMessage(validationMessage ?? detailMessage ?? (typeof payload === "string" ? payload : fallbackMessage(response.status)), response.status);
   const code = typeof detailObject?.code === "string" ? detailObject.code : typeof body?.code === "string" ? body.code : undefined;
   const requestId = typeof detailObject?.request_id === "string" ? detailObject.request_id : typeof body?.request_id === "string" ? body.request_id : response.headers.get("X-Request-ID") ?? undefined;
   return new ApiError(message, response.status, code, fields, requestId, detailObject);
@@ -143,7 +143,7 @@ export const api = {
   postBlob: (path: string, body?: unknown) => requestBlobWithBody(path, body),
   post: <T>(path: string, body?: unknown, headers?: HeadersInit) =>
     request<T>(path, { method: "POST", headers, body: body instanceof FormData ? body : JSON.stringify(body ?? {}) }),
-  put: <T>(path: string, body: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
+  put: <T>(path: string, body: unknown, headers?: HeadersInit) => request<T>(path, { method: "PUT", headers, body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   delete: <T = void>(path: string, body?: unknown) => request<T>(path, { method: "DELETE", body: body === undefined ? undefined : JSON.stringify(body) })
 };

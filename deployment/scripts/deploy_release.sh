@@ -47,17 +47,13 @@ cd "$RELEASE_DIR"
 "${compose[@]}" build
 "${compose[@]}" up -d postgres
 
-# The historical Alembic chain begins with a change to an already-existing
-# legacy schema. A brand-new, isolated TEST database therefore cannot replay
-# that chain from revision zero. Bootstrap only an empty database from the
-# current SQLAlchemy metadata and stamp it at the single Alembic head. Never
-# use this path for a database that already contains application tables.
+# Empty and versioned databases replay the same audited Alembic chain.
+# Unversioned existing business data still requires a reviewed baseline.
 schema_state="$("${compose[@]}" exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = '\''public'\'' AND tablename <> '\''alembic_version'\'') THEN '\''nonempty'\'' ELSE '\''empty'\'' END, CASE WHEN to_regclass('\''public.alembic_version'\'') IS NULL THEN '\''unstamped'\'' ELSE '\''stamped'\'' END"')"
 case "$schema_state" in
   empty\|*)
-    echo 'deployment activation: bootstrapping empty isolated database at the Alembic head'
-    "${compose[@]}" run --rm -e RUN_MIGRATIONS_ON_STARTUP=false backend python -c 'from app import models; from app.database.base import Base; from app.database.session import engine; Base.metadata.create_all(bind=engine)'
-    "${compose[@]}" run --rm -e RUN_MIGRATIONS_ON_STARTUP=false backend alembic stamp head
+    echo 'deployment activation: migrating empty database through the complete Alembic chain'
+    "${compose[@]}" run --rm -e RUN_MIGRATIONS_ON_STARTUP=false backend alembic upgrade head
     ;;
   nonempty\|unstamped)
     echo 'deployment activation: legacy database contains application tables but has no Alembic version; a separate reviewed baseline is required' >&2

@@ -425,7 +425,8 @@ def test_existing_variant_lookup_requires_active_variant_and_active_product():
 
 def test_scanning_a_confirmed_session_is_locked_with_the_same_clear_message():
     service, _, session, store_id = configured_service(StockScanStatus.CONFIRMED)
-    service.get_session = MagicMock(return_value=session)
+    service._session_query = MagicMock()
+    service._session_query.return_value.filter.return_value.with_for_update.return_value.populate_existing.return_value.first.return_value = session
 
     with pytest.raises(HTTPException, match="confirmed and cannot be changed") as error:
         service._editable_session(session.id, user(store_id))

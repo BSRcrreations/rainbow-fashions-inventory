@@ -6,7 +6,7 @@ from decimal import Decimal
 from app.services.discount_calculator import money
 
 
-SALE_DISCOUNT_TYPES = {"PERCENTAGE", "FIXED_AMOUNT"}
+SALE_DISCOUNT_TYPES = {"NONE", "PERCENTAGE", "FIXED_AMOUNT"}
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,10 @@ def calculate_sale_discount(subtotal: Decimal, discount_type: str, discount_valu
     subtotal = money(subtotal)
     if discount_type not in SALE_DISCOUNT_TYPES:
         raise SaleDiscountError("DISCOUNT_TYPE_INVALID", "Select percentage or fixed-amount discount.")
+    if discount_type == "NONE":
+        if discount_value:
+            raise SaleDiscountError("DISCOUNT_AMOUNT_INVALID", "Choose a discount type before entering a discount.")
+        return Decimal("0.00")
     if discount_type == "PERCENTAGE":
         if discount_value < Decimal("0") or discount_value > Decimal("100"):
             raise SaleDiscountError("DISCOUNT_PERCENTAGE_INVALID", "Discount percentage must be between 0 and 100.")

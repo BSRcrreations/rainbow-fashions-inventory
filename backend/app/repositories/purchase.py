@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import joinedload
 
 from app.models.purchase import Purchase
@@ -13,19 +13,21 @@ from app.repositories.base import BaseRepository
 class PurchaseRepository(BaseRepository[Purchase]):
     model = Purchase
 
-    def list_recent(self, store_id: UUID, skip: int = 0, limit: int = 50, status_filter: Optional[str] = None) -> list[Purchase]:
+    def list_recent(self, store_id: UUID, skip: int = 0, limit: int = 50, status_filter: Optional[str] = None, search: Optional[str] = None) -> list[Purchase]:
         query = (
             self.db.query(Purchase)
             .options(joinedload(Purchase.items), joinedload(Purchase.uploaded_file), joinedload(Purchase.supplier))
             .filter(Purchase.store_id == store_id)
         )
+        if search:
+            query = query.filter(or_(Purchase.invoice_number.ilike(f"%{search.strip()}%"), Purchase.supplier_name.ilike(f"%{search.strip()}%")))
         if status_filter == "REVIEW_REQUIRED":
             query = query.filter(Purchase.ai_processing_status.ilike("%REVIEW_REQUIRED%"))
         elif status_filter == "FAILED":
             query = query.filter(Purchase.ai_processing_status == "FAILED")
         elif status_filter:
             query = query.filter(Purchase.status == status_filter)
-        return query.order_by(Purchase.created_at.desc()).offset(skip).limit(limit).all()
+        return query.order_by(Purchase.created_at.desc()).offset(max(0, skip)).limit(min(100, max(1, limit))).all()
 
     def get_with_items(self, purchase_id: UUID, store_id: UUID) -> Optional[Purchase]:
         return (

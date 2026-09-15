@@ -45,3 +45,11 @@ def require_roles(*allowed_roles: UserRole):
 require_owner = require_roles(UserRole.OWNER)
 require_manager_or_owner = require_roles(UserRole.OWNER, UserRole.MANAGER)
 require_staff_or_above = require_roles(UserRole.OWNER, UserRole.MANAGER, UserRole.STAFF)
+
+# STAFF remains compatible for existing accounts. New accounts should use a
+# specific operational role so receiving staff cannot bill or handle finances.
+require_cashier = require_roles(UserRole.OWNER, UserRole.MANAGER, UserRole.CASHIER, UserRole.STAFF)
+require_stock_staff = require_roles(UserRole.OWNER, UserRole.MANAGER, UserRole.STOCK_STAFF, UserRole.STAFF)
+require_accountant = require_roles(UserRole.OWNER, UserRole.MANAGER, UserRole.ACCOUNTANT)
+require_purchase_staff = require_roles(UserRole.OWNER, UserRole.MANAGER, UserRole.ACCOUNTANT, UserRole.STOCK_STAFF, UserRole.STAFF)
+require_report_reader = require_roles(UserRole.OWNER, UserRole.MANAGER, UserRole.ACCOUNTANT, UserRole.VIEWER)

@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_manager_or_owner, require_staff_or_above
+from app.api.deps import get_current_user, require_owner, require_cashier
 from app.database.session import get_db
 from app.models.sale import Sale
 from app.models.user import User
@@ -24,7 +24,7 @@ def list_customers(search: Optional[str] = None, include_inactive: bool = False,
 
 
 @router.post("", response_model=CustomerRead, status_code=status.HTTP_201_CREATED)
-def create_customer(payload: CustomerCreate, db: Session = Depends(get_db), current_user: User = Depends(require_staff_or_above)):
+def create_customer(payload: CustomerCreate, db: Session = Depends(get_db), current_user: User = Depends(require_cashier)):
     return CustomerService(db).create(payload, current_user)
 
 
@@ -39,18 +39,18 @@ def get_customer(customer_id: UUID, db: Session = Depends(get_db), current_user:
 
 
 @router.put("/{customer_id}", response_model=CustomerRead)
-def update_customer(customer_id: UUID, payload: CustomerUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_staff_or_above)):
+def update_customer(customer_id: UUID, payload: CustomerUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_cashier)):
     return CustomerService(db).update(customer_id, payload, current_user)
 
 
 @router.delete("/{customer_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_customer(customer_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
+def delete_customer(customer_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> Response:
     CustomerService(db).delete(customer_id, current_user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{customer_id}/payments", response_model=CustomerDetailRead, status_code=status.HTTP_201_CREATED)
-def add_customer_payment(customer_id: UUID, payload: CustomerPaymentCreate, db: Session = Depends(get_db), current_user: User = Depends(require_staff_or_above)):
+def add_customer_payment(customer_id: UUID, payload: CustomerPaymentCreate, db: Session = Depends(get_db), current_user: User = Depends(require_cashier)):
     return CustomerService(db).add_payment(customer_id, payload, current_user)
 
 

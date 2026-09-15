@@ -1,0 +1,19 @@
+{
+  "checked_at": "2026-09-10T11:31:24.931322+00:00",
+  "scope": "local disposable test data only",
+  "database_backup": "PASS: pg_dump custom archive",
+  "database_restore": "PASS: pg_restore --exit-on-error into new database",
+  "restored_table_count": 56,
+  "restored_business_rows": {
+    "stores": 1,
+    "users": 1,
+    "products": 1,
+    "product_variants": 2,
+    "stock_history": 4
+  },
+  "restored_inventory_integrity": "HEALTHY",
+  "uploads_restore": "PASS: synthetic archive and byte equality",
+  "backup_sha256": "823665914b13ff88554c5795ec6fcdd174dcde5b2b1080616bbca4669d805162",
+  "offsite_backup": "NOT VERIFIED",
+  "production_restore": "NOT RUN"
+}

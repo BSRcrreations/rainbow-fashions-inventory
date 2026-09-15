@@ -1,0 +1,12 @@
+
+> rainbow-fashions-inventory-frontend@1.0.0-phase1 test
+> vitest run --run
+
+
+ RUN  v4.1.11 /Users/subbu/Documents/shop inventory/frontend
+
+
+ Test Files  18 passed (18)
+      Tests  81 passed (81)
+   Start at  09:07:39
+   Duration  1.09s (transform 718ms, setup 0ms, import 2.42s, tests 723ms, environment 845ms)

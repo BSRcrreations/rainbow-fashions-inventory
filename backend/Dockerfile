@@ -6,11 +6,11 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential libpq-dev \
+    && apt-get install -y --no-install-recommends build-essential libpq-dev tesseract-ocr poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip \
+RUN pip install --no-cache-dir --upgrade "pip>=26.2" "setuptools>=83.0.0" \
     && pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app

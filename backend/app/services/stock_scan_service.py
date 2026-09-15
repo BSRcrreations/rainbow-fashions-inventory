@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.ai.base import OCRProcessingError
 from app.ai.factory import get_ocr_service
-from app.core.exceptions import bad_request, conflict, error_payload, not_found
+from app.core.config import get_settings
+from app.core.exceptions import bad_request, conflict, error_payload, not_found, forbidden
 from fastapi import HTTPException, status
 from app.models.brand import Brand
 from app.models.category import Category
@@ -51,6 +52,7 @@ from app.schemas.stock_scan import (
     SharedBarcodeTargetRead,
     StockScanSessionCreate,
     StockScanSessionUpdate,
+    QuickStockItemSet,
 )
 from app.services.file_service import FileService
 
@@ -66,6 +68,9 @@ class StockScanService:
         store_id = self._store_id(current_user)
         mapping = self._barcode_mapping(normalized, store_id)
         if mapping:
+            targets = self._barcode_targets(mapping, store_id)
+            if len(targets) > 1:
+                raise HTTPException(status_code=409, detail={"message": "Choose the size for this shared barcode.", "code": "SHARED_BARCODE_SELECTION_REQUIRED", "targets": [self._shared_target_read(item).model_dump(mode="json") for item in targets]})
             variant = self.db.query(ProductVariant).options(joinedload(ProductVariant.product).joinedload(Product.category), joinedload(ProductVariant.product).joinedload(Product.brand)).filter(ProductVariant.id == mapping.product_variant_id, ProductVariant.store_id == store_id).first()
             if not variant or not variant.is_active or not variant.product.is_active:
                 raise bad_request("This product variant is inactive.", "VARIANT_INACTIVE")
@@ -406,9 +411,19 @@ class StockScanService:
 
     def create_session(self, payload: StockScanSessionCreate, current_user: User) -> StockScanSession:
         store_id = self._store_id(current_user)
+        self._check_mode_permission(payload.mode, current_user)
+        if payload.session_id:
+            existing = self.db.get(StockScanSession, payload.session_id)
+            if existing:
+                if existing.store_id != store_id or existing.created_by != current_user.id:
+                    raise conflict("Start a new stock entry and try again.", "STOCK_DRAFT_CONFLICT")
+                if existing.mode != payload.mode:
+                    raise conflict("This draft was already used for another stock entry.", "STOCK_DRAFT_CONFLICT")
+                return self.get_session(existing.id, current_user)
         self._validate_mode_configuration(payload.mode, payload.purchase_id, payload.location_name, payload.source_location_name, payload.destination_location_name, store_id)
         self._validate_session_defaults(payload.supplier_id, payload.default_category_id, payload.default_brand_id, payload.quick_post, current_user)
         session = StockScanSession(
+            id=payload.session_id or uuid4(),
             store_id=store_id,
             mode=payload.mode,
             status=StockScanStatus.IN_PROGRESS,
@@ -432,8 +447,39 @@ class StockScanService:
         self.db.commit()
         return self.get_session(session.id, current_user)
 
+    def set_quick_item(self, session_id: UUID, payload: QuickStockItemSet, current_user: User) -> StockScanSession:
+        try:
+            session = self._editable_session(session_id, current_user)
+            if session.mode != StockScanMode.DAILY_STOCK:
+                raise bad_request("Use Quick Stock Entry for this item.")
+            variant = self._variant_for_store(payload.product_variant_id, session.store_id, lock=True)
+            if not variant.is_active or not variant.product.is_active:
+                raise bad_request("This item is archived. Ask the manager to restore it.")
+            line = self.db.query(StockScanSessionItem).filter_by(session_id=session.id, product_variant_id=variant.id).first()
+            if line is None:
+                line = StockScanSessionItem(session_id=session.id, product_id=variant.product_id,
+                    product_variant_id=variant.id, barcode=f"QUICK-{variant.id.hex}", package_quantity=1,
+                    condition="SELLABLE")
+                self.db.add(line)
+            line.scanned_quantity = payload.quantity
+            line.base_quantity = payload.quantity
+            line.unit_cost = payload.unit_cost if payload.unit_cost is not None else variant.last_purchase_cost
+            self._touch_draft(session)
+            self.db.commit()
+            return self.get_session(session.id, current_user)
+        except Exception:
+            self.db.rollback()
+            raise
+
+    @staticmethod
+    def _check_mode_permission(mode: StockScanMode, current_user: User) -> None:
+        if current_user.role in {UserRole.OWNER, UserRole.MANAGER}:
+            return
+        if mode not in {StockScanMode.DAILY_STOCK, StockScanMode.PURCHASE_RECEIVING}:
+            raise forbidden("Ask the manager to open a stock count or correction.")
+
     def get_session(self, session_id: UUID, current_user: User) -> StockScanSession:
-        session = self._session_query(current_user).filter(StockScanSession.id == session_id).first()
+        session = self._session_query(current_user).filter(StockScanSession.id == session_id).populate_existing().first()
         if not session:
             raise not_found("Stock scan session")
         return session
@@ -758,46 +804,66 @@ class StockScanService:
         return movement
 
     def confirm(self, session_id: UUID, payload: StockScanConfirmRequest, current_user: User, request_id: Optional[str] = None) -> StockScanSession:
-        store_id = self._store_id(current_user)
-        session = (
-            self.db.query(StockScanSession)
-            .filter(StockScanSession.id == session_id, StockScanSession.store_id == store_id)
-            .with_for_update()
-            .first()
-        )
-        if not session:
-            raise not_found("Stock scan session")
-        if session.status == StockScanStatus.CONFIRMED:
-            # Retried confirmation requests must be safe: the original
-            # transaction has already applied the staged quantity exactly once.
+        try:
+            store_id = self._store_id(current_user)
+            session = (
+                self.db.query(StockScanSession)
+                .filter(StockScanSession.id == session_id, StockScanSession.store_id == store_id)
+                .populate_existing()
+                .with_for_update()
+                .first()
+            )
+            if not session:
+                raise not_found("Stock scan session")
+            if session.status == StockScanStatus.CONFIRMED:
+                # Retried confirmation requests must be safe: the original
+                # transaction has already applied the staged quantity exactly once.
+                return self.get_session(session.id, current_user)
+            if session.status == StockScanStatus.CANCELLED:
+                raise bad_request("Cancelled scan sessions cannot be confirmed")
+            self._check_mode_permission(session.mode, current_user)
+            if session.mode == StockScanMode.OPENING_STOCK:
+                from app.services.backup_status_service import BackupStatusService
+                if current_user.role != UserRole.OWNER or not BackupStatusService(get_settings().backup_status_dir).status().posting_allowed:
+                    raise bad_request("Opening stock requires the owner and verified backup and restore evidence. Use Opening Stock Import.", "OPENING_STOCK_BACKUP_REQUIRED")
+            session = self.get_session(session.id, current_user)
+            messages = self._validation_messages(session)
+            if messages:
+                raise bad_request("; ".join(messages), "SCAN_SESSION_INVALID")
+            if payload.reference is not None:
+                session.reference = payload.reference.strip() or None
+            if payload.notes is not None:
+                session.notes = payload.notes.strip() or None
+            reference = session.reference or f"SCAN-{session.id}"
+
+            if session.mode == StockScanMode.PURCHASE_RECEIVING:
+                self._confirm_purchase_receipt(session, current_user)
+            elif session.mode == StockScanMode.STOCK_TRANSFER:
+                raise bad_request("Stock transfer requires location-level inventory, which is not configured for this store.", "LOCATION_INVENTORY_REQUIRED")
+            else:
+                # All stock writers lock products first and variants second to avoid
+                # deadlocks against checkout and purchase confirmation.
+                variant_ids = [item.product_variant_id for item in session.items if item.product_variant_id]
+                product_ids = [row[0] for row in self.db.query(ProductVariant.product_id).filter(ProductVariant.id.in_(variant_ids), ProductVariant.store_id == store_id).all()]
+                self.db.query(Product).filter(Product.id.in_(product_ids), Product.store_id == store_id).order_by(Product.id).with_for_update().populate_existing().all()
+                self.db.query(ProductVariant).filter(ProductVariant.id.in_(variant_ids), ProductVariant.store_id == store_id).order_by(ProductVariant.id).with_for_update().populate_existing().all()
+                for line in sorted(session.items, key=lambda item: str(item.product_variant_id)):
+                    if session.mode in {StockScanMode.PHYSICAL_COUNT, StockScanMode.STOCK_ADJUSTMENT}:
+                        current = self._variant_for_store(line.product_variant_id, store_id, lock=True)
+                        if current.current_stock != line.expected_quantity:
+                            raise conflict("Stock changed after this count began. Review the quantity before saving.", "STOCK_COUNT_STALE")
+                    delta, movement_type = self._movement_for_line(session, line)
+                    if delta:
+                        self._apply_variant_delta(line, delta, movement_type, reference, current_user, request_id or reference)
+
+            session.status = StockScanStatus.CONFIRMED
+            session.confirmed_by = current_user.id
+            session.confirmed_at = datetime.now(timezone.utc)
+            self.db.commit()
             return self.get_session(session.id, current_user)
-        if session.status == StockScanStatus.CANCELLED:
-            raise bad_request("Cancelled scan sessions cannot be confirmed")
-        session = self.get_session(session.id, current_user)
-        messages = self._validation_messages(session)
-        if messages:
-            raise bad_request("; ".join(messages), "SCAN_SESSION_INVALID")
-        if payload.reference is not None:
-            session.reference = payload.reference.strip() or None
-        if payload.notes is not None:
-            session.notes = payload.notes.strip() or None
-        reference = session.reference or f"SCAN-{session.id}"
-
-        if session.mode == StockScanMode.PURCHASE_RECEIVING:
-            self._confirm_purchase_receipt(session, current_user)
-        elif session.mode == StockScanMode.STOCK_TRANSFER:
-            raise bad_request("Stock transfer requires location-level inventory, which is not configured for this store.", "LOCATION_INVENTORY_REQUIRED")
-        else:
-            for line in session.items:
-                delta, movement_type = self._movement_for_line(session, line)
-                if delta:
-                    self._apply_variant_delta(line, delta, movement_type, reference, current_user, request_id or reference)
-
-        session.status = StockScanStatus.CONFIRMED
-        session.confirmed_by = current_user.id
-        session.confirmed_at = datetime.now(timezone.utc)
-        self.db.commit()
-        return self.get_session(session.id, current_user)
+        except Exception:
+            self.db.rollback()
+            raise
 
     def _confirm_purchase_receipt(self, session: StockScanSession, current_user: User) -> None:
         purchase = self._purchase(session.purchase_id, session.store_id)
@@ -813,6 +879,8 @@ class StockScanService:
         purchase.received_date = purchase.received_date or datetime.now(timezone.utc).date()
 
     def _movement_for_line(self, session: StockScanSession, line: StockScanSessionItem) -> tuple[int, StockMovementType]:
+        if session.mode == StockScanMode.DAILY_STOCK:
+            return line.base_quantity, StockMovementType.MANUAL_ADJUSTMENT
         if session.mode == StockScanMode.OPENING_STOCK:
             return line.base_quantity, StockMovementType.OPENING_STOCK
         if session.mode == StockScanMode.PHYSICAL_COUNT:
@@ -834,7 +902,7 @@ class StockScanService:
         )
         if not variant:
             raise bad_request("A scanned variant is no longer available in this store")
-        product = variant.product
+        product = self.db.query(Product).filter_by(id=variant.product_id, store_id=variant.store_id).with_for_update().populate_existing().one()
         before = variant.current_stock
         after = before + delta
         if after < 0:
@@ -866,8 +934,11 @@ class StockScanService:
             self._consume_cost_lots(variant.id, -delta)
 
         variant.current_stock = after
-        product.current_stock += delta
-        inventory.current_stock += delta
+        self.db.flush()
+        total = int(self.db.query(func.coalesce(func.sum(ProductVariant.current_stock), 0)).filter(ProductVariant.product_id == product.id, ProductVariant.store_id == variant.store_id).scalar() or 0)
+        product.current_stock = total
+        inventory.current_stock = total
+        self.db.flush()
         self.db.add(StockHistory(
             product_id=product.id,
             product_variant_id=variant.id,
@@ -1416,11 +1487,14 @@ class StockScanService:
         return purchase
 
     def _editable_session(self, session_id: UUID, current_user: User) -> StockScanSession:
-        session = self.get_session(session_id, current_user)
+        session = self._session_query(current_user).filter(StockScanSession.id == session_id).with_for_update(of=StockScanSession).populate_existing().first()
+        if not session:
+            raise not_found("Stock scan session")
         if session.status == StockScanStatus.CONFIRMED:
             raise conflict("This stock session is confirmed and cannot be changed.", "STOCK_SESSION_CONFIRMED")
         if session.status == StockScanStatus.CANCELLED:
             raise bad_request("This scan session has been cancelled")
+        self._check_mode_permission(session.mode, current_user)
         return session
 
     def _session_query(self, current_user: User):

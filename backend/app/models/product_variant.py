@@ -36,6 +36,7 @@ class ProductVariant(Base):
     selling_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     last_purchase_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     average_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    minimum_stock: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     current_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     classification_review_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

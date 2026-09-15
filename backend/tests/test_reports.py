@@ -43,7 +43,7 @@ class _EmptyReportSession:
 
 def test_report_summary_marks_a_valid_empty_period() -> None:
     summary = ReportService(_EmptyReportSession()).summary(
-        SimpleNamespace(store_id=uuid4()), date(2026, 1, 1), date(2026, 1, 2)
+        SimpleNamespace(store_id=uuid4(), role="OWNER"), date(2026, 1, 1), date(2026, 1, 2)
     )
 
     assert summary.has_report_data is False
@@ -53,7 +53,7 @@ def test_report_summary_marks_a_valid_empty_period() -> None:
 def test_report_summary_rejects_reversed_dates_with_safe_message() -> None:
     with pytest.raises(HTTPException) as error:
         ReportService(_EmptyReportSession()).summary(
-            SimpleNamespace(store_id=uuid4()), date(2026, 1, 3), date(2026, 1, 2), "report-invalid-range"
+            SimpleNamespace(store_id=uuid4(), role="OWNER"), date(2026, 1, 3), date(2026, 1, 2), "report-invalid-range"
         )
 
     assert error.value.status_code == 422
@@ -126,7 +126,7 @@ def test_report_calculation_failure_is_logged_and_safely_classified(monkeypatch,
         raise OperationalError("SELECT internal_query", {"secret": "do-not-return"}, RuntimeError("database unavailable"))
 
     monkeypatch.setattr(reports_route.ReportService, "summary", fail_summary)
-    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(store_id=uuid4())
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(store_id=uuid4(), role="OWNER")
     app.dependency_overrides[get_db] = lambda: _EmptyReportSession()
     try:
         with caplog.at_level(logging.ERROR):

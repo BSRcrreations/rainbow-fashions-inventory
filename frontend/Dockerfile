@@ -1,4 +1,5 @@
-FROM node:20-alpine AS build
+ARG NODE_BUILD_IMAGE=node:22-alpine
+FROM ${NODE_BUILD_IMAGE} AS build
 
 WORKDIR /app
 

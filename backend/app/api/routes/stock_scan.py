@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, 
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_manager_or_owner, require_owner
+from app.api.deps import get_current_user, require_manager_or_owner, require_owner, require_stock_staff
 from app.database.session import get_db
 from app.models.user import User
 from app.schemas.stock_scan import (
@@ -29,6 +29,7 @@ from app.schemas.stock_scan import (
     StockScanItemDelete,
     StockScanItemUpdate,
     StockScanRequest,
+    QuickStockItemSet,
     StockScanSessionCreate,
     StockScanSessionRead,
     StockScanSessionUpdate,
@@ -167,7 +168,7 @@ def onboard_product(
 
 
 @router.post("/sessions", response_model=StockScanSessionRead, status_code=status.HTTP_201_CREATED)
-def create_session(payload: StockScanSessionCreate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
+def create_session(payload: StockScanSessionCreate, db: Session = Depends(get_db), current_user: User = Depends(require_stock_staff)) -> StockScanSessionRead:
     return StockScanService(db).create_session(payload, current_user)
 
 
@@ -177,17 +178,17 @@ def get_session(session_id: UUID, db: Session = Depends(get_db), current_user: U
 
 
 @router.patch("/sessions/{session_id}", response_model=StockScanSessionRead)
-def update_session(session_id: UUID, payload: StockScanSessionUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
+def update_session(session_id: UUID, payload: StockScanSessionUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_stock_staff)) -> StockScanSessionRead:
     return StockScanService(db).update_session(session_id, payload, current_user)
 
 
 @router.post("/sessions/{session_id}/scan", response_model=StockScanSessionRead)
-def scan_barcode(session_id: UUID, payload: StockScanRequest, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
+def scan_barcode(session_id: UUID, payload: StockScanRequest, db: Session = Depends(get_db), current_user: User = Depends(require_stock_staff)) -> StockScanSessionRead:
     return StockScanService(db).scan(session_id, payload, current_user)
 
 
 @router.post("/sessions/{session_id}/stage-variant", response_model=StockScanSessionRead)
-def stage_selected_variant(session_id: UUID, payload: VariantStockStageRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
+def stage_selected_variant(session_id: UUID, payload: VariantStockStageRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_stock_staff)) -> StockScanSessionRead:
     return StockScanService(db).stage_selected_variant(session_id, payload, current_user, request.state.request_id)
 
 
@@ -197,7 +198,7 @@ def shared_barcode_targets(barcode: str, db: Session = Depends(get_db), current_
 
 
 @router.post("/sessions/{session_id}/batch-barcodes", response_model=StockScanSessionRead)
-def batch_barcodes(session_id: UUID, payload: BatchBarcodeRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
+def batch_barcodes(session_id: UUID, payload: BatchBarcodeRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_stock_staff)) -> StockScanSessionRead:
     try:
         return StockScanService(db).batch_barcodes(session_id, payload, current_user, request.state.request_id)
     except HTTPException as exc:
@@ -208,38 +209,43 @@ def batch_barcodes(session_id: UUID, payload: BatchBarcodeRequest, request: Requ
 
 
 @router.patch("/sessions/{session_id}/items/{item_id}", response_model=StockScanSessionRead)
-def update_scan_item(session_id: UUID, item_id: UUID, payload: StockScanItemUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
+def update_scan_item(session_id: UUID, item_id: UUID, payload: StockScanItemUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_stock_staff)) -> StockScanSessionRead:
     return StockScanService(db).update_item(session_id, item_id, payload, current_user)
 
 
 @router.delete("/sessions/{session_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_scan_item(session_id: UUID, item_id: UUID, payload: Optional[StockScanItemDelete] = None, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
+def delete_scan_item(session_id: UUID, item_id: UUID, payload: Optional[StockScanItemDelete] = None, db: Session = Depends(get_db), current_user: User = Depends(require_stock_staff)) -> Response:
     StockScanService(db).delete_item(session_id, item_id, current_user, payload.expected_session_updated_at if payload else None)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_scan_session(session_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
+def delete_scan_session(session_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_stock_staff)) -> Response:
     StockScanService(db).delete_session(session_id, current_user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/sessions/{session_id}/items/{item_id}/correction-target", response_model=StockHistoryRead)
-def scan_item_correction_target(session_id: UUID, item_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockHistoryRead:
+def scan_item_correction_target(session_id: UUID, item_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_stock_staff)) -> StockHistoryRead:
     return StockScanService(db).correction_target(session_id, item_id, current_user)
 
 
 @router.post("/sessions/{session_id}/validate", response_model=StockScanValidationRead)
-def validate_session(session_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanValidationRead:
+def validate_session(session_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_stock_staff)) -> StockScanValidationRead:
     valid, messages, session = StockScanService(db).validate(session_id, current_user)
     return StockScanValidationRead(valid=valid, messages=messages, session=session)
 
 
 @router.post("/sessions/{session_id}/confirm", response_model=StockScanSessionRead)
-def confirm_session(session_id: UUID, payload: StockScanConfirmRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
+def confirm_session(session_id: UUID, payload: StockScanConfirmRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_stock_staff)) -> StockScanSessionRead:
     return StockScanService(db).confirm(session_id, payload, current_user, request.state.request_id)
 
 
 @router.post("/sessions/{session_id}/cancel", response_model=StockScanSessionRead)
-def cancel_session(session_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> StockScanSessionRead:
+def cancel_session(session_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_stock_staff)) -> StockScanSessionRead:
     return StockScanService(db).cancel(session_id, current_user)
+
+
+@router.post("/sessions/{session_id}/quick-items", response_model=StockScanSessionRead)
+def set_quick_stock_item(session_id: UUID, payload: QuickStockItemSet, db: Session = Depends(get_db), current_user: User = Depends(require_stock_staff)):
+    return StockScanService(db).set_quick_item(session_id, payload, current_user)

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_manager_or_owner, require_owner
+from app.api.deps import get_current_user, require_manager_or_owner, require_owner, require_cashier, require_report_reader
+from app.schemas.sale import SaleCatalogPage, SaleExchangeCreate, SaleExchangeRead
 from app.database.session import get_db
 from app.models.user import User
 from app.schemas.sale import SaleAuditRead, SaleCatalogProduct, SaleCatalogVariant, SaleCreate, SaleDeleteCheckRequest, SaleDeleteRequest, SaleListResponse, SaleRead, SaleReturnCreate, SaleReturnRead, SaleUpdate, SaleVoidRequest, SalesDashboardResponse
@@ -40,9 +41,16 @@ def sales_dashboard(
     return SaleService(db).dashboard(preset, start_date, end_date, current_user)
 
 
-@router.get("/catalog", response_model=list[SaleCatalogProduct])
-def sale_catalog(search: Optional[str] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return SaleService(db).catalog(search, current_user)
+@router.get("/catalog", response_model=Union[list[SaleCatalogProduct], SaleCatalogPage])
+def sale_catalog(search: Optional[str] = None, category_id: Optional[UUID] = None, brand_id: Optional[UUID] = None,
+    page: int = Query(1, ge=1), page_size: int = Query(24, ge=1, le=100), paginated: bool = False,
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return SaleService(db).catalog(search, current_user, category_id, brand_id, page, page_size, paginated)
+
+
+@router.get("/catalog/variant/{variant_id}", response_model=SaleCatalogVariant)
+def sale_catalog_variant(variant_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return SaleService(db).variant_by_id(variant_id, current_user)
 
 
 @router.get("/catalog/barcode/{barcode}", response_model=SaleCatalogVariant)
@@ -104,7 +112,7 @@ def create_sale(
     request: Request,
     idempotency_key: str = Header(default="", alias="Idempotency-Key"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_cashier),
 ):
     return SaleService(db).create(payload, current_user, request.state.request_id, idempotency_key)
 
@@ -125,12 +133,17 @@ def void_sale(sale_id: UUID, payload: SaleVoidRequest, db: Session = Depends(get
 
 
 @router.post("/{sale_id}/returns", response_model=SaleReturnRead, status_code=status.HTTP_201_CREATED)
-def create_sale_return(sale_id: UUID, payload: SaleReturnCreate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
-    return SaleService(db).create_return(sale_id, payload, current_user)
+def create_sale_return(sale_id: UUID, payload: SaleReturnCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_cashier)):
+    return SaleService(db).create_return(sale_id, payload, current_user, request.headers.get("Idempotency-Key"))
+
+
+@router.post("/{sale_id}/exchange", response_model=SaleExchangeRead)
+def exchange_sale(sale_id: UUID, payload: SaleExchangeCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_cashier)):
+    return SaleService(db).exchange(sale_id, payload, current_user, request.headers.get("Idempotency-Key", ""))
 
 
 @router.get("/{sale_id}/returns", response_model=list[SaleReturnRead])
-def list_sale_returns(sale_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+def list_sale_returns(sale_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_cashier)):
     return SaleService(db).list_returns(sale_id, current_user)
 
 

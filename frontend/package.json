@@ -22,12 +22,14 @@
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.2",
+    "react-router-dom": "^7.18.3",
     "tailwind-merge": "^2.6.1",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^6.0.3",
@@ -35,12 +37,14 @@
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.26",
+    "fake-indexeddb": "^6.2.5",
     "globals": "^17.4.0",
+    "jsdom": "^26.1.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
     "typescript": "^5.6.2",
     "typescript-eslint": "^8.56.1",
     "vite": "^8.1.5",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   }
 }

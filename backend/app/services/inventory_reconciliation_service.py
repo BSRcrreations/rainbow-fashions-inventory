@@ -6,6 +6,7 @@ from collections import Counter
 from typing import Iterable
 from uuid import UUID
 
+from sqlalchemy import func, case
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings
@@ -42,18 +43,39 @@ class InventoryReconciliationService:
             raise not_found("Product")
         variant_ids = [variant.id for product in products for variant in product.variants]
         barcode_conflicts: set[UUID] = set()
-        latest_history: dict[UUID, int] = {}
+        movement_totals = {}
         if variant_ids:
             barcode_conflicts = {row.product_variant_id for row in self.db.query(ProductBarcode).join(ProductVariant, ProductBarcode.product_variant_id == ProductVariant.id).filter(ProductBarcode.store_id == store_id, ProductVariant.product_id != ProductBarcode.product_id, ProductBarcode.product_variant_id.in_(variant_ids)).all()}
-            for movement in self.db.query(StockHistory).filter(StockHistory.product_variant_id.in_(variant_ids)).order_by(StockHistory.product_variant_id, StockHistory.created_at.desc()).all():
-                if movement.product_variant_id not in latest_history:
-                    latest_history[movement.product_variant_id] = movement.after_stock
-        return [item for product in products for item in self._product_items(product, store_id, barcode_conflicts, latest_history)]
+            delta = StockHistory.after_stock - StockHistory.before_stock
+            rows = self.db.query(StockHistory.product_variant_id, func.sum(delta), func.count(StockHistory.id),
+                func.sum(case((func.abs(delta) != StockHistory.qty, 1), else_=0))).filter(
+                    StockHistory.store_id == store_id, StockHistory.product_variant_id.in_(variant_ids)).group_by(StockHistory.product_variant_id).all()
+            movement_totals = {row[0]: (int(row[1]), int(row[2]), int(row[3])) for row in rows}
+        result = [item for product in products for item in self._product_items(product, store_id, barcode_conflicts)]
+        variants = {variant.id: variant for product in products for variant in product.variants}
+        for item in result:
+            if item.variant_id is None:
+                continue
+            variant = variants[item.variant_id]
+            item.size, item.color = variant.size, variant.color
+            expected, count, invalid = movement_totals.get(item.variant_id, (0, 0, 0))
+            item.expected_variant_stock, item.movement_count = expected, count
+            if invalid or expected != item.variant_stock:
+                item.category = "STOCK_HISTORY_MISMATCH"
+                item.severity, item.repair_eligible = "CRITICAL", False
+                item.difference = item.variant_stock - expected
+                item.likely_cause = "Stock does not match the complete movement history. Investigate before correcting." if not invalid else "A movement quantity does not match its before and after stock. Investigate the original entry."
+        return result
 
     def summary(self, current_user: User) -> ReconciliationSummary:
         items = self.report(current_user)
         # The first variant item represents one product-level aggregate mismatch.
-        product_items = {item.product_id: item for item in items}
+        product_items = {}
+        priority = {"INFO": 0, "WARNING": 1, "CRITICAL": 2}
+        for item in items:
+            existing = product_items.get(item.product_id)
+            if existing is None or priority[item.severity] > priority[existing.severity]:
+                product_items[item.product_id] = item
         categories = Counter(item.category for item in product_items.values())
         unhealthy = [item for item in product_items.values() if item.category != "HEALTHY"]
         return ReconciliationSummary(total_products=len(product_items), healthy_products=len(product_items) - len(unhealthy), critical_mismatches=sum(1 for item in unhealthy if item.severity == "CRITICAL"), repair_eligible_products=sum(1 for item in unhealthy if item.repair_eligible), categories=dict(categories))
@@ -162,5 +184,4 @@ class InventoryReconciliationService:
         if self.settings.allow_test_opening_stock_import_bypass and self.settings.app_env.lower() in {"test", "testing"}:
             return True
         state = BackupStatusService(self.settings.backup_status_dir).status()
-        database = next((item for item in state.components if item.component == "database"), None)
-        return bool(state.configured and database and database.available and database.status.lower() == "success")
+        return state.posting_allowed

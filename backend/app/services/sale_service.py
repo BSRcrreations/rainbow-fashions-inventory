@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, func, or_
+from sqlalchemy import case, and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -22,17 +22,18 @@ from app.models.customer import Customer
 from app.models.destructive_action import DestructiveIdempotencyRecord
 from app.models.enums import SaleStatus, StockMovementType, UserRole
 from app.models.product import Product
-from app.models.product_barcode import ProductBarcode
+from app.models.product_barcode import ProductBarcode, ProductBarcodeVariantTarget
 from app.models.product_inventory import ProductInventory
 from app.models.product_variant import InventoryCostLot, ProductVariant
 from app.models.sale import Sale, SaleAudit, SaleItem, SaleReturn, SaleReturnItem
 from app.models.stock_history import StockHistory
 from app.models.user import User
 from app.repositories.sale import SaleRepository
-from app.schemas.sale import SaleCatalogProduct, SaleCatalogVariant, SaleCreate, SaleListResponse, SaleReturnCreate, SaleUpdate, SaleVoidRequest, SalesDashboardResponse, SalesMetric
+from app.schemas.sale import SaleCatalogProduct, SaleCatalogVariant, SaleCreate, SaleExchangeCreate, SaleListResponse, SaleReturnCreate, SaleUpdate, SaleVoidRequest, SalesDashboardResponse, SalesMetric
 from app.services.discount_calculator import money
 from app.services.inventory_valuation_service import InventoryValuationService
 from app.services.customer_phone import normalize_customer_phone
+from app.services.transaction_idempotency import reserve
 from app.services.sale_discount import SaleDiscountError, calculate_sale_discount
 
 
@@ -51,57 +52,36 @@ class SaleService:
         before taking inventory locks means a repeated click cannot create a second
         sale or apply another stock movement.
         """
-        checkout_key = (idempotency_key or "").strip()
-        if not checkout_key:
-            return self._create(payload, current_user, request_id)
-        if len(checkout_key) > 120:
-            raise bad_request("Checkout request key is invalid")
-
-        store_id = self._store_id(current_user)
-        request_hash = self._checkout_request_hash(payload)
-        existing = self.db.query(DestructiveIdempotencyRecord).filter_by(
-            store_id=store_id,
-            user_id=current_user.id,
-            action="SALE_CHECKOUT",
-            idempotency_key=checkout_key,
-        ).first()
-        if existing:
-            return self._idempotent_checkout(existing, request_hash, current_user)
-
-        invoice_number = payload.invoice_number or self._generate_invoice_number()
-        record = DestructiveIdempotencyRecord(
-            store_id=store_id,
-            user_id=current_user.id,
-            action="SALE_CHECKOUT",
-            idempotency_key=checkout_key,
-            request_hash=request_hash,
-            # Store the generated invoice before the sale commits so a concurrent
-            # retry can return the completed transaction instead of reprocessing it.
-            response_snapshot={"invoice_number": invoice_number},
-        )
-        self.db.add(record)
         try:
-            self.db.flush()
-        except IntegrityError:
-            # Another request with this key won the unique constraint. Its commit
-            # includes the sale and stock movements, so re-read and return it.
+            record = None
+            if idempotency_key:
+                record, repeated = reserve(self.db, current_user, "SALE_CHECKOUT", idempotency_key, payload.model_dump(mode="json"))
+                if repeated:
+                    return self.get(UUID(record.response_snapshot["sale_id"]), current_user)
+            sale = self._create(payload, current_user, request_id)
+            if record:
+                record.response_snapshot = {"sale_id": str(sale.id), "invoice_number": sale.invoice_number}
+            self.db.commit()
+            return self.get(sale.id, current_user)
+        except Exception:
             self.db.rollback()
-            existing = self.db.query(DestructiveIdempotencyRecord).filter_by(
-                store_id=store_id,
-                user_id=current_user.id,
-                action="SALE_CHECKOUT",
-                idempotency_key=checkout_key,
-            ).first()
-            if existing:
-                return self._idempotent_checkout(existing, request_hash, current_user)
             raise
 
-        sale = self._create(payload.model_copy(update={"invoice_number": invoice_number}), current_user, request_id)
-        record.response_snapshot = {"invoice_number": sale.invoice_number, "sale_id": str(sale.id)}
-        self.db.commit()
-        return sale
-
     def _create(self, payload: SaleCreate, current_user: User, request_id: str | None = None) -> Sale:
+        resolved = []
+        for item in payload.items:
+            if item.product_variant_id is None:
+                variants = self.db.query(ProductVariant).filter(ProductVariant.product_id == item.product_id, ProductVariant.store_id == self._store_id(current_user), ProductVariant.is_active.is_(True)).all()
+                if len(variants) > 1:
+                    raise bad_request("Please select the size before adding this product.")
+                if not variants:
+                    raise bad_request("Ask the manager to add a sellable size before billing this product.")
+                if variants:
+                    item = item.model_copy(update={"product_variant_id": variants[0].id})
+            resolved.append(item)
+        if any(item.product_variant_id for item in resolved) and not all(item.product_variant_id for item in resolved):
+            raise bad_request("Please select a size for every item before billing.")
+        payload = payload.model_copy(update={"items": resolved})
         if all(item.product_variant_id is not None for item in payload.items):
             return self._create_variant_sale(payload, current_user, request_id)
         store_id = self._store_id(current_user)
@@ -112,6 +92,7 @@ class SaleService:
         prepared, price_overrides = self._prepare_items(payload.items, store_id, current_user, request_id)
         subtotal, cost_amount, _ = self._totals(prepared, Decimal("0"))
         discount_amount = self._checkout_discount(subtotal, payload.discount_type, payload.discount_value, request_id)
+        self._enforce_discount_limit(subtotal, discount_amount, current_user)
         total_amount = money(subtotal - discount_amount)
         sale = Sale(
             store_id=store_id,
@@ -119,6 +100,7 @@ class SaleService:
             customer_id=customer.id if customer else None,
             customer_name=customer.name if customer else payload.customer_name,
             payment_mode=payload.payment_mode,
+            payment_reference=payload.payment_reference,
             cashier_id=current_user.id,
             subtotal=subtotal,
             discount=discount_amount,
@@ -153,7 +135,7 @@ class SaleService:
 
         if price_overrides:
             self.db.add(SaleAudit(sale_id=sale.id, action="PRICE_OVERRIDE", reason=None, performed_by=current_user.id, before_data=None, after_data={"price_overrides": price_overrides}))
-        self.db.commit()
+        self.db.flush()
         return self.get(sale.id, current_user)
 
     @staticmethod
@@ -172,12 +154,13 @@ class SaleService:
             raise conflict("This checkout is still being processed. Please wait a moment.")
         return self.get(sale.id, current_user)
 
-    def catalog(self, search: Optional[str], current_user: User) -> list[SaleCatalogProduct]:
+    def catalog(self, search: Optional[str], current_user: User, category_id: UUID | None = None, brand_id: UUID | None = None, page: int = 1, page_size: int = 24, paginated: bool = False):
         store_id = self._store_id(current_user)
         query = (
             self.db.query(ProductVariant)
             .join(Product)
             .outerjoin(Brand, Product.brand_id == Brand.id)
+            .outerjoin(Category, Product.category_id == Category.id)
             .options(
                 joinedload(ProductVariant.product).joinedload(Product.category),
                 joinedload(ProductVariant.product).joinedload(Product.subcategory),
@@ -185,9 +168,20 @@ class SaleService:
             )
             .filter(ProductVariant.store_id == store_id, ProductVariant.is_active.is_(True), Product.is_active.is_(True))
         )
+        if category_id:
+            query = query.filter(Product.category_id == category_id)
+        if brand_id:
+            query = query.filter(Product.brand_id == brand_id)
         if search and search.strip():
             pattern = f"%{search.strip()}%"
-            query = query.filter(or_(Product.name.ilike(pattern), Product.sku.ilike(pattern), ProductVariant.internal_sku.ilike(pattern), ProductVariant.manufacturer_sku.ilike(pattern), and_(ProductVariant.barcode.ilike(pattern), ~ProductVariant.barcode_mappings.any(ProductBarcode.barcode.ilike(pattern))), ProductVariant.barcode_mappings.any(and_(ProductBarcode.active.is_(True), ProductBarcode.barcode.ilike(pattern))), ProductVariant.size.ilike(pattern), ProductVariant.color.ilike(pattern), ProductVariant.style_code.ilike(pattern), Brand.name.ilike(pattern)))
+            query = query.filter(or_(Product.name.ilike(pattern), Product.sku.ilike(pattern), ProductVariant.internal_sku.ilike(pattern), ProductVariant.manufacturer_sku.ilike(pattern), and_(ProductVariant.barcode.ilike(pattern), ~ProductVariant.barcode_mappings.any(ProductBarcode.barcode.ilike(pattern))), ProductVariant.barcode_mappings.any(and_(ProductBarcode.active.is_(True), ProductBarcode.barcode.ilike(pattern))), ProductVariant.size.ilike(pattern), ProductVariant.color.ilike(pattern), ProductVariant.style_code.ilike(pattern), Brand.name.ilike(pattern), Category.name.ilike(pattern)))
+        matched = query.with_entities(Product.id, Product.name).distinct()
+        total = matched.count()
+        if paginated:
+            ids = [row[0] for row in matched.order_by(Product.name, Product.id).offset((max(1, page) - 1) * min(100, max(1, page_size))).limit(min(100, max(1, page_size))).all()]
+            query = query.filter(Product.id.in_(ids))
+        else:
+            query = query.filter(Product.id.in_([row[0] for row in matched.order_by(Product.name, Product.id).limit(100).all()]))
         grouped: dict[UUID, SaleCatalogProduct] = {}
         for variant in query.order_by(Product.name, ProductVariant.size, ProductVariant.mrp).all():
             product = variant.product
@@ -209,34 +203,31 @@ class SaleService:
             group.total_available_stock += variant.current_stock
             group.total_stock += variant.current_stock
             group.variant_count += 1
-        return list(grouped.values())
+        items = list(grouped.values())
+        return {"items": items, "total": total, "page": max(1, page), "page_size": min(100, max(1, page_size))} if paginated else items
 
     def variant_by_barcode(self, barcode: str, current_user: User) -> SaleCatalogVariant:
         normalized = barcode.strip()
         if not normalized:
             raise bad_request("Barcode is required")
         store_id = self._store_id(current_user)
-        barcode_mapping = self.db.query(ProductBarcode).filter(ProductBarcode.store_id == store_id, func.lower(ProductBarcode.barcode) == normalized.lower(), ProductBarcode.active.is_(True)).first()
-        if barcode_mapping:
-            variant = (
-                self.db.query(ProductVariant)
-                .filter(
-                    ProductVariant.store_id == store_id,
-                    ProductVariant.id == barcode_mapping.product_variant_id,
-                )
-                .first()
-            )
+        mappings = self.db.query(ProductBarcode).filter(ProductBarcode.store_id == store_id, func.lower(ProductBarcode.barcode) == normalized.lower(), ProductBarcode.active.is_(True)).all()
+        if mappings:
+            ids = {mapping.product_variant_id for mapping in mappings}
+            ids.update(row[0] for row in self.db.query(ProductBarcodeVariantTarget.product_variant_id).filter(ProductBarcodeVariantTarget.product_barcode_id.in_([mapping.id for mapping in mappings]), ProductBarcodeVariantTarget.store_id == store_id).all())
+            variants = self.db.query(ProductVariant).filter(ProductVariant.store_id == store_id, ProductVariant.id.in_(ids), ProductVariant.is_active.is_(True)).all()
         else:
-            variant = (
-                self.db.query(ProductVariant)
-                .filter(
-                    ProductVariant.store_id == store_id,
-                    func.lower(ProductVariant.barcode) == normalized.lower(),
-                )
-                .first()
-            )
-        if not variant:
+            variants = self.db.query(ProductVariant).filter(ProductVariant.store_id == store_id, func.lower(ProductVariant.barcode) == normalized.lower(), ProductVariant.is_active.is_(True)).all()
+        if len(variants) > 1:
+            raise conflict("This barcode has more than one size. Please choose the size.", "BARCODE_SIZE_SELECTION_REQUIRED")
+        if not variants:
             raise not_found("Product variant for this barcode")
+        return self._catalog_variant(variants[0])
+
+    def variant_by_id(self, variant_id: UUID, current_user: User) -> SaleCatalogVariant:
+        variant = self.db.query(ProductVariant).join(Product).filter(ProductVariant.id == variant_id, ProductVariant.store_id == self._store_id(current_user), ProductVariant.is_active.is_(True), Product.is_active.is_(True)).first()
+        if not variant:
+            raise not_found("Product size")
         return self._catalog_variant(variant)
 
     def _create_variant_sale(self, payload: SaleCreate, current_user: User, request_id: str | None = None) -> Sale:
@@ -250,6 +241,10 @@ class SaleService:
             raise bad_request("A variant can appear only once in a sale")
         prepared: list[tuple[Product, ProductVariant, int, Decimal, Decimal, Decimal, list[tuple[Optional[InventoryCostLot], int, Decimal]]]] = []
         price_overrides: list[dict[str, str]] = []
+        product_ids = [row[0] for row in self.db.query(ProductVariant.product_id).filter(ProductVariant.id.in_(variant_ids), ProductVariant.store_id == store_id).distinct().all()]
+        for product_id in sorted(product_ids, key=str):
+            self._locked_product_inventory(product_id, store_id)
+        item_discounts = {}
         for request in sorted(payload.items, key=lambda item: str(item.product_variant_id)):
             variant = (
                 self.db.query(ProductVariant)
@@ -260,6 +255,8 @@ class SaleService:
             )
             if not variant or not variant.product.is_active or not variant.is_active:
                 raise bad_request("The selected product variant is unavailable")
+            if request.product_id and request.product_id != variant.product_id:
+                raise bad_request("The selected size does not belong to this product.")
             if variant.current_stock < request.quantity:
                 raise bad_request(f"Insufficient stock for {variant.product.name} {variant.size or ''}; {variant.current_stock} available")
             price, override = self._resolve_unit_price(variant.selling_price, request.unit_price, variant.mrp, current_user, variant.id, request_id)
@@ -282,18 +279,31 @@ class SaleService:
                 if not remaining:
                     break
             if remaining:
-                allocations.append((None, remaining, variant.average_cost))
+                raise conflict("Stock cost history is incomplete for this size. Ask the manager to check Inventory Integrity.", "COST_LOT_SHORTAGE")
             cost = sum((unit_cost * quantity for _, quantity, unit_cost in allocations), Decimal("0"))
-            prepared.append((variant.product, variant, request.quantity, price, price * request.quantity, cost, allocations))
+            item_discount = self._checkout_discount(price * request.quantity, request.discount_type, request.discount_value, request_id)
+            item_discounts[variant.id] = (request.discount_type, request.discount_value, item_discount)
+            prepared.append((variant.product, variant, request.quantity, price, money(price * request.quantity - item_discount), cost, allocations))
         subtotal = money(sum((line_total for _, _, _, _, line_total, _, _ in prepared), Decimal("0")))
         discount_amount = self._checkout_discount(subtotal, payload.discount_type, payload.discount_value, request_id)
+        gross = sum((price * quantity for _, _, quantity, price, _, _, _ in prepared), Decimal("0"))
+        self._enforce_discount_limit(gross, gross - subtotal + discount_amount, current_user)
         total = money(subtotal - discount_amount)
+        from app.services.operations_service import get_store_settings
+        preferences = get_store_settings(self.db, store_id)
+        if preferences.require_payment_reference and payload.payment_mode in {"UPI", "CARD", "BANK", "OTHER"} and not (payload.payment_reference or "").strip():
+            raise bad_request("Enter the payment reference before saving this bill.")
+        if customer and payload.payment_mode == "CREDIT" and customer.credit_limit is not None:
+            from app.services.business_service import CustomerService
+            balance = CustomerService(self.db)._totals(customer, store_id)[2]
+            if balance + total > customer.credit_limit:
+                raise bad_request("This bill would exceed the customer's credit limit. Choose another payment method.")
         cost_amount = sum((cost for _, _, _, _, _, cost, _ in prepared), Decimal("0"))
-        sale = Sale(store_id=store_id, invoice_number=invoice_number, customer_id=customer.id if customer else None, customer_name=customer.name if customer else payload.customer_name, payment_mode=payload.payment_mode, cashier_id=current_user.id, subtotal=subtotal, discount=discount_amount, discount_type=payload.discount_type, discount_value=money(payload.discount_value), discount_amount=discount_amount, total_amount=total, cost_amount=cost_amount, profit_amount=total - cost_amount, sale_date=payload.sale_date or datetime.now(timezone.utc))
+        sale = Sale(store_id=store_id, invoice_number=invoice_number, customer_id=customer.id if customer else None, customer_name=customer.name if customer else payload.customer_name, payment_mode=payload.payment_mode, payment_reference=payload.payment_reference, cashier_id=current_user.id, subtotal=subtotal, discount=discount_amount, discount_type=payload.discount_type, discount_value=money(payload.discount_value), discount_amount=discount_amount, total_amount=total, cost_amount=cost_amount, profit_amount=total - cost_amount, sale_date=payload.sale_date or datetime.now(timezone.utc))
         self.db.add(sale)
         self.db.flush()
         for product, variant, quantity, price, line_total, cost, allocations in prepared:
-            sale_item = SaleItem(sale_id=sale.id, product_id=product.id, product_variant_id=variant.id, product_name=product.name, quantity=quantity, unit_price=price, unit_cost=(cost / quantity), line_total=line_total, sku_snapshot=variant.internal_sku, barcode_snapshot=variant.barcode, size_snapshot=variant.size, color_snapshot=variant.color, style_snapshot=variant.style_code, mrp_snapshot=variant.mrp)
+            sale_item = SaleItem(sale_id=sale.id, product_id=product.id, product_variant_id=variant.id, product_name=product.name, quantity=quantity, unit_price=price, unit_cost=(cost / quantity), line_total=line_total, sku_snapshot=variant.internal_sku, barcode_snapshot=variant.barcode, size_snapshot=variant.size, color_snapshot=variant.color, style_snapshot=variant.style_code, mrp_snapshot=variant.mrp, brand_snapshot=product.brand.name if product.brand else None, discount_type=item_discounts[variant.id][0], discount_value=item_discounts[variant.id][1], discount_amount=item_discounts[variant.id][2])
             self.db.add(sale_item)
             self.db.flush()
             product, inventory = self._locked_product_inventory(product.id, store_id)
@@ -304,10 +314,25 @@ class SaleService:
                 variant.current_stock -= allocation_quantity
                 self.db.add(StockHistory(product_id=product.id, product_variant_id=variant.id, purchase_cost_lot_id=lot.id if lot else None, store_id=store_id, movement_type=StockMovementType.SALE, qty=allocation_quantity, before_stock=before_variant_stock, after_stock=variant.current_stock, reference=invoice_number, sale_id=sale.id, sale_item_id=sale_item.id, created_by=current_user.id, unit_cost=unit_cost))
                 before_variant_stock = variant.current_stock
-            inventory.current_stock -= quantity
-            product.current_stock = max(0, product.current_stock - quantity)
+            self._sync_variant_total(product, inventory)
+        self.db.flush()
+        self.db.refresh(sale, ["items"])
+        net_items = self._net_item_amounts(sale)
+        for item in sale.items:
+            product = self.db.get(Product, item.product_id)
+            rate = product.gst_rate or Decimal("0")
+            item.hsn_snapshot = product.hsn_code or product.hsn_sac
+            item.gst_rate_snapshot = rate
+            net = net_items[item.id]
+            tax = money(net * rate / (100 + rate))
+            item.taxable_value = net - tax
+            if preferences.receipt.tax_mode == "INTER_STATE":
+                item.igst_amount = tax
+            else:
+                item.cgst_amount = money(tax / 2)
+                item.sgst_amount = tax - item.cgst_amount
         self.db.add(SaleAudit(sale_id=sale.id, action="COMPLETED", reason=None, performed_by=current_user.id, before_data=None, after_data={"variant_sale": True, "discount_type": payload.discount_type, "discount_value": str(payload.discount_value), "discount_amount": str(discount_amount), "total_amount": str(total), "price_overrides": price_overrides}))
-        self.db.commit()
+        self.db.flush()
         return self.get(sale.id, current_user)
 
     @staticmethod
@@ -326,6 +351,8 @@ class SaleService:
         if sale.status in {SaleStatus.VOIDED, SaleStatus.RETURNED}:
             raise bad_request("This sale cannot be edited")
         self._validate_version(sale, payload.version)
+        if any(item.product_variant_id for item in sale.items):
+            raise bad_request("Use Return / Exchange to correct sizes or quantities on this bill. The original bill stays in history.")
         before = self._audit_snapshot(sale)
         product_ids = [item.product_id for item in payload.items]
         if len(product_ids) != len(set(product_ids)):
@@ -377,11 +404,29 @@ class SaleService:
         self.db.commit()
         return self.get(sale.id, current_user)
 
-    def create_return(self, sale_id: UUID, payload: SaleReturnCreate, current_user: User) -> SaleReturn:
+    def create_return(self, sale_id: UUID, payload: SaleReturnCreate, current_user: User, idempotency_key: str | None = None) -> SaleReturn:
+        try:
+            record = None
+            if idempotency_key:
+                record, repeated = reserve(self.db, current_user, "SALE_RETURN", idempotency_key, {"sale_id": str(sale_id), **payload.model_dump(mode="json")})
+                if repeated:
+                    return self.db.query(SaleReturn).filter_by(id=UUID(record.response_snapshot["return_id"]), store_id=self._store_id(current_user)).one()
+            result = self._create_return(sale_id, payload, current_user)
+            if record:
+                record.response_snapshot = {"return_id": str(result.id)}
+            self.db.commit()
+            return result
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def _create_return(self, sale_id: UUID, payload: SaleReturnCreate, current_user: User) -> SaleReturn:
         store_id = self._store_id(current_user)
         sale = self._locked_sale(sale_id, store_id)
-        if sale.status == SaleStatus.VOIDED:
-            raise bad_request("Voided sales cannot be returned")
+        if sale.status in {SaleStatus.VOIDED, SaleStatus.CANCELLED, SaleStatus.DRAFT}:
+            raise bad_request("This bill cannot be returned")
+        if sale.payment_mode == "CREDIT" and payload.refund_method not in {None, "CREDIT"}:
+            raise bad_request("Credit bill returns must reduce the customer balance. Record a separate payment if required.")
         requested_ids = [item.sale_item_id for item in payload.items]
         if len(requested_ids) != len(set(requested_ids)):
             raise bad_request("A sale item can appear only once in a return")
@@ -396,17 +441,76 @@ class SaleService:
             item = item_map[request.sale_item_id]
             if request.quantity > item.quantity - returned.get(item.id, 0):
                 raise bad_request(f"Return quantity exceeds remaining quantity for {item.product_name}")
-            amount = item.unit_price * request.quantity
+            # Allocate the invoice discount once in stable item order, then use
+            # cumulative rounding so repeated partial refunds equal the paid bill.
+            net_amounts = self._net_item_amounts(sale)
+            already = returned.get(item.id, 0)
+            amount = money(net_amounts[item.id] * (already + request.quantity) / item.quantity) - money(net_amounts[item.id] * already / item.quantity)
             refund += amount
-            self.db.add(SaleReturnItem(sale_return=sale_return, sale_item_id=item.id, quantity=request.quantity, refund_amount=amount))
-            self._restore_sale_item_stock(item, request.quantity, StockMovementType.CUSTOMER_RETURN, f"{sale.invoice_number} customer return", sale, current_user)
+            self.db.add(SaleReturnItem(sale_return=sale_return, sale_item_id=item.id, quantity=request.quantity, refund_amount=amount, restock=request.restock))
+            if request.restock:
+                self._restore_sale_item_stock(item, request.quantity, StockMovementType.CUSTOMER_RETURN, f"{sale.invoice_number} customer return", sale, current_user)
         sale_return.refund_amount = refund
         self.db.flush()
         all_returned = all(item.quantity <= returned.get(item.id, 0) + sum(req.quantity for req in payload.items if req.sale_item_id == item.id) for item in sale.items)
         sale.status, sale.version = (SaleStatus.RETURNED if all_returned else SaleStatus.PARTIALLY_RETURNED), sale.version + 1
         self.db.add(SaleAudit(sale_id=sale.id, action="RETURNED", reason=payload.reason, performed_by=current_user.id, before_data=None, after_data={"refund_amount": str(refund), "status": sale.status.value}))
-        self.db.commit()
+        self.db.flush()
         return sale_return
+
+    def exchange(self, sale_id: UUID, payload: SaleExchangeCreate, current_user: User, idempotency_key: str):
+        try:
+            record, repeated = reserve(self.db, current_user, "SALE_EXCHANGE", idempotency_key, {"sale_id": str(sale_id), **payload.model_dump(mode="json")})
+            if repeated:
+                replacement = self.get(UUID(record.response_snapshot["sale_id"]), current_user)
+                returned = self.db.query(SaleReturn).filter_by(id=UUID(record.response_snapshot["return_id"]), store_id=self._store_id(current_user)).one()
+                return {"sale": replacement, "sale_return": returned, "amount_due": replacement.total_amount - returned.refund_amount}
+            original = self._locked_sale(sale_id, self._store_id(current_user))
+            if original.payment_mode == "CREDIT" and payload.payment_mode != "CREDIT":
+                raise bad_request("Choose Credit for this exchange so the returned amount reduces the customer account.")
+            if any(item.product_variant_id is None for item in payload.items):
+                raise bad_request("Choose the replacement size for every item.")
+            # Lock all affected products in one order before either stock direction.
+            product_ids = {item.product_id for item in original.items}
+            product_ids.update(row[0] for row in self.db.query(ProductVariant.product_id).filter(ProductVariant.id.in_([item.product_variant_id for item in payload.items]), ProductVariant.store_id == self._store_id(current_user)).all())
+            for product_id in sorted(product_ids, key=str):
+                self._locked_product_inventory(product_id, self._store_id(current_user))
+            returned = self._create_return(sale_id, SaleReturnCreate(reason=payload.reason, refund_method=payload.payment_mode, items=payload.return_items), current_user)
+            replacement = self._create_variant_sale(SaleCreate(customer_id=original.customer_id, customer_name=original.customer_name, payment_mode=payload.payment_mode, payment_reference=payload.payment_reference, items=payload.items), current_user)
+            replacement.exchange_return_id = returned.id
+            self.db.add(SaleAudit(sale_id=original.id, action="EXCHANGED", reason=payload.reason, performed_by=current_user.id, after_data={"replacement_sale_id": str(replacement.id), "return_id": str(returned.id)}))
+            record.response_snapshot = {"sale_id": str(replacement.id), "return_id": str(returned.id)}
+            self.db.commit()
+            return {"sale": replacement, "sale_return": returned, "amount_due": replacement.total_amount - returned.refund_amount}
+        except Exception:
+            self.db.rollback()
+            raise
+
+    @staticmethod
+    def _net_item_amounts(sale: Sale) -> dict:
+        items = sorted(sale.items, key=lambda item: str(item.id))
+        cumulative = Decimal("0")
+        previous = Decimal("0")
+        result = {}
+        for item in items:
+            cumulative += item.line_total
+            allocated = money(sale.discount_amount * cumulative / sale.subtotal) if sale.subtotal else Decimal("0")
+            result[item.id] = item.line_total - (allocated - previous)
+            previous = allocated
+        return result
+
+    def _enforce_discount_limit(self, gross: Decimal, discount: Decimal, current_user: User):
+        if current_user.role in {UserRole.OWNER, UserRole.MANAGER} or not gross:
+            return
+        from app.services.operations_service import get_store_settings
+        cap = get_store_settings(self.db, self._store_id(current_user)).cashier_max_discount_percent
+        if discount * 100 > gross * cap:
+            raise HTTPException(status_code=403, detail=error_payload(f"Discounts above {cap}% need a manager. Ask the manager to complete this bill.", "DISCOUNT_APPROVAL_REQUIRED"))
+
+    def _sync_variant_total(self, product, inventory):
+        self.db.flush()
+        total = self.db.query(func.coalesce(func.sum(ProductVariant.current_stock), 0)).filter(ProductVariant.product_id == product.id, ProductVariant.store_id == inventory.store_id).scalar()
+        product.current_stock = inventory.current_stock = int(total)
 
     def list_paginated(
         self,
@@ -473,7 +577,7 @@ class SaleService:
                 .scalar()
                 or 0
             ),
-            total_products=self.db.query(func.count(Product.id)).filter(Product.is_active.is_(True)).scalar() or 0,
+            total_products=self.db.query(func.count(Product.id)).filter(Product.is_active.is_(True), Product.store_id == store_id).scalar() or 0,
             trend=trend,
             top_categories=self._ranking("category", selected_start_at, selected_end_at, store_id),
             top_brands=self._ranking("brand", selected_start_at, selected_end_at, store_id),
@@ -505,11 +609,14 @@ class SaleService:
             .all()
         )
         amounts = {str(payment_mode).upper(): amount for payment_mode, amount in rows}
+        returned = self.db.query(SaleReturn.refund_method, func.sum(SaleReturn.refund_amount)).join(Sale, SaleReturn.sale_id == Sale.id).filter(SaleReturn.store_id == store_id, Sale.status.notin_([SaleStatus.VOIDED, SaleStatus.CANCELLED]), SaleReturn.created_at.between(start_at, end_at)).group_by(SaleReturn.refund_method).all()
+        for method, amount in returned:
+            amounts[str(method).upper()] = amounts.get(str(method).upper(), Decimal("0")) - amount
         cash = amounts.get("CASH", Decimal("0"))
         upi = amounts.get("UPI", Decimal("0"))
         card = amounts.get("CARD", Decimal("0"))
-        other = sum((amount for mode, amount in amounts.items() if mode not in {"CASH", "UPI", "CARD"}), Decimal("0"))
-        return {"cash": cash, "upi": upi, "card": card, "other": other, "total": cash + upi + card + other}
+        other = sum((amount for mode, amount in amounts.items() if mode not in {"CASH", "UPI", "CARD", "BANK", "CREDIT"}), Decimal("0"))
+        return {"cash": cash, "upi": upi, "card": card, "bank": amounts.get("BANK", Decimal("0")), "credit": amounts.get("CREDIT", Decimal("0")), "other": other, "total": cash + upi + card + amounts.get("BANK", Decimal("0")) + other}
 
     def export_xlsx(self, sales: list[Sale]) -> bytes:
         from openpyxl import Workbook
@@ -599,7 +706,15 @@ class SaleService:
             .filter(Sale.store_id == store_id, Sale.status != SaleStatus.VOIDED, Sale.sale_date.between(start_at, end_at))
             .one()
         )
-        return SalesMetric(sales=sales, profit=profit, orders=orders)
+        refunds, restored_cost = self._return_metrics(start_at, end_at, store_id)
+        return SalesMetric(sales=Decimal(sales) - refunds, profit=Decimal(profit) - refunds + restored_cost, orders=orders)
+
+    def _return_metrics(self, start_at, end_at, store_id):
+        refunds, restored = self.db.query(
+            func.coalesce(func.sum(SaleReturnItem.refund_amount), 0),
+            func.coalesce(func.sum(case((SaleReturnItem.restock.is_(True), SaleReturnItem.quantity * SaleItem.unit_cost), else_=0)), 0),
+        ).select_from(SaleReturnItem).join(SaleReturn, SaleReturn.id == SaleReturnItem.sale_return_id).join(SaleItem, SaleItem.id == SaleReturnItem.sale_item_id).join(Sale, Sale.id == SaleReturn.sale_id).filter(SaleReturn.store_id == store_id, Sale.status != SaleStatus.VOIDED, SaleReturn.created_at.between(start_at, end_at)).one()
+        return Decimal(refunds), Decimal(restored)
 
     def _trend(self, start_date: date, end_date: date, store_id: UUID) -> list[dict]:
         start_at, end_at = self._bounds(start_date, end_date)
@@ -617,6 +732,11 @@ class SaleService:
             .all()
         )
         by_day = {row[0]: row[1:] for row in rows}
+        return_day = func.date(func.timezone(str(BUSINESS_TIMEZONE), SaleReturn.created_at))
+        adjustments = self.db.query(return_day, func.sum(SaleReturnItem.refund_amount), func.sum(case((SaleReturnItem.restock.is_(True), SaleReturnItem.quantity * SaleItem.unit_cost), else_=0))).select_from(SaleReturnItem).join(SaleReturn, SaleReturn.id == SaleReturnItem.sale_return_id).join(SaleItem, SaleItem.id == SaleReturnItem.sale_item_id).join(Sale, Sale.id == SaleReturn.sale_id).filter(SaleReturn.store_id == store_id, Sale.status != SaleStatus.VOIDED, SaleReturn.created_at.between(start_at, end_at)).group_by(return_day).all()
+        for day, refund, cost in adjustments:
+            previous = by_day.get(day, (Decimal("0"), Decimal("0"), 0))
+            by_day[day] = (previous[0] - refund, previous[1] - refund + cost, previous[2])
         result = []
         current = start_date
         while current <= end_date:
@@ -755,6 +875,7 @@ class SaleService:
             .options(selectinload(Sale.items))
             .filter(Sale.id == sale_id, Sale.store_id == store_id)
             .with_for_update()
+            .populate_existing()
             .first()
         )
         if not sale:
@@ -873,9 +994,10 @@ class SaleService:
         if not variant:
             raise bad_request("The original product variant is no longer available for this return")
         before_variant_stock = variant.current_stock
+        existing_value = variant.average_cost * variant.current_stock
         variant.current_stock += quantity
-        inventory.current_stock += quantity
-        product.current_stock += quantity
+        variant.average_cost = (existing_value + sale_item.unit_cost * quantity) / variant.current_stock
+        self._sync_variant_total(product, inventory)
         lot = InventoryCostLot(
             store_id=self._store_id(current_user),
             product_variant_id=variant.id,
