@@ -155,6 +155,7 @@ class ProductUpdate(BaseModel):
 
 
 class ProductVariantRead(ORMBaseModel):
+    minimum_stock: Optional[int] = None
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     id: UUID
@@ -182,6 +183,7 @@ class ProductVariantRead(ORMBaseModel):
 
 
 class ProductVariantUpdate(BaseModel):
+    minimum_stock: Optional[int] = Field(default=None, ge=0, le=1000000)
     size: Optional[str] = Field(default=None, max_length=60)
     color: Optional[str] = Field(default=None, max_length=80)
     style_code: Optional[str] = Field(default=None, max_length=80)

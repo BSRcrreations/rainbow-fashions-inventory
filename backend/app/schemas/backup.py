@@ -15,3 +15,7 @@ class BackupComponentStatus(BaseModel):
 class BackupStatusRead(BaseModel):
     configured: bool
     components: list[BackupComponentStatus]
+    health: str = "WARNING"
+    restore_proven: bool = False
+    posting_allowed: bool = False
+    issues: list[str] = Field(default_factory=list)

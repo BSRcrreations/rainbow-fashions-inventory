@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 from fastapi import HTTPException, UploadFile, status
 from openpyxl import load_workbook
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import Settings, get_settings
 from app.core.exceptions import bad_request, conflict, not_found
@@ -23,7 +23,7 @@ from app.models.category import Category
 from app.models.enums import OpeningStockImportStatus, PricingType, StockMovementType
 from app.models.opening_stock_import import OpeningStockImport, OpeningStockImportAudit, OpeningStockImportError, OpeningStockImportRow
 from app.models.product import Product
-from app.models.product_barcode import ProductBarcode
+from app.models.product_barcode import ProductBarcode, ProductBarcodeVariantTarget
 from app.models.product_inventory import ProductInventory
 from app.models.product_variant import InventoryCostLot, ProductVariant
 from app.models.stock_history import StockHistory
@@ -46,13 +46,13 @@ class OpeningStockImportService:
         self.db = db
         self.settings = settings or get_settings()
 
-    async def upload_and_validate(self, upload: UploadFile, current_user: User, request_id: str | None) -> OpeningStockImport:
+    async def upload_and_validate(self, upload: UploadFile, current_user: User, request_id: str | None, confirm_shared_barcodes: bool = False) -> OpeningStockImport:
         store_id = self._store_id(current_user)
         filename = Path(upload.filename or "").name
         suffix = Path(filename).suffix.lower()
         if suffix not in {".csv", ".xlsx"}:
             raise bad_request("Upload a CSV or XLSX opening-stock file.", "UNSUPPORTED_OPENING_STOCK_FILE")
-        content = await upload.read()
+        content = await upload.read(self.settings.max_opening_stock_import_size_bytes + 1)
         if not content:
             raise bad_request("The opening-stock file is empty.", "EMPTY_OPENING_STOCK_FILE")
         if len(content) > self.settings.max_opening_stock_import_size_bytes:
@@ -60,6 +60,8 @@ class OpeningStockImportService:
         digest = hashlib.sha256(content).hexdigest()
         existing = self.db.query(OpeningStockImport).filter_by(store_id=store_id, file_sha256=digest).first()
         if existing:
+            if existing.status in {OpeningStockImportStatus.REVIEW_REQUIRED, OpeningStockImportStatus.READY_TO_CONFIRM}:
+                return self.revalidate(existing.id, current_user, request_id, confirm_shared_barcodes)
             return existing
 
         records, file_errors = self._parse(filename, content)
@@ -68,7 +70,7 @@ class OpeningStockImportService:
         batch = OpeningStockImport(
             store_id=store_id, uploaded_by=current_user.id, status=OpeningStockImportStatus.VALIDATING,
             original_filename=filename, stored_filename=stored_filename, content_type=upload.content_type,
-            file_size_bytes=len(content), file_sha256=digest,
+            file_size_bytes=len(content), file_sha256=digest, validation_summary={"shared_barcodes_approved": confirm_shared_barcodes},
         )
         self.db.add(batch)
         self.db.flush()
@@ -82,22 +84,49 @@ class OpeningStockImportService:
                 if identity:
                     seen[f"{identity_field}:{identity.casefold()}"] += 1
             row = OpeningStockImportRow(
-                opening_stock_import_id=batch.id, row_number=number, raw_data=raw, normalized_data=normalized,
+                id=uuid4(), opening_stock_import_id=batch.id, row_number=number, raw_data=raw, normalized_data=normalized,
                 validation_status="VALID" if not errors else "INVALID",
             )
             self.db.add(row)
-            self.db.flush()
             for field, code, message in errors:
                 self._error(batch.id, row.id, number, field, code, message)
+        self.db.flush()
         for row in self.db.query(OpeningStockImportRow).filter_by(opening_stock_import_id=batch.id).all():
             for identity_field in ("barcode", "sku"):
                 key = row.normalized_data.get(identity_field, "")
-                if key and seen[f"{identity_field}:{key.casefold()}"] > 1:
+                if key and seen[f"{identity_field}:{key.casefold()}"] > 1 and (identity_field != "barcode" or not confirm_shared_barcodes):
                     row.validation_status = "INVALID"
                     self._error(batch.id, row.id, row.row_number, identity_field, "DUPLICATE_ROW_IDENTITY", f"{identity_field.replace('_', ' ').title()} is duplicated in this file.")
         self._finish_validation(batch, current_user, request_id)
         self.db.commit()
         self.db.refresh(batch)
+        return batch
+
+    def revalidate(self, import_id: UUID, current_user: User, request_id: str | None, confirm_shared_barcodes: bool | None = None):
+        batch = self.db.query(OpeningStockImport).filter_by(id=import_id, store_id=self._store_id(current_user)).populate_existing().with_for_update().first()
+        if not batch:
+            raise not_found("Opening stock import")
+        if batch.status not in {OpeningStockImportStatus.REVIEW_REQUIRED, OpeningStockImportStatus.READY_TO_CONFIRM}:
+            raise conflict("Only an unposted import can be checked again.")
+        self._audit(batch.id, "PREVIEW_RECHECKED", current_user.id, request_id, {"previous_error_count": batch.error_count, "previous_summary": batch.validation_summary})
+        self.db.query(OpeningStockImportError).filter_by(opening_stock_import_id=batch.id).delete(synchronize_session=False)
+        if confirm_shared_barcodes is not None:
+            batch.validation_summary = {**batch.validation_summary, "shared_barcodes_approved": confirm_shared_barcodes}
+        rows = self.db.query(OpeningStockImportRow).filter_by(opening_stock_import_id=batch.id).all()
+        seen = {field: Counter(row.normalized_data.get(field, "").casefold() for row in rows) for field in ("sku", "barcode")}
+        for row in rows:
+            normalized, errors = self._normalize_row(row.raw_data)
+            row.normalized_data = normalized
+            for field in ("sku", "barcode"):
+                if seen[field][normalized.get(field, "").casefold()] > 1 and (field == "sku" or not batch.validation_summary.get("shared_barcodes_approved")):
+                    errors.append((field, "DUPLICATE_ROW_IDENTITY", f"{field.title()} is repeated. Check the file and explicitly approve shared barcodes when intended."))
+            row.validation_status = "INVALID" if errors else "VALID"
+            for field, code, message in errors:
+                self._error(batch.id, row.id, row.row_number, field, code, message)
+        # A malformed file has no rows; it can never become postable on recheck.
+        self.db.flush()
+        self._finish_validation(batch, current_user, request_id)
+        self.db.commit()
         return batch
 
     def list(self, current_user: User) -> list[OpeningStockImport]:
@@ -109,9 +138,9 @@ class OpeningStockImportService:
             raise not_found("Opening stock import")
         return batch
 
-    def detail_rows(self, import_id: UUID) -> tuple[list[OpeningStockImportRow], list[OpeningStockImportError]]:
-        rows = self.db.query(OpeningStockImportRow).filter_by(opening_stock_import_id=import_id).order_by(OpeningStockImportRow.row_number).all()
-        errors = self.db.query(OpeningStockImportError).filter_by(opening_stock_import_id=import_id).order_by(OpeningStockImportError.row_number).all()
+    def detail_rows(self, import_id: UUID, page: int = 1, page_size: int = 200) -> tuple[list[OpeningStockImportRow], list[OpeningStockImportError]]:
+        rows = self.db.query(OpeningStockImportRow).filter_by(opening_stock_import_id=import_id).order_by(OpeningStockImportRow.row_number).offset((page - 1) * page_size).limit(page_size).all()
+        errors = self.db.query(OpeningStockImportError).filter_by(opening_stock_import_id=import_id).filter((OpeningStockImportError.row_number.is_(None)) | (OpeningStockImportError.row_number.in_([row.row_number for row in rows]))).order_by(OpeningStockImportError.row_number).all()
         return rows, errors
 
     def confirm(self, import_id: UUID, payload: OpeningStockImportConfirm, current_user: User, request_id: str | None) -> OpeningStockImportReport:
@@ -228,13 +257,14 @@ class OpeningStockImportService:
         variant.current_stock += quantity
         variant.last_purchase_cost = unit_cost
         variant.average_cost = ((variant.average_cost * before) + (unit_cost * quantity)) / (before + quantity) if before else unit_cost
-        product.current_stock += quantity
+        self.db.flush()
+        product.current_stock = int(self.db.query(func.coalesce(func.sum(ProductVariant.current_stock), 0)).filter(ProductVariant.product_id == product.id, ProductVariant.store_id == store_id).scalar())
         product.purchase_price = unit_cost
         inventory = self.db.query(ProductInventory).filter_by(product_id=product.id, store_id=store_id).with_for_update().first()
         if not inventory:
             inventory = ProductInventory(product_id=product.id, store_id=store_id, current_stock=0)
             self.db.add(inventory)
-        inventory.current_stock += quantity
+        inventory.current_stock = product.current_stock
         lot = InventoryCostLot(store_id=store_id, product_variant_id=variant.id, received_quantity=quantity, remaining_quantity=quantity, unit_purchase_cost=unit_cost, effective_unit_cost=unit_cost, lot_reference=reference)
         self.db.add(lot)
         self.db.flush()
@@ -302,7 +332,7 @@ class OpeningStockImportService:
             if not data[money]:
                 continue
             value = self._decimal(data[money])
-            if value is None or value < 0 or value > Decimal("9999999999.99"):
+            if value is None or value < 0 or value > Decimal("9999999999.99") or value.as_tuple().exponent < -2:
                 errors.append((money, "INVALID_MONEY", "Use a non-negative money value with at most two decimals."))
             else:
                 data[money] = format(value.quantize(Decimal("0.01")), "f")
@@ -315,39 +345,66 @@ class OpeningStockImportService:
             errors.append(("quantity", "INVALID_QUANTITY", "Quantity must be a positive whole number no greater than 1,000,000."))
         if data["mrp"] and self._decimal(data["mrp"]) is not None and self._decimal(data["selling_price"]) is not None and self._decimal(data["selling_price"]) > self._decimal(data["mrp"]):
             errors.append(("selling_price", "SELLING_PRICE_EXCEEDS_MRP", "Selling price cannot exceed MRP."))
+        limits = {"product_name": 180, "category": 120, "subcategory": 120, "brand": 120, "sku": 80, "size": 60, "color": 80, "style_code": 100, "hsn_code": 20, "unit": 40, "warehouse": 120}
+        for field, limit in limits.items():
+            if len(data[field]) > limit:
+                errors.append((field, "TEXT_TOO_LONG", f"{field.replace('_', ' ').title()} must be {limit} characters or fewer."))
+        if data["gst_rate"]:
+            rate = self._decimal(data["gst_rate"])
+            if rate is None or not Decimal("0") <= rate <= Decimal("100") or rate.as_tuple().exponent < -2:
+                errors.append(("gst_rate", "INVALID_GST_RATE", "Use a tax rate from 0 to 100 with at most two decimals."))
         return data, errors
 
     @staticmethod
     def _decimal(value: str) -> Decimal | None:
         try:
-            return Decimal(value)
+            number = Decimal(value)
+            return number if number.is_finite() else None
         except (InvalidOperation, ValueError):
             return None
 
     def _finish_validation(self, batch: OpeningStockImport, current_user: User, request_id: str | None) -> None:
         rows = self.db.query(OpeningStockImportRow).filter_by(opening_stock_import_id=batch.id).all()
+        variants_by_sku, mappings_by_barcode = {}, {}
+        # Bounded batches keep 20,000-row previews off the per-row SQL path.
+        for offset in range(0, len(rows), 1000):
+            chunk = rows[offset:offset + 1000]
+            skus = [row.normalized_data.get("sku", "").casefold() for row in chunk]
+            barcodes = [row.normalized_data.get("barcode", "").casefold() for row in chunk]
+            variants = self.db.query(ProductVariant).options(joinedload(ProductVariant.product).joinedload(Product.category), joinedload(ProductVariant.product).joinedload(Product.subcategory), joinedload(ProductVariant.product).joinedload(Product.brand)).filter(ProductVariant.store_id == batch.store_id, func.lower(ProductVariant.internal_sku).in_(skus)).all()
+            variants_by_sku.update({variant.internal_sku.casefold(): variant for variant in variants})
+            mappings = self.db.query(ProductBarcode).filter(ProductBarcode.store_id == batch.store_id, func.lower(ProductBarcode.barcode).in_(barcodes)).all()
+            mappings_by_barcode.update({mapping.barcode.casefold(): mapping for mapping in mappings})
         for row in rows:
             if row.validation_status != "VALID":
                 continue
             data = row.normalized_data
-            product = self.db.query(Product).filter(func.lower(Product.sku) == data["sku"].casefold()).first()
-            variant = self.db.query(ProductVariant).filter(ProductVariant.store_id == batch.store_id, func.lower(ProductVariant.barcode) == data["barcode"].casefold()).first()
-            internal_sku_variant = self.db.query(ProductVariant).filter(ProductVariant.store_id == batch.store_id, func.lower(ProductVariant.internal_sku) == data["sku"].casefold()).first()
-            if product and product.store_id != batch.store_id:
-                row.validation_status = "INVALID"
-                self._error(batch.id, row.id, row.row_number, "sku", "SKU_FOREIGN_STORE", "SKU already belongs to another store.")
-            if variant and variant.product.sku and variant.product.sku.casefold() != data["sku"].casefold():
-                row.validation_status = "INVALID"
-                self._error(batch.id, row.id, row.row_number, "barcode", "BARCODE_PRODUCT_CONFLICT", "Barcode belongs to a different SKU.")
-            if internal_sku_variant and (not variant or internal_sku_variant.id != variant.id):
-                row.validation_status = "INVALID"
-                self._error(batch.id, row.id, row.row_number, "sku", "VARIANT_SKU_CONFLICT", "SKU is already used by a different variant in this store.")
-            if product and product.store_id == batch.store_id:
-                expected = (data["category"].casefold(), data["subcategory"].casefold(), data["brand"].casefold())
-                actual = (product.category.name.casefold(), product.subcategory.name.casefold(), product.brand.name.casefold())
-                if actual != expected:
+            variant = variants_by_sku.get(data["sku"].casefold())
+            if variant:
+                actual = (variant.product.name, variant.product.category.name, variant.product.subcategory.name, variant.product.brand.name, variant.size or "", variant.color or "", variant.style_code or "")
+                expected = tuple(data[key] for key in ("product_name", "category", "subcategory", "brand", "size", "color", "style_code"))
+                if tuple(str(value).strip().casefold() for value in actual) != tuple(value.casefold() for value in expected):
                     row.validation_status = "INVALID"
-                    self._error(batch.id, row.id, row.row_number, "category", "CATALOG_CONFLICT", "Existing SKU has different category, subcategory, or brand values.")
+                    self._error(batch.id, row.id, row.row_number, "sku", "SKU_VARIANT_CONFLICT", "This SKU belongs to another product or size. Check the product name, size and colour.")
+            mapping = mappings_by_barcode.get(data["barcode"].casefold())
+            if mapping and (not variant or mapping.product_variant_id != variant.id) and not batch.validation_summary.get("shared_barcodes_approved"):
+                row.validation_status = "INVALID"
+                self._error(batch.id, row.id, row.row_number, "barcode", "BARCODE_PRODUCT_CONFLICT", f"Barcode {data['barcode']} is already assigned. Check the product, or explicitly approve a shared barcode after checking every size.")
+        grouped = {}
+        for row in rows:
+            grouped.setdefault(row.normalized_data.get("barcode", "").casefold(), []).append(row)
+        for group in grouped.values():
+            if len(group) < 2:
+                continue
+            identities = set()
+            for row in group:
+                data = row.normalized_data
+                identity = tuple(data.get(key, "").casefold() for key in ("product_name", "category", "subcategory", "brand", "size", "color", "style_code"))
+                if identity in identities or not any(data.get(key) for key in ("size", "color", "style_code")):
+                    row.validation_status = "INVALID"
+                    self._error(batch.id, row.id, row.row_number, "size", "SHARED_SIZE_REQUIRED", "Each shared-barcode row needs a distinct size, colour or style. Combine identical items in one row.")
+                identities.add(identity)
+        self.db.flush()
         errors = self.db.query(OpeningStockImportError).filter_by(opening_stock_import_id=batch.id).all()
         backup_ok, backup_evidence = self._backup_gate()
         batch.backup_evidence = backup_evidence
@@ -360,7 +417,15 @@ class OpeningStockImportService:
         batch.total_quantity = sum(int(row.normalized_data.get("quantity", "0") or 0) for row in rows if row.validation_status == "VALID")
         batch.total_cost_value = sum((Decimal(row.normalized_data["purchase_cost"]) * int(row.normalized_data["quantity"]) for row in rows if row.validation_status == "VALID"), Decimal("0"))
         batch.total_retail_value = sum((Decimal(row.normalized_data["selling_price"]) * int(row.normalized_data["quantity"]) for row in rows if row.validation_status == "VALID"), Decimal("0"))
-        batch.validation_summary = {"required_headers": list(REQUIRED_HEADERS), "backup_gate_passed": backup_ok, "preview_generated_at": datetime.now(timezone.utc).isoformat()}
+        total_mrp = sum((Decimal(row.normalized_data.get("mrp") or row.normalized_data["selling_price"]) * int(row.normalized_data["quantity"]) for row in rows if row.validation_status == "VALID"), Decimal("0"))
+        families = {tuple(row.normalized_data.get(key, "").casefold() for key in ("product_name", "category", "subcategory", "brand")) for row in rows if row.validation_status == "VALID"}
+        names = list({family[0] for family in families})
+        existing_families = set()
+        for offset in range(0, len(names), 1000):
+            products = self.db.query(Product).options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand)).filter(Product.store_id == batch.store_id, func.lower(Product.name).in_(names[offset:offset + 1000])).all()
+            existing_families.update((product.name.casefold(), product.category.name.casefold(), product.subcategory.name.casefold(), product.brand.name.casefold()) for product in products)
+        batch.validation_summary = {**batch.validation_summary, "new_products": len(families - existing_families), "existing_products": len(families & existing_families), "warnings": ["Shared supplier barcodes are enabled. Check each size carefully."] if batch.validation_summary.get("shared_barcodes_approved") else []}
+        batch.validation_summary = {**batch.validation_summary, "total_mrp_value": str(total_mrp), "required_headers": list(REQUIRED_HEADERS), "backup_gate_passed": backup_ok, "preview_generated_at": datetime.now(timezone.utc).isoformat()}
         batch.status = OpeningStockImportStatus.READY_TO_CONFIRM if batch.row_count and batch.error_count == 0 else OpeningStockImportStatus.REVIEW_REQUIRED
         self._audit(batch.id, "VALIDATED", current_user.id, request_id, {"row_count": batch.row_count, "error_count": batch.error_count, "backup_gate_passed": backup_ok})
 
@@ -369,10 +434,8 @@ class OpeningStockImportService:
         store_id = batch.store_id
         result: Counter[str] = Counter()
         barcode = data["barcode"]
-        variant = self.db.query(ProductVariant).filter(ProductVariant.store_id == store_id, func.lower(ProductVariant.barcode) == barcode.casefold()).with_for_update().first()
-        product = variant.product if variant else self.db.query(Product).filter(Product.store_id == store_id, func.lower(Product.sku) == data["sku"].casefold()).with_for_update().first()
-        if variant and product and product.sku and product.sku.casefold() != data["sku"].casefold():
-            raise conflict(f"Row {row.row_number} barcode belongs to a different SKU.", "OPENING_STOCK_BARCODE_CONFLICT")
+        variant = self.db.query(ProductVariant).filter(ProductVariant.store_id == store_id, func.lower(ProductVariant.internal_sku) == data["sku"].casefold()).with_for_update().first()
+        product = self.db.query(Product).filter(Product.id == variant.product_id).with_for_update().one() if variant else None
         category = self._catalog(Category, store_id, data["category"])
         if not category:
             category = Category(store_id=store_id, name=data["category"])
@@ -387,21 +450,28 @@ class OpeningStockImportService:
             self.db.add(brand); self.db.flush()
         cost, selling = Decimal(data["purchase_cost"]), Decimal(data["selling_price"])
         mrp = Decimal(data["mrp"]) if data.get("mrp") else None
+        if product is None:
+            product = self.db.query(Product).filter(Product.store_id == store_id, Product.category_id == category.id,
+                Product.subcategory_id == subcategory.id, Product.brand_id == brand.id, func.lower(Product.name) == data["product_name"].casefold()).with_for_update().first()
         if not product:
             product = Product(store_id=store_id, category_id=category.id, subcategory_id=subcategory.id, brand_id=brand.id, sku=data["sku"], name=data["product_name"], size=data.get("size") or None, color=data.get("color") or None, purchase_price=cost, selling_price=selling, pricing_type=PricingType.MRP if mrp is not None else PricingType.OWN_PRICE, mrp=mrp, barcode=barcode, hsn_code=data.get("hsn_code") or None, gst_rate=self._decimal(data.get("gst_rate", "")), description=data.get("description") or None, unit=data.get("unit") or "Each", warehouse=data.get("warehouse") or None)
             self.db.add(product); self.db.flush()
             result["created_products"] += 1
         if not variant:
             identity = "|".join((str(product.id), data.get("size", "").casefold(), data.get("color", "").casefold(), data.get("style_code", "").casefold(), data["sku"].casefold(), barcode.casefold(), str(mrp or selling), str(selling)))
-            variant = ProductVariant(store_id=store_id, product_id=product.id, size=data.get("size") or None, color=data.get("color") or None, style_code=data.get("style_code") or None, internal_sku=data["sku"], barcode=barcode, identity_key=identity, mrp=mrp, selling_price=selling, last_purchase_cost=cost, average_cost=cost, current_stock=0)
+            variant = ProductVariant(store_id=store_id, product_id=product.id, size=data.get("size") or None, color=data.get("color") or None, style_code=data.get("style_code") or None, internal_sku=data["sku"], barcode=(barcode if not self.db.query(ProductVariant.id).filter(ProductVariant.store_id == store_id, ProductVariant.barcode == barcode).first() else f"UNASSIGNED-{uuid4().hex}"), identity_key=identity, mrp=mrp, selling_price=selling, last_purchase_cost=cost, average_cost=cost, current_stock=0)
             self.db.add(variant); self.db.flush()
             result["created_variants"] += 1
         mapping = self.db.query(ProductBarcode).filter(ProductBarcode.store_id == store_id, func.lower(ProductBarcode.barcode) == barcode.casefold()).with_for_update().first()
-        if mapping and mapping.product_variant_id != variant.id:
+        if mapping and mapping.product_variant_id != variant.id and not batch.validation_summary.get("shared_barcodes_approved"):
             raise conflict(f"Row {row.row_number} barcode mapping changed during posting.", "OPENING_STOCK_BARCODE_MAPPING_CONFLICT")
         if not mapping:
             self.db.add(ProductBarcode(store_id=store_id, product_id=product.id, product_variant_id=variant.id, barcode=barcode, mrp=mrp, default_selling_price=selling, verified=True, verified_by=current_user.id, verified_at=datetime.now(timezone.utc)))
             result["created_barcodes"] += 1
+        if mapping and mapping.product_variant_id != variant.id:
+            target = self.db.query(ProductBarcodeVariantTarget).filter_by(product_barcode_id=mapping.id, product_variant_id=variant.id).first()
+            if not target:
+                self.db.add(ProductBarcodeVariantTarget(store_id=store_id, product_barcode_id=mapping.id, product_variant_id=variant.id, created_by=current_user.id))
         quantity = int(data["quantity"])
         before = variant.current_stock
         variant.current_stock += quantity
@@ -428,9 +498,7 @@ class OpeningStockImportService:
         if self.settings.allow_test_opening_stock_import_bypass and self.settings.app_env.lower() in {"test", "testing"}:
             return True, {"status": "test_bypass", "database_backup": "not_checked"}
         status_read = BackupStatusService(self.settings.backup_status_dir).status()
-        database = next((item for item in status_read.components if item.component == "database"), None)
-        ok = bool(status_read.configured and database and database.available and database.status.lower() == "success")
-        return ok, {"configured": status_read.configured, "database_backup": database.status if database else "unknown"}
+        return status_read.posting_allowed, {"configured": status_read.configured, "health": status_read.health, "restore_proven": status_read.restore_proven, "issues": status_read.issues}
 
     def _write_evidence_file(self, stored_filename: str, content: bytes) -> None:
         directory = self.settings.opening_stock_import_dir

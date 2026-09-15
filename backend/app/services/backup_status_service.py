@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -63,4 +64,31 @@ class BackupStatusService:
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 logger.warning("Could not read backup status for %s: %s", component, exc)
                 components.append(BackupComponentStatus(component=component, status="unknown", available=False))
-        return BackupStatusRead(configured=True, components=components)
+        required = {"database": 26, "uploads": 26, "offsite": 26, "database_restore": 192, "upload_restore": 192}
+        issues = []
+        proven = {}
+        for component in components:
+            if component.component not in required:
+                continue
+            timestamp = next((component.details.get(key) for key in ("finished_at", "timestamp", "checked_at") if component.details.get(key)), None)
+            fresh = self._fresh(timestamp, required[component.component])
+            proven[component.component] = component.available and component.status.lower() == "success" and fresh
+            if not proven[component.component]:
+                issues.append(f"{component.component.replace('_', ' ').title()}: recent successful evidence is required.")
+        failed = any(item.status.lower() in {"failed", "failure", "error", "critical"} for item in components)
+        complete = all(proven.get(name, False) for name in required)
+        return BackupStatusRead(configured=True, components=components,
+            health="FAILED" if failed else "HEALTHY" if complete else "WARNING",
+            restore_proven=proven.get("database_restore", False) and proven.get("upload_restore", False),
+            posting_allowed=complete and not failed, issues=issues)
+
+    @staticmethod
+    def _fresh(timestamp: Any, max_age_hours: int) -> bool:
+        try:
+            value = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+            if value.tzinfo is None:
+                return False
+            age = (datetime.now(timezone.utc) - value).total_seconds()
+            return -300 <= age <= max_age_hours * 3600
+        except (TypeError, ValueError, OverflowError):
+            return False

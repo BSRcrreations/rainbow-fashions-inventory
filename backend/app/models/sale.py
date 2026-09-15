@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -24,6 +24,8 @@ class Sale(Base):
     customer_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL"), index=True)
     customer_name: Mapped[Optional[str]] = mapped_column(String(180), index=True)
     payment_mode: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    payment_reference: Mapped[Optional[str]] = mapped_column(String(140))
+    exchange_return_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("sale_returns.id", ondelete="RESTRICT"), unique=True)
     cashier_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     discount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
@@ -51,7 +53,7 @@ class Sale(Base):
     cashier = relationship("User", back_populates="sales", foreign_keys=[cashier_id])
     items = relationship("SaleItem", back_populates="sale", cascade="all, delete-orphan")
     audits = relationship("SaleAudit", back_populates="sale", cascade="all, delete-orphan")
-    returns = relationship("SaleReturn", back_populates="sale", cascade="all, delete-orphan")
+    returns = relationship("SaleReturn", back_populates="sale", cascade="all, delete-orphan", foreign_keys="SaleReturn.sale_id")
 
     @property
     def grand_total(self) -> Decimal:
@@ -70,6 +72,16 @@ class SaleItem(Base):
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     unit_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    discount_type: Mapped[str] = mapped_column(String(20), nullable=False, default="NONE")
+    discount_value: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    hsn_snapshot: Mapped[Optional[str]] = mapped_column(String(40))
+    gst_rate_snapshot: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
+    taxable_value: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    cgst_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    sgst_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    igst_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    brand_snapshot: Mapped[Optional[str]] = mapped_column(String(120))
     sku_snapshot: Mapped[Optional[str]] = mapped_column(String(80))
     barcode_snapshot: Mapped[Optional[str]] = mapped_column(String(80))
     size_snapshot: Mapped[Optional[str]] = mapped_column(String(60))
@@ -112,7 +124,7 @@ class SaleReturn(Base):
     created_by: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    sale = relationship("Sale", back_populates="returns")
+    sale = relationship("Sale", back_populates="returns", foreign_keys=[sale_id])
     items = relationship("SaleReturnItem", back_populates="sale_return", cascade="all, delete-orphan")
 
 
@@ -122,6 +134,7 @@ class SaleReturnItem(Base):
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     sale_return_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("sale_returns.id", ondelete="CASCADE"), nullable=False, index=True)
     sale_item_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("sale_items.id", ondelete="RESTRICT"), nullable=False, index=True)
+    restock: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     refund_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
 

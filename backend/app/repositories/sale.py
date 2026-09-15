@@ -9,6 +9,7 @@ from sqlalchemy.orm import joinedload
 
 from app.models.sale import Sale, SaleAudit, SaleReturn
 from app.models.user import User
+from app.models.customer import Customer
 from app.repositories.base import BaseRepository
 
 
@@ -50,6 +51,7 @@ class SaleRepository(BaseRepository[Sale]):
                 or_(
                     Sale.invoice_number.ilike(pattern),
                     Sale.customer_name.ilike(pattern),
+                    Sale.customer_id.in_(self.db.query(Customer.id).filter(Customer.store_id == store_id, Customer.phone.ilike(pattern))),
                     Sale.payment_mode.ilike(pattern),
                     User.full_name.ilike(pattern),
                 )
@@ -77,4 +79,4 @@ class SaleRepository(BaseRepository[Sale]):
         return self.db.query(SaleAudit).join(Sale).filter(SaleAudit.sale_id == sale_id, Sale.store_id == store_id).order_by(SaleAudit.created_at.desc()).all()
 
     def list_returns(self, sale_id: UUID, store_id: UUID) -> list[SaleReturn]:
-        return self.db.query(SaleReturn).join(Sale).filter(SaleReturn.sale_id == sale_id, Sale.store_id == store_id).order_by(SaleReturn.created_at.desc()).all()
+        return self.db.query(SaleReturn).join(Sale, SaleReturn.sale_id == Sale.id).filter(SaleReturn.sale_id == sale_id, Sale.store_id == store_id).order_by(SaleReturn.created_at.desc()).all()

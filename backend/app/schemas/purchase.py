@@ -203,6 +203,7 @@ class PurchaseItemRead(PurchaseItemReview, ORMBaseModel):
 
 class PurchaseRead(ORMBaseModel):
     id: UUID
+    entry_type: str = "FORMAL"
     store_id: Optional[UUID]
     supplier_id: Optional[UUID]
     uploaded_file_id: Optional[UUID]
@@ -350,3 +351,58 @@ class PurchaseFromDocumentCreate(BaseModel):
 
 PurchaseDetailRead.model_rebuild()
 PurchaseValidationRead.model_rebuild()
+
+
+class QuickPurchaseItem(BaseModel):
+    product_variant_id: UUID
+    quantity: int = Field(gt=0)
+    purchase_cost: Decimal = Field(ge=0)
+    selling_price: Optional[Decimal] = Field(default=None, ge=0)
+    mrp: Optional[Decimal] = Field(default=None, ge=0)
+
+
+class QuickPurchaseCreate(BaseModel):
+    supplier_id: Optional[UUID] = None
+    supplier_name: Optional[str] = Field(default=None, max_length=180)
+    purchase_date: Optional[date_type] = None
+    invoice_number: Optional[str] = Field(default=None, max_length=120)
+    notes: Optional[str] = Field(default=None, max_length=1000)
+    payment_mode: Literal["CASH", "UPI", "CARD", "BANK", "CREDIT", "OTHER"] = "CASH"
+    amount_paid: Decimal = Field(default=Decimal("0"), ge=0)
+    version: Optional[int] = Field(default=None, ge=1)
+    items: list[QuickPurchaseItem] = Field(default_factory=list, max_length=1000)
+
+
+class PurchaseReturnItemCreate(BaseModel):
+    purchase_item_id: UUID
+    quantity: int = Field(gt=0)
+
+
+class PurchaseReturnCreate(BaseModel):
+    reason: str = Field(min_length=3, max_length=300)
+    credit_note: Optional[str] = Field(default=None, max_length=140)
+    items: list[PurchaseReturnItemCreate] = Field(min_length=1)
+
+
+class PurchaseReturnItemRead(ORMBaseModel):
+    id: UUID
+    purchase_item_id: UUID
+    product_variant_id: UUID
+    quantity: int
+    credit_amount: Decimal
+
+
+class PurchaseReturnRead(ORMBaseModel):
+    id: UUID
+    purchase_id: UUID
+    supplier_id: Optional[UUID] = None
+    reason: str
+    credit_note: Optional[str] = None
+    credit_amount: Decimal
+    created_at: datetime
+    items: list[PurchaseReturnItemRead]
+
+
+class PurchaseDraftSave(BaseModel):
+    header: PurchasePatch
+    items: list[PurchaseItemReview] = Field(min_length=1, max_length=20000)

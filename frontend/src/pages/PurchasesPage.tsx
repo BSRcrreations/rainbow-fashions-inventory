@@ -1,6 +1,6 @@
 import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Ban, CheckCircle2, ExternalLink, Eye, FileSearch, Pencil, RefreshCw, ScanLine, Trash2 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { api } from "../api/client";
 import { ApiError } from "../api/client";
 import EmptyState from "../components/EmptyState";
@@ -55,7 +55,7 @@ export default function PurchasesPage() {
       const job = await api.get<PurchaseDocumentJob>(`/purchase-documents/jobs/${jobId}`);
       setProcessing(job);
       if (job.status === "FAILED") {
-        setError(`${job.error_message ?? "Invoice recognition failed"}${job.request_id ? ` Reference: ${job.request_id}` : ""}`);
+        setError(job.error_message ?? "Invoice recognition failed. Use Quick Purchase to attach the photo and enter the items manually.");
         return;
       }
       if (job.status === "REVIEW_REQUIRED" || job.status === "COMPLETED") {
@@ -134,7 +134,7 @@ export default function PurchasesPage() {
         subtitle="Invoice intake, review, and stock confirmation"
         actions={<label className={`focus-ring inline-flex h-control cursor-pointer items-center gap-2 rounded-lg bg-primary-700 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-800 ${uploading ? "pointer-events-none opacity-60" : ""}`}><ScanLine size={18} />{uploading ? "Uploading" : "Upload invoice"}<input className="hidden" type="file" accept=".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,image/heic,image/heif,image/webp,application/pdf" capture="environment" onChange={(event) => void upload(event)} disabled={uploading} /></label>}
       />
-      {error ? <div className="mb-4"><ErrorState message={error} /></div> : null}
+      {error ? <div className="mb-4"><ErrorState message={error} /><Link className="mt-3 inline-flex min-h-12 items-center rounded-lg border px-4 font-semibold" to="/purchases/quick">Enter manually with photo in Quick Purchase</Link></div> : null}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><label className="flex items-center gap-2 text-sm font-medium text-muted">Status<select aria-label="Purchase status" className="field-input h-10 w-auto" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setSelectedIds(new Set()); setLoading(true); }}><option value="">All</option><option value="DRAFT">Draft</option><option value="REVIEW_REQUIRED">Review required</option><option value="CONFIRMED">Confirmed</option><option value="CANCELLED">Cancelled</option><option value="VOIDED">Voided</option><option value="FAILED">Failed</option></select></label></div>
       {user?.role === "OWNER" && selectedIds.size ? <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-primary-200 bg-primary-50 p-3 text-sm font-semibold text-primary-900"><span>{selectedIds.size} purchases selected</span><Button size="sm" variant="secondary" onClick={() => setSelectedIds(new Set())}>Clear selection</Button><Button size="sm" variant="destructive" onClick={() => void beginDelete(Array.from(selectedIds))}><Trash2 size={16} /> Delete selected</Button></div> : null}
       {processing ? <section className="ds-surface mb-5 p-4"><div className="flex items-center justify-between gap-4"><div><div className="font-semibold">{processing.status === "FAILED" ? "Recognition needs attention" : "Processing invoice"}</div><div className="mt-1 text-sm text-muted">{processing.message}</div></div><strong>{processing.progress}%</strong></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full transition-all ${processing.status === "FAILED" ? "bg-error" : "bg-primary-600"}`} style={{ width: `${processing.progress}%` }} /></div></section> : null}

@@ -5,6 +5,10 @@ class UserRole(str, Enum):
     OWNER = "OWNER"
     MANAGER = "MANAGER"
     STAFF = "STAFF"
+    CASHIER = "CASHIER"
+    STOCK_STAFF = "STOCK_STAFF"
+    ACCOUNTANT = "ACCOUNTANT"
+    VIEWER = "VIEWER"
 
 
 class PricingType(str, Enum):
@@ -38,6 +42,7 @@ class StockMovementType(str, Enum):
 
 
 class StockScanMode(str, Enum):
+    DAILY_STOCK = "DAILY_STOCK"
     PURCHASE_RECEIVING = "PURCHASE_RECEIVING"
     OPENING_STOCK = "OPENING_STOCK"
     PHYSICAL_COUNT = "PHYSICAL_COUNT"

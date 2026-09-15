@@ -1,0 +1,2 @@
+product_name,category,subcategory,brand,sku,barcode,quantity,purchase_cost,selling_price,size,color,style_code,mrp,hsn_code,gst_rate,description,unit,warehouse
+Example Leggings,Women,Leggings,Example Brand,EXAMPLE-M,EXAMPLE001,10,200.00,350.00,M,Black,,399.00,,,REPLACE THIS EXAMPLE ROW,Each,Main store

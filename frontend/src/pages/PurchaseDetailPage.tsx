@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, CheckCircle2, ClipboardCheck, Download, FileText, Pencil, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApiError, api } from "../api/client";
-import BarcodeScannerInput from "../components/BarcodeScannerInput";
+import VariantPicker from "../components/VariantPicker";
+import { useAuth } from "../hooks/useAuth";
+import { draftKey, readDraft, writeDraft, removeDraft, prepareSubmission } from "../utils/draftStorage";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ErrorState from "../components/ErrorState";
 import { SkeletonRows } from "../components/LoadingState";
@@ -10,7 +12,7 @@ import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { useToast } from "../components/ToastProvider";
 import { Button } from "../components/ui/button";
-import type { CategoryHierarchy, Product, ProductVariantBarcode, Purchase, PurchaseDetail, PurchaseItem } from "../types";
+import type { CategoryHierarchy, Product, SaleCatalogProduct, SaleCatalogVariant, Purchase, PurchaseDetail, PurchaseItem } from "../types";
 import { money, shortDate } from "../utils/format";
 import { addMoney, addQuantity, previewInvoiceDiscount, previewPurchaseLine, subtractMoney } from "../utils/purchaseDiscount";
 
@@ -31,16 +33,17 @@ function draftFrom(purchase: PurchaseDetail): PurchaseDetail {
   return { ...purchase, items: purchase.items.map((item) => ({ ...item })) };
 }
 
-function itemChanged(original: PurchaseItem, next: PurchaseItem): boolean {
-  const fields: Array<keyof PurchaseItem> = ["product_name", "barcode", "supplier_product_code", "internal_sku", "style_code", "hsn_sac", "category_id", "category_name", "brand_id", "brand_name", "unit", "size", "color", "quantity", "purchase_price", "list_unit_price", "discount", "discount_type", "discount_percentage", "discount_per_unit", "discount_amount", "discount_reason", "free_quantity", "invoiced_unit_price", "tax_rate", "tax_amount", "mrp", "selling_price"];
-  return fields.some((field) => String(original[field] ?? "") !== String(next[field] ?? ""));
-}
-
 export default function PurchaseDetailPage() {
   const { purchaseId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
+  const { user } = useAuth();
+  const localKey = draftKey(user, `formal-purchase:${purchaseId}`);
+  const [draftSaved, setDraftSaved] = useState(true);
+  const [recovered, setRecovered] = useState(false);
+  const [pending, setPending] = useState(() => Boolean(readDraft(`${localKey}:save`, null)));
+  const savingLock = useRef(false);
   const [purchase, setPurchase] = useState<PurchaseDetail | null>(null);
   const [draft, setDraft] = useState<PurchaseDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -57,7 +60,8 @@ export default function PurchaseDetailPage() {
   const [catalog, setCatalog] = useState<CategoryHierarchy[]>([]);
   const [catalogError, setCatalogError] = useState("");
 
-  const editable = Boolean(purchase && purchase.status !== "CONFIRMED" && purchase.status !== "CANCELLED");
+  const editable = Boolean(purchase && !["CONFIRMED", "CANCELLED", "VOIDED"].includes(purchase.status));
+  useEffect(() => { if (dirty && draft && editable) setDraftSaved(writeDraft(localKey, draft)); }, [dirty, draft, editable, localKey]);
 
   const load = useCallback(async () => {
     if (!purchaseId) return;
@@ -65,13 +69,17 @@ export default function PurchaseDetailPage() {
       setError(null);
       const response = await api.get<PurchaseDetail>(`/purchases/${purchaseId}`);
       setPurchase(response);
-      setDraft(draftFrom(response));
+      const saved = readDraft<PurchaseDetail | null>(localKey, null);
+      const canEdit = !["CONFIRMED", "CANCELLED", "VOIDED"].includes(response.status);
+      setDraft(canEdit && saved ? saved : draftFrom(response));
+      if (canEdit && saved) { setEditing(true); setDirty(true); setRecovered(true); }
+      else if (!canEdit) { removeDraft(localKey); removeDraft(`${localKey}:save`); setPending(false); }
     } catch (err) {
       setError(toPurchaseError(err, "Unable to load purchase details"));
     } finally {
       setLoading(false);
     }
-  }, [purchaseId]);
+  }, [purchaseId, localKey]);
 
   useEffect(() => {
     void load();
@@ -89,10 +97,10 @@ export default function PurchaseDetailPage() {
     return () => { if (currentUrl) URL.revokeObjectURL(currentUrl); };
   }, [purchaseId, purchase?.document]);
   useEffect(() => {
-    const warn = (event: BeforeUnloadEvent) => { if (dirty) { event.preventDefault(); event.returnValue = ""; } };
+    const warn = (event: BeforeUnloadEvent) => { if (dirty && !draftSaved) { event.preventDefault(); event.returnValue = ""; } };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
+  }, [dirty, draftSaved]);
 
   const totals = useMemo(() => {
     if (!draft) return { quantity: "0", subtotal: "0.00", tax: "0.00", total: "0.00" };
@@ -178,10 +186,13 @@ export default function PurchaseDetailPage() {
     setDirty(true);
   }
 
-  async function scanPurchaseItem(barcode: string, signal: AbortSignal) {
-    if (!editing) throw new Error("Click Edit before scanning items into this purchase draft");
-    const variant = await api.get<ProductVariantBarcode>(`/product-variants/by-barcode/${encodeURIComponent(barcode)}`, { signal });
-    const product = await api.get<Product>(`/products/${variant.product_id}`, { signal });
+  async function addSelectedVariant(_catalog: SaleCatalogProduct, selected: SaleCatalogVariant) {
+    if (!editing || pending) return;
+    try {
+    const product = await api.get<Product>(`/products/${selected.product_id}`);
+    const variant = { ...selected, variant_id: selected.variant_id, product_name: product.name, product_id: product.id,
+      package_quantity: selected.scan_unit === "PACK" ? selected.pieces_per_pack || 1 : 1,
+      category_id: product.category_id, category: product.category?.name, brand_id: product.brand_id, brand: product.brand?.name };
     const amount = variant.package_quantity;
     setDraft((current) => {
       if (!current) return current;
@@ -200,6 +211,7 @@ export default function PurchaseDetailPage() {
     });
     setDirty(true); setError(null);
     toast.success(`${variant.product_name} added to draft${amount > 1 ? ` (${amount} base pieces)` : ""}`);
+    } catch (cause) { setError(toPurchaseError(cause, "Could not add this size.")); }
   }
 
   function startEditing() {
@@ -212,6 +224,7 @@ export default function PurchaseDetailPage() {
 
   function discardEdits() {
     if (dirty && !window.confirm("Discard unsaved purchase changes?")) return;
+    removeDraft(localKey); removeDraft(`${localKey}:save`); setPending(false); setRecovered(false);
     setDraft(purchase ? draftFrom(purchase) : null);
     setEditing(false);
     setDirty(false);
@@ -234,36 +247,29 @@ export default function PurchaseDetailPage() {
   }
 
   async function save() {
-    if (!purchase || !draft) return;
+    if (!purchase || !draft || savingLock.current) return;
     if (!draft.invoice_number?.trim()) { setValidation(["Enter the supplier invoice number."]); return; }
     if (!draft.items.length) { setValidation(["Add at least one purchase item."]); return; }
-    setSaving(true);
+    savingLock.current = true; setSaving(true);
     setError(null);
     try {
-      const headerChanged = (["supplier_name", "invoice_number", "purchase_date", "invoice_date", "received_date", "due_date", "payment_mode", "amount_paid", "place_of_supply", "purchase_reference", "notes", "warehouse", "currency", "packaging_amount", "freight_amount", "round_off", "invoice_discount_type", "invoice_discount_percentage", "invoice_discount_amount", "invoice_discount_reason", "invoice_discount_allocation_method", "invoice_tax_rate"] as HeaderField[]).some((field) => String(purchase[field] ?? "") !== String(draft[field] ?? ""));
-      let current: Purchase = purchase;
-      if (headerChanged) current = await api.patch(`/purchases/${purchase.id}`, {
-        supplier_name: draft.supplier_name || null, invoice_number: draft.invoice_number.trim(), purchase_date: draft.purchase_date, invoice_date: draft.invoice_date || null, received_date: draft.received_date || null, due_date: draft.due_date || null, payment_mode: draft.payment_mode, amount_paid: draft.amount_paid, place_of_supply: draft.place_of_supply || null, purchase_reference: draft.purchase_reference || null, notes: draft.notes || null, warehouse: draft.warehouse || null, currency: draft.currency, packaging_amount: draft.packaging_amount, freight_amount: draft.freight_amount, round_off: draft.round_off, invoice_discount_type: draft.invoice_discount_type ?? "NONE", invoice_discount_percentage: draft.invoice_discount_percentage ?? "0", invoice_discount_amount: draft.invoice_discount_amount ?? "0", invoice_discount_reason: draft.invoice_discount_reason || null, invoice_discount_allocation_method: draft.invoice_discount_allocation_method ?? "BY_ITEM_VALUE", invoice_tax_rate: draft.invoice_tax_rate ?? "0", version: purchase.version, reason: "Purchase details updated",
-      });
-      const originalIds = new Set(purchase.items.flatMap((item) => item.id ? [item.id] : []));
-      const draftIds = new Set(draft.items.flatMap((item) => item.id ? [item.id] : []));
-      for (const id of originalIds) if (!draftIds.has(id)) current = await api.delete<Purchase>(`/purchases/${purchase.id}/items/${id}?version=${current.version}`);
-      for (const item of draft.items) {
-        const original = item.id ? purchase.items.find((candidate) => candidate.id === item.id) : undefined;
-        if (item.id && original && !itemChanged(original, item)) continue;
-        const payload = { ...item, version: current.version, reason: "Purchase item updated" };
-        current = item.id ? await api.patch<Purchase>(`/purchases/${purchase.id}/items/${item.id}`, payload) : await api.post<Purchase>(`/purchases/${purchase.id}/items`, payload);
-      }
+      const submission = prepareSubmission(`${localKey}:save`, { header: {
+        supplier_name: draft.supplier_name || null, invoice_number: draft.invoice_number.trim(), purchase_date: draft.purchase_date, invoice_date: draft.invoice_date || null, received_date: draft.received_date || null, due_date: draft.due_date || null, payment_mode: draft.payment_mode, amount_paid: draft.amount_paid, place_of_supply: draft.place_of_supply || null, purchase_reference: draft.purchase_reference || null, notes: draft.notes || null, warehouse: draft.warehouse || null, currency: draft.currency, packaging_amount: draft.packaging_amount, freight_amount: draft.freight_amount, round_off: draft.round_off, invoice_discount_type: draft.invoice_discount_type ?? "NONE", invoice_discount_percentage: draft.invoice_discount_percentage ?? "0", invoice_discount_amount: draft.invoice_discount_amount ?? "0", invoice_discount_reason: draft.invoice_discount_reason || null, invoice_discount_allocation_method: draft.invoice_discount_allocation_method ?? "BY_ITEM_VALUE", invoice_tax_rate: draft.invoice_tax_rate ?? "0", version: draft.version, reason: "Purchase details updated",
+      }, items: draft.items });
+      setPending(true);
+      await api.put(`/purchases/${purchase.id}/draft`, submission.payload, { "Idempotency-Key": submission.key });
+      removeDraft(localKey); removeDraft(`${localKey}:save`); setPending(false); setRecovered(false);
       toast.success("Purchase draft saved");
       setEditing(false);
       setDirty(false);
       await load();
     } catch (err) {
+      if (err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408) { removeDraft(`${localKey}:save`); setPending(false); }
       const message = err instanceof Error ? err.message : "Unable to save purchase changes";
       setError(toPurchaseError(err, "Unable to save purchase changes"));
       toast.error(message);
     } finally {
-      setSaving(false);
+      savingLock.current = false; setSaving(false);
     }
   }
 
@@ -307,7 +313,10 @@ export default function PurchaseDetailPage() {
   if (!purchase || !draft) return <ErrorState message={error?.message || "Purchase not found"} code={error?.code} requestId={error?.requestId} fields={error?.fields} />;
 
   return <>
-    <PageHeader title="Purchase Details" subtitle={purchase.invoice_number || "Invoice number pending"} actions={<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => { if (!dirty || window.confirm("Discard unsaved purchase changes?")) navigate("/purchases"); }}><ArrowLeft size={16} /> Back</Button>{editable && !editing ? <Button onClick={startEditing}><Pencil size={16} /> Edit</Button> : null}</div>} />
+    <PageHeader title="Purchase Details" subtitle={purchase.invoice_number || "Invoice number pending"} actions={<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => navigate("/purchases")}><ArrowLeft size={16} /> Back</Button>{editable && !editing ? <Button onClick={startEditing}><Pencil size={16} /> Edit</Button> : null}</div>} />
+    {editing && <p role="status" className="mb-4 rounded-lg bg-emerald-50 p-4">{draftSaved ? recovered ? "Unfinished purchase restored. Your changes are saved on this device." : "Saved automatically on this device. Inventory changes only after confirmation." : "Your device could not save the draft. Keep this page open and free some storage."}</p>}
+    {pending && <p role="alert" className="mb-4 rounded-lg bg-amber-50 p-4">The last save is not yet confirmed. Press Save draft to recover the original result before changing this entry.</p>}
+    <fieldset disabled={saving || pending} className="min-w-0">
     {error ? <div className="mb-4"><ErrorState message={error.message} code={error.code} requestId={error.requestId} fields={error.fields} /></div> : null}
     {validation.length ? <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><strong>Review required</strong><ul className="mt-1 list-disc pl-5">{validation.map((message) => <li key={message}>{message}</li>)}</ul></div> : null}
     {catalogError ? <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Categories and brands could not be loaded. Refresh before saving a new purchase item.</div> : null}
@@ -322,22 +331,22 @@ export default function PurchaseDetailPage() {
     </div>
     {/* Legacy product setup UI retained in merge history; item-level category and brand selectors below are the active workflow.
     {setupGroups.length ? <section id="product-setup-required" className="ds-surface mt-5 scroll-mt-5 p-5"><div><h2 className="text-lg font-semibold">Product setup required</h2><p className="mt-1 text-sm text-muted">Select category and brand once for each new base product. Sizes stay as variants.</p></div><div className="mt-5 space-y-4">{setupGroups.map((group) => { const value = setupValue(group); const category = categories.find((item) => item.id === value.category_id); const brands = category?.brands.filter((brand) => brand.is_active) ?? []; return <div key={group.key} className="rounded-lg border border-border bg-surface-subtle p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="font-semibold">{value.product_name || group.items[0].product_name}</div><div className="mt-1 text-sm text-muted">New product required · Variants: {group.items.map((item) => item.size || "Standard").join(", ")}</div></div><StatusBadge value="NEW_PRODUCT_REQUIRED" /></div>{editing ? <div className="mt-4 grid gap-3 md:grid-cols-3"><label className="field-label">Product name<span>*</span><input className="field-input" value={value.product_name} onChange={(event) => setClassificationDrafts((current) => ({ ...current, [group.key]: { ...value, product_name: event.target.value } }))} /></label><label className="field-label">Category<span>*</span><select className="field-input" value={value.category_id} onChange={(event) => setClassificationDrafts((current) => ({ ...current, [group.key]: { ...value, category_id: event.target.value, brand_id: "" } }))}><option value="">Select category</option>{categories.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" className="mt-1 text-xs font-semibold text-primary-700" onClick={() => { setCatalogEditor({ type: "category", groupKey: group.key }); setCatalogName(""); }}>Create category</button></label><label className="field-label">Brand<span>*</span><select className="field-input" value={value.brand_id} disabled={!value.category_id} onChange={(event) => setClassificationDrafts((current) => ({ ...current, [group.key]: { ...value, brand_id: event.target.value } }))}><option value="">Select brand</option>{brands.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" className="mt-1 text-xs font-semibold text-primary-700" disabled={!value.category_id} onClick={() => { setCatalogEditor({ type: "brand", groupKey: group.key }); setCatalogName(""); }}>Create brand</button></label></div> : <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3"><Display label="Product" value={value.product_name} /><Display label="Category" value={category?.name} /><Display label="Brand" value={brands.find((item) => item.id === value.brand_id)?.name} /></div>}{editing ? <div className="mt-4 flex justify-end"><Button size="sm" onClick={() => void saveClassification(group)} disabled={classificationSaving === group.key}>{classificationSaving === group.key ? "Saving" : "Save product setup"}</Button></div> : null}</div>; })}</div></section> : null}
-    <section className="ds-surface mt-5 overflow-hidden"><div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4"><div><h2 className="text-lg font-semibold">Product items</h2><p className="text-sm text-muted">Quantities and costs remain editable until stock is confirmed.</p></div>{editing ? <Button size="sm" variant="secondary" onClick={() => { setDraft((current) => current ? { ...current, items: [...current.items, blankItem()] } : current); setDirty(true); }}><Plus size={16} /> Add item</Button> : null}</div><div className="overflow-x-auto"><table className="ds-table min-w-[1280px]"><thead><tr><th>#</th><th>Product</th><th>Barcode / SKU</th><th>HSN</th><th>Size</th><th>Colour</th><th className="text-right">Qty</th><th>Unit</th><th className="text-right">Unit cost</th><th className="text-right">Discount</th><th className="text-right">Tax %</th><th className="text-right">Tax</th><th className="text-right">Line total</th><th>Match</th>{editing ? <th /> : null}</tr></thead><tbody>{draft.items.map((item, index) => <tr key={item.id ?? `new-${index}`}><td>{index + 1}</td><ItemInput editing={editing} value={item.product_name} onChange={(value) => updateItem(index, "product_name", value)} /><ItemInput editing={editing} value={item.barcode ?? item.supplier_product_code ?? ""} onChange={(value) => updateItem(index, "barcode", value)} /><ItemInput editing={editing} value={item.hsn_sac ?? ""} onChange={(value) => updateItem(index, "hsn_sac", value)} /><ItemInput editing={editing} value={item.size} onChange={(value) => updateItem(index, "size", value)} /><ItemInput editing={editing} value={item.color} onChange={(value) => updateItem(index, "color", value)} /><ItemInput editing={editing} value={String(item.quantity)} type="number" className="text-right" onChange={(value) => updateItem(index, "quantity", value)} /><ItemInput editing={editing} value={item.unit} onChange={(value) => updateItem(index, "unit", value)} /><ItemInput editing={editing} value={item.purchase_price} type="number" className="text-right" onChange={(value) => updateItem(index, "purchase_price", value)} /><ItemInput editing={editing} value={item.discount} type="number" className="text-right" onChange={(value) => updateItem(index, "discount", value)} /><ItemInput editing={editing} value={item.tax_rate} type="number" className="text-right" onChange={(value) => updateItem(index, "tax_rate", value)} /><ItemInput editing={editing} value={item.tax_amount} type="number" className="text-right" onChange={(value) => updateItem(index, "tax_amount", value)} /><td className="text-right font-semibold">{money(item.line_total)}</td><td><StatusBadge value={item.match_status} /></td>{editing ? <td><Button size="icon" variant="ghost" title="Delete item" aria-label="Delete item" onClick={() => removeItem(index)}><Trash2 size={16} /></Button></td> : null}</tr>)}</tbody></table></div></section>
-    <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]"><section className="ds-surface p-5"><h2 className="text-lg font-semibold">AI extraction and inventory impact</h2><div className="mt-4 grid gap-3 sm:grid-cols-2"><Display label="Processing" value={purchase.processing_job?.message ?? purchase.ai_processing_status} /><Display label="Request ID" value={purchase.processing_job?.request_id} /><Display label="Provider" value={purchase.processing_job?.provider_name ?? "Not available"} /><Display label="Inventory impact" value={purchase.status === "CONFIRMED" ? `${purchase.total_quantity} units added to stock` : "No stock changes until confirmation"} /></div>{purchase.processing_job?.error_message ? <div className="mt-4"><ErrorState message={purchase.processing_job.error_message} code={purchase.processing_job.error_code ?? undefined} requestId={purchase.processing_job.request_id} /></div> : null}</section><section className="ds-surface p-5"><h2 className="text-lg font-semibold">Taxes and totals</h2><dl className="mt-4 space-y-3 text-sm"><Total label="Total quantity" value={String(totals.quantity)} /><Total label="Items subtotal" value={money(totals.subtotal)} /><Total label="Discount" value={`-${money(totals.discount)}`} /><Total label="GST / tax" value={money(totals.tax)} /><Total label="Packaging" value={money(draft.packaging_amount)} /><Total label="Freight" value={money(draft.freight_amount)} /><Total label="Round-off" value={money(draft.round_off)} /><div className="border-t border-border pt-3"><Total label="Invoice total" value={money(totals.total)} strong /><Total label="Amount paid" value={money(draft.amount_paid)} /><Total label="Balance due" value={money(totals.total - (Number(draft.amount_paid) || 0))} strong /></div></dl></section></div>
+    <section className="ds-surface mt-5 overflow-hidden"><div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4"><div><h2 className="text-lg font-semibold">Product items</h2><p className="text-sm text-muted">Quantities and costs remain editable until stock is confirmed.</p></div>{editing ? <Button size="sm" variant="secondary" onClick={() => { setDraft((current) => current ? { ...current, items: [...current.items, blankItem()] } : current); setDirty(true); }}><Plus size={16} /> Add item</Button> : null}</div><div className="overflow-x-auto"><table className="ds-table min-w-[1280px]"><thead><tr><th>#</th><th>Product</th><th>Barcode / SKU</th><th>HSN</th><th>Size</th><th>Colour</th><th className="text-right">Qty</th><th>Unit</th><th className="text-right">Unit cost</th><th className="text-right">Discount</th><th className="text-right">Tax %</th><th className="text-right">Tax</th><th className="text-right">Line total</th><th>Match</th>{editing ? <th /> : null}</tr></thead><tbody>{draft.items.map((item, index) => <tr key={item.id ?? `new-${index}`}><td>{index + 1}</td><ItemInput editing={editing} value={item.product_name} onChange={(value) => updateItem(index, "product_name", value)} /><ItemInput editing={editing} value={item.barcode ?? item.supplier_product_code ?? ""} onChange={(value) => updateItem(index, "barcode", value)} /><ItemInput editing={editing} value={item.hsn_sac ?? ""} onChange={(value) => updateItem(index, "hsn_sac", value)} /><ItemInput editing={editing} value={item.size} onChange={(value) => updateItem(index, "size", value)} /><ItemInput editing={editing} value={item.color} onChange={(value) => updateItem(index, "color", value)} /><ItemInput editing={editing} value={String(item.quantity)} type="number" className="text-right" onChange={(value) => updateItem(index, "quantity", value)} /><ItemInput editing={editing} value={item.unit} onChange={(value) => updateItem(index, "unit", value)} /><ItemInput editing={editing} value={item.purchase_price} type="number" className="text-right" onChange={(value) => updateItem(index, "purchase_price", value)} /><ItemInput editing={editing} value={item.discount} type="number" className="text-right" onChange={(value) => updateItem(index, "discount", value)} /><ItemInput editing={editing} value={item.tax_rate} type="number" className="text-right" onChange={(value) => updateItem(index, "tax_rate", value)} /><ItemInput editing={editing} value={item.tax_amount} type="number" className="text-right" onChange={(value) => updateItem(index, "tax_amount", value)} /><td className="text-right font-semibold">{money(item.line_total)}</td><td><StatusBadge value={item.match_status} />{item.confidence != null && Number(item.confidence) < 0.8 && <p className="mt-2 font-semibold text-amber-900">Check photo: uncertain size, quantity or price</p>}</td>{editing ? <td><Button size="icon" variant="ghost" title="Delete item" aria-label="Delete item" onClick={() => removeItem(index)}><Trash2 size={16} /></Button></td> : null}</tr>)}</tbody></table></div></section>
+    <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]"><section className="ds-surface p-5"><h2 className="text-lg font-semibold">AI extraction and inventory impact</h2><div className="mt-4 grid gap-3 sm:grid-cols-2"><Display label="Processing" value={purchase.processing_job?.message ?? purchase.ai_processing_status} /><details><summary>Details</summary><Display label="Support reference" value={purchase.processing_job?.request_id} /></details><Display label="Provider" value={purchase.processing_job?.provider_name ?? "Not available"} /><Display label="Inventory impact" value={purchase.status === "CONFIRMED" ? `${purchase.total_quantity} units added to stock` : "No stock changes until confirmation"} /></div>{purchase.processing_job?.error_message ? <div className="mt-4"><ErrorState message={purchase.processing_job.error_message} code={purchase.processing_job.error_code ?? undefined} requestId={purchase.processing_job.request_id} /></div> : null}</section><section className="ds-surface p-5"><h2 className="text-lg font-semibold">Taxes and totals</h2><dl className="mt-4 space-y-3 text-sm"><Total label="Total quantity" value={String(totals.quantity)} /><Total label="Items subtotal" value={money(totals.subtotal)} /><Total label="Discount" value={`-${money(totals.discount)}`} /><Total label="GST / tax" value={money(totals.tax)} /><Total label="Packaging" value={money(draft.packaging_amount)} /><Total label="Freight" value={money(draft.freight_amount)} /><Total label="Round-off" value={money(draft.round_off)} /><div className="border-t border-border pt-3"><Total label="Invoice total" value={money(totals.total)} strong /><Total label="Amount paid" value={money(draft.amount_paid)} /><Total label="Balance due" value={money(totals.total - (Number(draft.amount_paid) || 0))} strong /></div></dl></section></div>
     */}
     <section className="ds-surface mt-5 overflow-hidden">
       <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
         <div><h2 className="text-lg font-semibold">Product items</h2><p className="text-sm text-muted">Select the category first, then its brand. Tax is calculated once at invoice level.</p></div>
         {editing ? <Button size="sm" variant="secondary" onClick={() => { setDraft((current) => current ? { ...current, items: [...current.items, blankItem()] } : current); setDirty(true); }}><Plus size={16} /> Add item</Button> : null}
       </div>
-      {editing ? <div className="border-b border-border p-4"><BarcodeScannerInput label="Scan purchase item" placeholder="Scan a product barcode to add it to this draft" onScan={scanPurchaseItem} /></div> : null}
+      {editing ? <div className="border-b border-border p-4"><details><summary className="cursor-pointer py-3 font-semibold">Add by barcode, category or search</summary><VariantPicker onSelect={(product, variant) => void addSelectedVariant(product, variant)} /></details></div> : null}
       <div className="overflow-x-auto">
         <table className="ds-table min-w-[1750px]">
           <thead><tr><th>#</th><th>Product</th><th>Category</th><th>Brand</th><th>Style</th><th>Internal SKU</th><th>Barcode</th><th>HSN</th><th>Size</th><th>Colour</th><th className="text-right">Qty</th><th>Unit</th><th className="text-right">List cost</th><th className="text-right">MRP</th><th className="text-right">Selling price</th><th className="text-right">Line subtotal</th><th>Match</th>{editing ? <th /> : null}</tr></thead>
           <tbody>{draft.items.map((item, index) => {
             const categoryId = selectedCategoryId(item);
             const brands = catalog.find((category) => category.id === categoryId)?.brands.filter((brand) => brand.is_active) ?? [];
-            return <tr key={item.id ?? `new-${index}`}>
+            return <tr key={item.id ?? `new-${index}`} className={item.confidence != null && Number(item.confidence) < 0.8 ? "bg-amber-50" : ""}>
               <td>{index + 1}</td>
               <ItemInput editing={editing} value={item.product_name} onChange={(value) => updateItem(index, "product_name", value)} />
               <CatalogSelect editing={editing} value={categoryId} displayValue={item.category_name} ariaLabel={`Category for item ${index + 1}`} options={catalog.filter((category) => category.is_active).map((category) => ({ value: category.id, label: category.name }))} onChange={(value) => updateItemCategory(index, value)} />
@@ -354,16 +363,17 @@ export default function PurchaseDetailPage() {
               <ItemInput editing={editing} value={item.mrp ?? ""} type="number" className="text-right" onChange={(value) => updateItem(index, "mrp", value)} />
               <ItemInput editing={editing} value={item.selling_price ?? item.mrp ?? ""} type="number" className="text-right" onChange={(value) => updateItem(index, "selling_price", value)} />
               <td className="text-right font-semibold">{money(previewPurchaseLine(item).taxableAmount)}</td>
-              <td><StatusBadge value={item.match_status} /></td>
+              <td><StatusBadge value={item.match_status} />{item.confidence != null && Number(item.confidence) < 0.8 && <p className="mt-2 font-semibold text-amber-900">Check photo: uncertain size, quantity or price</p>}</td>
               {editing ? <td><Button size="icon" variant="ghost" title="Delete item" aria-label="Delete item" onClick={() => removeItem(index)}><Trash2 size={16} /></Button></td> : null}
             </tr>;
           })}</tbody>
         </table>
       </div>
     </section>
-    <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]"><section className="ds-surface p-5"><h2 className="text-lg font-semibold">AI extraction and inventory impact</h2><div className="mt-4 grid gap-3 sm:grid-cols-2"><Display label="Processing" value={purchase.processing_job?.message ?? purchase.ai_processing_status} /><Display label="Request ID" value={purchase.processing_job?.request_id} /><Display label="Provider" value={purchase.processing_job ? "Configured OCR provider" : "Not available"} /><Display label="Inventory impact" value={purchase.status === "CONFIRMED" ? `${purchase.total_quantity} units added to stock` : "No stock changes until confirmation"} /></div>{purchase.processing_job?.error_message ? <div className="mt-4"><ErrorState message={`${purchase.processing_job.error_message} (${purchase.processing_job.error_code ?? "processing_error"})`} /></div> : null}</section><section className="ds-surface p-5"><h2 className="text-lg font-semibold">Invoice totals</h2><dl className="mt-4 space-y-3 text-sm"><Total label="Total quantity" value={String(totals.quantity)} /><Total label="Items subtotal" value={money(totals.subtotal)} /><div className="flex items-center justify-between gap-4 text-muted"><dt>Tax percentage</dt><dd>{editing ? <input aria-label="Tax percentage" className="field-input h-9 w-24 py-1 text-right" type="number" min="0" max="100" step="0.01" value={draft.invoice_tax_rate ?? "0"} onChange={(event) => updateHeader("invoice_tax_rate", event.target.value)} /> : `${draft.invoice_tax_rate ?? "0"}%`}</dd></div><Total label="Tax (final)" value={money(totals.tax)} /><Total label="Packing charges" value={money(draft.packaging_amount)} /><Total label="Other charges" value={money(draft.freight_amount)} /><Total label="Round-off" value={money(draft.round_off)} /><div className="border-t border-border pt-3"><Total label="Invoice total" value={money(totals.total)} strong /><Total label="Amount paid" value={money(draft.amount_paid)} /><Total label="Balance due" value={money(subtractMoney(totals.total, draft.amount_paid))} strong /></div></dl></section></div>
-    <section className="ds-surface mt-5 p-5"><h2 className="text-lg font-semibold">Audit history</h2>{purchase.audit_history.length ? <div className="mt-4 divide-y divide-border">{purchase.audit_history.map((audit) => <div key={audit.id} className="py-3"><div className="font-medium">{audit.action.replace(/_/g, " ")}</div><div className="mt-1 text-sm text-muted">{audit.performed_by ?? "System"} · {shortDate(audit.created_at)}{audit.reason ? ` · ${audit.reason}` : ""}</div></div>)}</div> : <p className="mt-3 text-sm text-muted">No changes have been recorded yet.</p>}</section>
-    <div className="sticky bottom-3 z-20 mt-6 flex flex-wrap justify-end gap-2 rounded-lg border border-border bg-surface/95 p-3 shadow-lg backdrop-blur">{editing ? <><Button variant="secondary" onClick={discardEdits} disabled={saving}><X size={16} /> Cancel editing</Button><Button variant="secondary" onClick={() => void validatePurchase()} disabled={saving}><ClipboardCheck size={16} /> Validate</Button><Button onClick={() => void save()} disabled={saving}><Save size={16} /> {saving ? "Saving" : "Save draft"}</Button></> : editable ? <><Button variant="secondary" onClick={() => void validatePurchase()}><ClipboardCheck size={16} /> Validate</Button><Button id="cancel-purchase" variant="destructive" onClick={() => setCancelOpen(true)}>Cancel purchase</Button><Button id="confirm-purchase" onClick={() => setConfirmOpen(true)}><CheckCircle2 size={16} /> Confirm and add stock</Button></> : <Button variant="secondary" onClick={() => navigate("/purchases")}><RotateCcw size={16} /> Back to purchases</Button>}</div>
+    <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]"><section className="ds-surface p-5"><h2 className="text-lg font-semibold">AI extraction and inventory impact</h2><div className="mt-4 grid gap-3 sm:grid-cols-2"><Display label="Processing" value={purchase.processing_job?.message ?? purchase.ai_processing_status} /><details><summary>Details</summary><Display label="Support reference" value={purchase.processing_job?.request_id} /></details><Display label="Provider" value={purchase.processing_job ? "Configured OCR provider" : "Not available"} /><Display label="Inventory impact" value={purchase.status === "CONFIRMED" ? `${purchase.total_quantity} units added to stock` : "No stock changes until confirmation"} /></div>{purchase.processing_job?.error_message ? <div className="mt-4"><ErrorState message={purchase.processing_job.error_message} requestId={purchase.processing_job.request_id} /></div> : null}</section><section className="ds-surface p-5"><h2 className="text-lg font-semibold">Invoice totals</h2><dl className="mt-4 space-y-3 text-sm"><Total label="Total quantity" value={String(totals.quantity)} /><Total label="Items subtotal" value={money(totals.subtotal)} /><div className="flex items-center justify-between gap-4 text-muted"><dt>Tax percentage</dt><dd>{editing ? <input aria-label="Tax percentage" className="field-input h-9 w-24 py-1 text-right" type="number" min="0" max="100" step="0.01" value={draft.invoice_tax_rate ?? "0"} onChange={(event) => updateHeader("invoice_tax_rate", event.target.value)} /> : `${draft.invoice_tax_rate ?? "0"}%`}</dd></div><Total label="Tax (final)" value={money(totals.tax)} /><Total label="Packing charges" value={money(draft.packaging_amount)} /><Total label="Other charges" value={money(draft.freight_amount)} /><Total label="Round-off" value={money(draft.round_off)} /><div className="border-t border-border pt-3"><Total label="Invoice total" value={money(totals.total)} strong /><Total label="Amount paid" value={money(draft.amount_paid)} /><Total label="Balance due" value={money(subtractMoney(totals.total, draft.amount_paid))} strong /></div></dl></section></div>
+    <section className="ds-surface mt-5 p-5"><h2 className="text-lg font-semibold">Audit history</h2>{purchase.audit_history.length ? <div className="mt-4 divide-y divide-border">{purchase.audit_history.map((audit) => <div key={audit.id} className="py-3"><div className="font-medium">{audit.action.replace(/_/g, " ")}</div><div className="mt-1 text-sm text-muted">Recorded by shop staff · {shortDate(audit.created_at)}{audit.reason ? ` · ${audit.reason}` : ""}</div></div>)}</div> : <p className="mt-3 text-sm text-muted">No changes have been recorded yet.</p>}</section>
+    </fieldset>
+    <div className="sticky bottom-3 z-20 mt-6 flex flex-wrap justify-end gap-2 rounded-lg border border-border bg-surface/95 p-3 shadow-lg backdrop-blur">{editing ? <><Button variant="secondary" onClick={discardEdits} disabled={saving || pending}><X size={16} /> Cancel editing</Button><Button variant="secondary" onClick={() => void validatePurchase()} disabled={saving}><ClipboardCheck size={16} /> Validate</Button><Button onClick={() => void save()} disabled={saving}><Save size={16} /> {saving ? "Saving" : "Save draft"}</Button></> : editable ? <><Button variant="secondary" onClick={() => void validatePurchase()}><ClipboardCheck size={16} /> Validate</Button><Button id="cancel-purchase" variant="destructive" onClick={() => setCancelOpen(true)}>Cancel purchase</Button><Button id="confirm-purchase" onClick={() => setConfirmOpen(true)}><CheckCircle2 size={16} /> Confirm and add stock</Button></> : <Button variant="secondary" onClick={() => navigate("/purchases")}><RotateCcw size={16} /> Back to purchases</Button>}</div>
     <ConfirmDialog open={cancelOpen} title="Cancel purchase" description="This cancels the draft without changing stock. Confirmed purchases require the correction workflow." confirmLabel="Cancel purchase" loading={saving} onCancel={() => setCancelOpen(false)} onConfirm={() => void cancelPurchase()}><label className="field-label">Reason<textarea className="field-input h-20 py-2" value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} /></label></ConfirmDialog>
     <ConfirmDialog open={confirmOpen} title="Confirm and add stock" description="This action creates purchase inventory movements once and cannot be undone from this page." confirmLabel="Confirm purchase" loading={saving} onCancel={() => setConfirmOpen(false)} onConfirm={() => void confirmPurchase()} />
   </>;

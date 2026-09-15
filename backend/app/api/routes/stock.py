@@ -85,8 +85,8 @@ def stock_history(
 
 
 @router.post("/adjustments", response_model=StockHistoryRead, status_code=status.HTTP_201_CREATED)
-def adjust_stock(payload: StockAdjustmentCreate, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
-    return StockService(db).adjust(payload, current_user)
+def adjust_stock(payload: StockAdjustmentCreate, idempotency_key: str = Header(default="", alias="Idempotency-Key"), db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+    return StockService(db).adjust(payload, current_user, idempotency_key or None)
 
 
 @router.post("/variant-corrections/preview", response_model=VariantCorrectionPreviewResponse)

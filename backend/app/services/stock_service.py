@@ -55,48 +55,24 @@ class StockService:
         """Return the same active-cost-lot valuation used by the Dashboard."""
         return {"inventory_value": InventoryValuationService(self.db).current_value(self._store_id(current_user))}
 
-    def adjust(self, payload: StockAdjustmentCreate, current_user: User) -> StockHistory:
-        if not current_user.store_id:
-            raise bad_request("Current user is not assigned to a store")
-        if payload.product_variant_id:
-            return self._adjust_variant(payload, current_user)
-
-        product = self.db.query(Product).filter(Product.id == payload.product_id, Product.store_id == current_user.store_id).first()
-        if not product:
-            raise not_found("Product")
-
-        if payload.reason == "CUSTOMER_RETURN" and payload.direction != "INCREASE":
-            raise bad_request("Customer returns must increase stock")
-        if payload.reason in {"SUPPLIER_RETURN", "DAMAGE"} and payload.direction != "DECREASE":
-            raise bad_request(f"{payload.reason.replace('_', ' ').title()} must decrease stock")
-
-        before_stock = product.current_stock
-        if payload.direction == "INCREASE":
-            after_stock = before_stock + payload.qty
-        else:
-            after_stock = before_stock - payload.qty
-            if after_stock < 0:
-                raise bad_request("Stock cannot become negative")
-
-        product.current_stock = after_stock
-        inventory = self._get_or_create_inventory(product.id, current_user.store_id)
-        inventory.current_stock = after_stock
-
-        movement = StockHistory(
-            product_id=product.id,
-            store_id=current_user.store_id,
-            movement_type=StockMovementType(payload.reason),
-            qty=payload.qty,
-            before_stock=before_stock,
-            after_stock=after_stock,
-            reference=payload.reference,
-            created_by=current_user.id,
-            request_id=None,
-        )
-        self.db.add(movement)
-        self.db.commit()
-        self.db.refresh(movement)
-        return movement
+    def adjust(self, payload: StockAdjustmentCreate, current_user: User, idempotency_key: str | None = None) -> StockHistory:
+        if not payload.product_variant_id:
+            raise bad_request("Choose the exact size before recording a stock adjustment.")
+        from app.services.transaction_idempotency import reserve
+        try:
+            record = None
+            if idempotency_key:
+                record, repeated = reserve(self.db, current_user, "STOCK_ADJUSTMENT", idempotency_key, payload.model_dump(mode="json"))
+                if repeated:
+                    return self.db.query(StockHistory).filter_by(id=UUID(record.response_snapshot["movement_id"]), store_id=self._store_id(current_user)).one()
+            movement = self._adjust_variant(payload, current_user, commit=False)
+            if record:
+                record.response_snapshot = {"movement_id": str(movement.id)}
+            self.db.commit()
+            return movement
+        except Exception:
+            self.db.rollback()
+            raise
 
     def reset_preview(self, payload: StockResetPreviewRequest, current_user: User, request_id: str) -> dict:
         store_id = self._store_id(current_user)
@@ -487,13 +463,18 @@ class StockService:
         self.db.refresh(movement)
         return movement
 
-    def _adjust_variant(self, payload: StockAdjustmentCreate, current_user: User) -> StockHistory:
+    def _adjust_variant(self, payload: StockAdjustmentCreate, current_user: User, commit=True) -> StockHistory:
         store_id = self._store_id(current_user)
+        product_id = self.db.query(ProductVariant.product_id).filter_by(id=payload.product_variant_id, store_id=store_id).scalar()
+        if not product_id:
+            raise not_found("Product variant")
+        self.db.query(Product).filter_by(id=product_id, store_id=store_id).with_for_update().populate_existing().one()
         variant = (
             self.db.query(ProductVariant)
             .options(joinedload(ProductVariant.product))
             .filter(ProductVariant.id == payload.product_variant_id, ProductVariant.store_id == store_id)
-            .with_for_update()
+            .with_for_update(of=ProductVariant)
+            .populate_existing()
             .first()
         )
         if not variant or not variant.product:
@@ -555,7 +536,10 @@ class StockService:
             resulting_quantity=after_stock,
             metadata={"reason": payload.reason, "adjustment_type": payload.adjustment_type},
         )
-        self.db.commit()
+        if commit:
+            self.db.commit()
+        else:
+            self.db.flush()
         self.db.refresh(movement)
         return movement
 
@@ -687,6 +671,9 @@ class StockService:
             consumed = min(remaining, lot.remaining_quantity)
             lot.remaining_quantity -= consumed
             remaining -= consumed
+
+        if remaining:
+            raise bad_request("Stock cost history is incomplete. Ask the owner to check Inventory Integrity before correcting stock.")
 
     def _zero_variant_cost_lots(self, variant_id: UUID) -> None:
         for lot in (

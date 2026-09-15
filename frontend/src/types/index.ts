@@ -1,4 +1,4 @@
-export type UserRole = "OWNER" | "MANAGER" | "STAFF";
+export type UserRole = "OWNER" | "MANAGER" | "CASHIER" | "STOCK_STAFF" | "ACCOUNTANT" | "VIEWER" | "STAFF";
 export type PricingType = "MRP" | "OWN_PRICE";
 export type PurchaseStatus = "DRAFT" | "REVIEWED" | "CONFIRMED" | "CANCELLED" | "VOIDED";
 export type StockMovementType = "PURCHASE" | "SALE" | "CUSTOMER_RETURN" | "SUPPLIER_RETURN" | "DAMAGE" | "MANUAL_ADJUSTMENT" | "SALE_EDIT_RETURN" | "SALE_EDIT_DECREASE" | "SALE_VOID" | "PURCHASE_VOID" | "OPENING_STOCK" | "STOCK_RESET_OUT" | "STOCK_COUNT_IN" | "STOCK_COUNT_OUT";
@@ -91,6 +91,7 @@ export interface Product {
 }
 
 export interface ProductVariant {
+  minimum_stock?: number | null;
   id: string;
   store_id: string;
   product_id: string;
@@ -297,9 +298,18 @@ export interface SaleItem {
   color_snapshot?: string | null;
   style_snapshot?: string | null;
   mrp_snapshot?: string | null;
+  brand_snapshot?: string | null;
+  hsn_snapshot?: string | null;
+  gst_rate_snapshot?: string | null;
+  taxable_value?: string;
+  cgst_amount?: string;
+  sgst_amount?: string;
+  igst_amount?: string;
+  discount_amount?: string;
 }
 
 export interface Sale {
+  payment_reference?: string | null;
   id: string;
   invoice_number: string;
   customer_id?: string | null;
@@ -362,7 +372,7 @@ export interface SalesDashboard {
   week: SalesMetric;
   month: SalesMetric;
   total_revenue: string;
-  collection: { cash: string; upi: string; card: string; other: string; total: string };
+  collection: { bank?: string; credit?: string; cash: string; upi: string; card: string; other: string; total: string };
   inventory_value: string;
   total_stock: number;
   total_products: number;
@@ -688,6 +698,11 @@ export interface Customer {
   credit_limit?: string | null;
   notes?: string | null;
   is_active: boolean;
+  sms_opt_out: boolean;
+  sms_opted_out_at?: string | null;
+  sms_suppression_reason?: string | null;
+  last_sms_sent_at?: string | null;
+  last_purchase_at?: string | null;
   credit_sales_total: string;
   paid_total: string;
   balance_due: string;

@@ -46,6 +46,8 @@ export default function SalesDashboardPage() {
   const enabled = preset !== "custom" || Boolean(startDate && endDate);
   const query = useQuery({ queryKey: ["sales-dashboard", preset, startDate, endDate], queryFn: () => api.get<SalesDashboard>(`/sales/dashboard?${params}`), enabled });
   const integrityQuery = useQuery({ queryKey: ["inventory-reconciliation-summary"], queryFn: () => api.get<{ critical_mismatches: number }>("/inventory/reconciliation/summary"), enabled: user?.role === "OWNER" || user?.role === "MANAGER" });
+  const shopQuery = useQuery({ queryKey: ["shop-summary"], queryFn: () => api.get<{ supplier_payable: string; customer_receivable: string; inventory_retail_value: string; today_expenses: string; today_units_sold: number; low_stock_count: number; out_of_stock_count: number }>("/dashboard/shop-summary"), enabled: ["OWNER", "MANAGER", "ACCOUNTANT", "VIEWER"].includes(user?.role ?? "") });
+  const backup = useQuery({ queryKey: ["backup-status"], queryFn: () => api.get<{ health: string }>("/security/backup-status"), enabled: user?.role === "OWNER" });
   const data = query.data;
   const periodName = periodNames[preset];
 
@@ -54,8 +56,8 @@ export default function SalesDashboardPage() {
       <PageHeader title="Dashboard" subtitle="Your retail performance and inventory snapshot" />
       {integrityQuery.data?.critical_mismatches ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"><strong>{integrityQuery.data.critical_mismatches} critical inventory integrity issue{integrityQuery.data.critical_mismatches === 1 ? "" : "s"}</strong> require investigation in Stock → Inventory Integrity.</div> : null}
       <div className="mb-6 flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
-        <div className="grid grid-cols-5 gap-1 sm:flex" aria-label="Dashboard period">
-          {([['today','Today'],['yesterday','Yesterday'],['week','This Week'],['month','This Month'],['custom','Custom']] as Array<[Preset,string]>).map(([value, label]) => <Button key={value} type="button" size="sm" variant={preset === value ? "default" : "ghost"} className="w-full whitespace-nowrap px-1 text-[10px] sm:w-auto sm:px-4 sm:text-sm" onClick={() => setPreset(value)}>{label}</Button>)}
+        <div className="flex flex-wrap gap-2" aria-label="Dashboard period">
+          {([['today','Today'],['yesterday','Yesterday'],['week','This Week'],['month','This Month'],['custom','Custom']] as Array<[Preset,string]>).map(([value, label]) => <Button key={value} type="button" size="sm" variant={preset === value ? "default" : "ghost"} className="min-h-11 whitespace-nowrap px-4 text-sm" onClick={() => setPreset(value)}>{label}</Button>)}
         </div>
         {preset === "custom" ? <div className="flex flex-wrap items-center gap-2"><CalendarDays size={17} className="text-slate-500" /><input aria-label="Start date" className="field-input w-auto" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /><span className="text-sm text-slate-400">to</span><input aria-label="End date" className="field-input w-auto" type="date" min={startDate} value={endDate} onChange={(event) => setEndDate(event.target.value)} /></div> : null}
       </div>
@@ -69,9 +71,12 @@ export default function SalesDashboardPage() {
           </section>
 
           <section className="ds-surface overflow-hidden shadow-md">
-            <div className="border-b border-slate-100 px-5 py-4 sm:px-6"><h2 className="text-lg font-semibold text-slate-950">{periodName} Collection</h2><p className="mt-1 text-sm text-slate-500">Collected across completed invoices for this period</p></div>
+            <div className="border-b border-slate-100 px-5 py-4 sm:px-6"><h2 className="text-lg font-semibold text-slate-950">{periodName} Collection</h2><p className="mt-1 text-sm text-slate-500">Payments less refunds for this period; credit is shown separately</p></div>
             <CollectionRow icon={Banknote} label="Cash Collection" value={data.collection?.cash ?? "0"} tone="cash" />
             <CollectionRow icon={Smartphone} label="UPI Collection" value={data.collection?.upi ?? "0"} tone="upi" />
+            <CollectionRow icon={WalletCards} label="Card Collection" value={data.collection?.card ?? "0"} tone="cash" />
+            <CollectionRow icon={Banknote} label="Bank Collection" value={data.collection?.bank ?? "0"} tone="cash" />
+            <CollectionRow icon={ReceiptText} label="Credit sales (not cash collected)" value={data.collection?.credit ?? "0"} tone="cash" />
             <CollectionRow icon={WalletCards} label="Total Collection" value={data.collection?.total ?? data.selected.sales} tone="total" />
             {Number(data.collection?.card) || Number(data.collection?.other) ? <div className="bg-slate-50 px-6 py-2 text-right text-xs text-slate-500">Includes {money(Number(data.collection?.card ?? 0) + Number(data.collection?.other ?? 0))} from card and other methods</div> : null}
           </section>
@@ -87,6 +92,20 @@ export default function SalesDashboardPage() {
             <StatCard label="Total Products" value={`${(data.total_products ?? 0).toLocaleString("en-IN")} Products`} tone="slate" icon={Package} />
           </section>
 
+          {shopQuery.error && <ErrorState message="Shop balances could not be loaded. Refresh to try again." />}
+          {shopQuery.data && <section aria-label="Shop status" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <StatCard tone="slate" label="Today's Items Sold" value={String(shopQuery.data.today_units_sold)} icon={ShoppingBag} />
+            <StatCard tone="slate" label="Today's Expenses" value={money(shopQuery.data.today_expenses)} icon={Banknote} />
+            <StatCard tone="slate" label="Inventory Retail Value" value={money(shopQuery.data.inventory_retail_value)} icon={Boxes} />
+            <StatCard tone="slate" label="Supplier Payable" value={money(shopQuery.data.supplier_payable)} icon={WalletCards} />
+            <StatCard tone="slate" label="Customer Receivable" value={money(shopQuery.data.customer_receivable)} icon={ReceiptText} />
+            <StatCard tone="slate" label="Low Stock Sizes" value={String(shopQuery.data.low_stock_count)} icon={AlertTriangle} />
+            <StatCard tone="slate" label="Out of Stock Sizes" value={String(shopQuery.data.out_of_stock_count)} icon={Package} />
+          </section>}
+          {(user?.role === "OWNER" || user?.role === "MANAGER") && <section className="grid gap-4 sm:grid-cols-2">
+            <StatCard tone="slate" label="Stock Discrepancies" value={integrityQuery.error ? "Check unavailable" : integrityQuery.data ? String(integrityQuery.data.critical_mismatches) : "Checking…"} icon={AlertTriangle} />
+            {user.role === "OWNER" && <StatCard tone="slate" label="Backup Status" value={backup.error ? "Check unavailable" : backup.data?.health || "Checking…"} icon={Boxes} />}
+          </section>}
           <div className="grid gap-6 xl:grid-cols-2">
             <section className="overflow-hidden rounded-lg border border-slate-200 bg-white"><h2 className="flex items-center gap-2 border-b border-slate-100 px-5 py-4 text-lg font-semibold"><AlertTriangle size={19} className="text-amber-600" /> Low Stock Alerts</h2><div className="divide-y divide-slate-100">{data.low_stock.map((item) => <div key={item.id} className="flex items-center justify-between gap-4 px-5 py-4 text-sm transition hover:bg-amber-50/50"><div className="min-w-0"><div className="truncate font-semibold text-slate-900">{item.name}</div><div className="mt-0.5 text-xs text-slate-500">Minimum level: {item.minimum_stock}</div></div><span className="rounded-full bg-amber-100 px-3 py-1 font-bold text-amber-800">{item.current_stock} left</span></div>)}{!data.low_stock.length ? <EmptyState icon={Package} title="Stock levels look good" description="Products below their minimum level will appear here." /> : null}</div></section>
             <section className="overflow-hidden rounded-lg border border-slate-200 bg-white"><h2 className="border-b border-slate-100 px-5 py-4 text-lg font-semibold">Recent Sales</h2><div className="divide-y divide-slate-100">{data.recent_sales.map((sale) => <div key={sale.id} className="flex items-center justify-between gap-4 px-5 py-4 text-sm transition hover:bg-teal-50/50"><div className="min-w-0"><div className="truncate font-semibold text-slate-900">{sale.invoice_number}</div><div className="mt-0.5 truncate text-xs text-slate-500">{sale.customer_name || "Walk-in"} · {sale.payment_mode} · {shortDate(sale.sale_date)}</div></div><strong className="shrink-0 text-teal-800">{money(sale.total_amount)}</strong></div>)}{!data.recent_sales.length ? <EmptyState icon={ReceiptText} title="No recent sales" description="Completed invoices for this period will appear here." /> : null}</div></section>

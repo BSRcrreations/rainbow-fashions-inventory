@@ -33,12 +33,8 @@ def main() -> None:
         )
 
     alembic_cfg = Config(str(BACKEND_ROOT / "alembic.ini"))
-    # The historical migration chain starts by altering a legacy schema, so a
-    # brand-new isolated UAT database cannot replay it from revision zero.
-    # Build the current safe SQLAlchemy schema, then mark it at the single head.
-    Base.metadata.create_all(bind=engine)
-    command.stamp(alembic_cfg, "head")
-    print(f"Bootstrapped empty testing database {database_name} at Alembic head.")
+    command.upgrade(alembic_cfg, "head")
+    print(f"Migrated empty testing database {database_name} to Alembic head.")
 
 
 if __name__ == "__main__":

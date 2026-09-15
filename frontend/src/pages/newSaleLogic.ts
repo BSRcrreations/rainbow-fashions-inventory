@@ -4,6 +4,15 @@ export interface CartLine {
   product: SaleCatalogProduct;
   variant: SaleCatalogVariant;
   quantity: number;
+  discountType?: "NONE" | "PERCENTAGE" | "FIXED_AMOUNT";
+  discountValue?: string;
+}
+
+export function cartLineTotal(line: CartLine) {
+  const gross = Math.round(Number(line.variant.selling_price) * line.quantity * 100);
+  const value = Number(line.discountValue || 0);
+  const discount = line.discountType === "PERCENTAGE" ? Math.round(gross * value / 100) : line.discountType === "FIXED_AMOUNT" ? Math.round(value * 100) : 0;
+  return Math.max(0, gross - discount) / 100;
 }
 
 function variantLabel(variant: SaleCatalogVariant) {

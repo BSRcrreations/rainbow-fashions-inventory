@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { api, clearToken, getToken, setToken } from "../api/client";
+import { api, ApiError, clearToken, getToken, setToken } from "../api/client";
 import type { User } from "../types";
 
 interface AuthContextValue {
@@ -15,23 +15,33 @@ const SESSION_EXPIRED_NOTICE_KEY = "rainbow_session_expired_notice";
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [connectionError, setConnectionError] = useState(false);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
     async function loadUser() {
       if (!getToken()) {
         setLoading(false);
         return;
       }
+      setLoading(true); setConnectionError(false);
       try {
-        setUser(await api.me<User>());
-      } catch {
-        clearToken();
+        const current = await api.me<User>();
+        if (!cancelled) setUser(current);
+      } catch (error) {
+        if (cancelled) return;
+        if (error instanceof ApiError && error.status === 401) clearToken();
+        else setConnectionError(true);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
     void loadUser();
-  }, []);
+    const reconnect = () => setRetry(value => value + 1);
+    window.addEventListener("online", reconnect);
+    return () => { cancelled = true; window.removeEventListener("online", reconnect); };
+  }, [retry]);
 
   useEffect(() => {
     const handleUnauthorized = () => {
@@ -49,7 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       async login(email: string, password: string) {
         const response = await api.login(email, password);
         setToken(response.access_token);
-        setUser(response.user);
+        setUser(response.user); setConnectionError(false);
       },
       logout() {
         void api.logout().catch(() => undefined);
@@ -60,7 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [user, loading]
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={value}>{connectionError && !user ? <main className="mx-auto my-12 max-w-lg space-y-4 rounded-xl border bg-white p-6"><h1 className="text-2xl font-bold">Connection interrupted</h1><p>Your saved drafts and sign-in are still on this device. Reconnect and try again.</p><button className="min-h-12 rounded-lg bg-teal-700 px-5 font-semibold text-white" onClick={() => setRetry(value => value + 1)}>Try again</button></main> : children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

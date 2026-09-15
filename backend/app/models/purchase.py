@@ -23,6 +23,7 @@ class Purchase(Base):
     uploaded_file_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("uploaded_files.id", ondelete="SET NULL"))
     purchase_document_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("purchase_documents.id", ondelete="SET NULL"), unique=True)
     processing_job_id: Mapped[Optional[UUID]] = mapped_column(PGUUID(as_uuid=True), ForeignKey("document_processing_jobs.id", ondelete="SET NULL"))
+    entry_type: Mapped[str] = mapped_column(String(20), nullable=False, default="FORMAL")
     invoice_number: Mapped[Optional[str]] = mapped_column(String(120), index=True)
     purchase_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     invoice_date: Mapped[Optional[date]] = mapped_column(Date, index=True)

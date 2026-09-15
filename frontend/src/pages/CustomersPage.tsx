@@ -1,8 +1,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CreditCard, Plus, Search, UserRound } from "lucide-react";
-import { api } from "../api/client";
-import ErrorState from "../components/ErrorState";
+import { ApiError, api } from "../api/client";
 import { SkeletonRows } from "../components/LoadingState";
 import PageHeader from "../components/PageHeader";
 import { useToast } from "../components/ToastProvider";
@@ -25,6 +24,7 @@ export default function CustomersPage() {
   const selectedCustomer = selectedId ?? customersQuery.data?.[0]?.id ?? null;
   const detailQuery = useQuery({ queryKey: ["customer", selectedCustomer], queryFn: () => api.get<CustomerDetail>(`/customers/${selectedCustomer}`), enabled: Boolean(selectedCustomer) });
   const totals = useMemo(() => (customersQuery.data ?? []).reduce((acc, customer) => ({ credit: acc.credit + Number(customer.credit_sales_total ?? 0), due: acc.due + Number(customer.balance_due ?? 0) }), { credit: 0, due: 0 }), [customersQuery.data]);
+  const customerListError = customersQuery.error instanceof ApiError ? customersQuery.error : null;
 
   const createMutation = useMutation({
     mutationFn: () => api.post<Customer>("/customers", { ...customerForm, opening_credit: Number(customerForm.opening_credit || 0), credit_limit: customerForm.credit_limit ? Number(customerForm.credit_limit) : null }),
@@ -72,7 +72,7 @@ export default function CustomersPage() {
             <Search size={16} className="text-slate-400" />
             <input className="focus-ring min-w-0 flex-1 border-0 px-2 outline-none" placeholder="Search customer, phone, GST" value={search} onChange={(event) => setSearch(event.target.value)} />
           </div>
-          {customersQuery.isLoading ? <SkeletonRows rows={6} /> : customersQuery.error ? <ErrorState message={customersQuery.error instanceof Error ? customersQuery.error.message : "Unable to load customers"} /> : (
+          {customersQuery.isLoading ? <SkeletonRows rows={6} /> : customersQuery.error ? <CustomerListLoadError requestId={customerListError?.requestId} onRetry={() => void customersQuery.refetch()} /> : (
             <div className="divide-y divide-line">
               {(customersQuery.data ?? []).map((customer) => (
                 <button key={customer.id} type="button" onClick={() => setSelectedId(customer.id)} className={`grid w-full gap-3 px-4 py-4 text-left transition hover:bg-slate-50 md:grid-cols-[1fr_150px_150px] ${selectedCustomer === customer.id ? "bg-teal-50/70" : ""}`}>
@@ -122,6 +122,16 @@ export default function CustomersPage() {
           ) : null}
         </aside>
       </section>
+    </div>
+  );
+}
+
+export function CustomerListLoadError({ requestId, onRetry }: { requestId?: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm" role="alert">
+      <span className="font-medium text-slate-700">Unable to load customers.</span>
+      <Button type="button" variant="secondary" size="sm" onClick={onRetry}>Retry</Button>
+      {requestId ? <span className="text-xs text-slate-500">Reference: {requestId}</span> : null}
     </div>
   );
 }

@@ -15,7 +15,10 @@ class AuthService:
         self.db = db
 
     def login(self, payload: LoginRequest) -> TokenResponse:
-        user = self.db.query(User).filter(User.email == payload.email).first()
+        # Email addresses are case-insensitive. Owner bootstrap already stores
+        # them in lowercase, so normalize the login value before the lookup.
+        email = str(payload.email).strip().lower()
+        user = self.db.query(User).filter(User.email == email).first()
         if not user or not verify_password(payload.password, user.password_hash):
             raise unauthorized("Invalid email or password")
         if not user.is_active:

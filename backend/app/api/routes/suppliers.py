@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_manager_or_owner, require_staff_or_above
+from app.api.deps import get_current_user, require_owner, require_accountant
 from app.database.session import get_db
 from app.models.purchase import Purchase
 from app.models.user import User
@@ -24,7 +24,7 @@ def list_suppliers(search: Optional[str] = None, include_inactive: bool = False,
 
 
 @router.post("", response_model=SupplierRead, status_code=status.HTTP_201_CREATED)
-def create_supplier(payload: SupplierCreate, db: Session = Depends(get_db), current_user: User = Depends(require_staff_or_above)):
+def create_supplier(payload: SupplierCreate, db: Session = Depends(get_db), current_user: User = Depends(require_accountant)):
     return SupplierService(db).create(payload, current_user)
 
 
@@ -34,18 +34,18 @@ def get_supplier(supplier_id: UUID, db: Session = Depends(get_db), current_user:
 
 
 @router.put("/{supplier_id}", response_model=SupplierRead)
-def update_supplier(supplier_id: UUID, payload: SupplierUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_staff_or_above)):
+def update_supplier(supplier_id: UUID, payload: SupplierUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_accountant)):
     return SupplierService(db).update(supplier_id, payload, current_user)
 
 
 @router.delete("/{supplier_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_supplier(supplier_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)) -> Response:
+def delete_supplier(supplier_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_owner)) -> Response:
     SupplierService(db).delete(supplier_id, current_user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{supplier_id}/payments", response_model=SupplierDetailRead, status_code=status.HTTP_201_CREATED)
-def add_supplier_payment(supplier_id: UUID, payload: SupplierPaymentCreate, db: Session = Depends(get_db), current_user: User = Depends(require_staff_or_above)):
+def add_supplier_payment(supplier_id: UUID, payload: SupplierPaymentCreate, db: Session = Depends(get_db), current_user: User = Depends(require_accountant)):
     return SupplierService(db).add_payment(supplier_id, payload, current_user)
 
 

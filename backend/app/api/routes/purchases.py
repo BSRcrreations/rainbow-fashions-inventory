@@ -9,17 +9,18 @@ from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_owner
+from app.api.deps import get_current_user, require_owner, require_purchase_staff, require_manager_or_owner
 from app.database.session import get_db
 from app.models.user import User
 from app.schemas.purchase import (
+    QuickPurchaseCreate, PurchaseReturnCreate, PurchaseReturnRead,
     PurchaseCancelRequest,
     PurchaseDetailRead,
     PurchaseFromDocumentCreate,
     PurchaseItemPatch,
     PurchaseItemClassificationPatch,
     PurchaseItemReview,
-    PurchasePatch,
+    PurchasePatch, PurchaseDraftSave,
     PurchaseRead,
     PurchaseReviewUpdate,
     PurchaseUploadResponse,
@@ -45,22 +46,48 @@ def delete_purchases(payload: PurchaseDeleteRequest, request: Request, db: Sessi
 
 
 @router.get("", response_model=list[PurchaseRead])
-def list_purchases(skip: int = 0, limit: int = 50, status_filter: Optional[str] = Query(default=None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> list:
-    return PurchaseService(db).list(current_user, skip, limit, status_filter)
+def list_purchases(search: Optional[str] = None, skip: int = 0, limit: int = 50, status_filter: Optional[str] = Query(default=None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> list:
+    return PurchaseService(db).list(current_user, skip, limit, status_filter, search)
 
 
 @router.post("/upload", response_model=PurchaseUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_invoice(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_purchase_staff),
 ) -> PurchaseUploadResponse:
     return await PurchaseService(db).upload_invoice(file, current_user)
 
 
 @router.post("/from-document", response_model=PurchaseUploadResponse, status_code=status.HTTP_201_CREATED)
-def create_purchase_from_document(payload: PurchaseFromDocumentCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> PurchaseUploadResponse:
+def create_purchase_from_document(payload: PurchaseFromDocumentCreate, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)) -> PurchaseUploadResponse:
     return PurchaseService(db).create_from_document(payload.job_id, current_user)
+
+
+@router.post("/quick", response_model=PurchaseRead, status_code=201)
+def create_quick_purchase(payload: QuickPurchaseCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)):
+    return PurchaseService(db).quick_purchase(payload, current_user, request.headers.get("Idempotency-Key", ""))
+
+
+@router.put("/{purchase_id}/quick", response_model=PurchaseRead)
+def update_quick_purchase(purchase_id: UUID, payload: QuickPurchaseCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)):
+    return PurchaseService(db).quick_purchase(payload, current_user, request.headers.get("Idempotency-Key", ""), purchase_id)
+
+
+@router.post("/{purchase_id}/attachment", response_model=PurchaseRead)
+@router.post("/{purchase_id}/photo", response_model=PurchaseRead)
+async def attach_purchase_photo(purchase_id: UUID, file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)):
+    return await PurchaseService(db).attach_photo(purchase_id, file, current_user)
+
+
+@router.get("/{purchase_id}/returns", response_model=list[PurchaseReturnRead])
+def purchase_returns(purchase_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)):
+    return PurchaseService(db).list_returns(purchase_id, current_user)
+
+
+@router.post("/{purchase_id}/returns", response_model=PurchaseReturnRead, status_code=201)
+def return_purchase(purchase_id: UUID, payload: PurchaseReturnCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_manager_or_owner)):
+    return PurchaseService(db).create_return(purchase_id, payload, current_user, request.headers.get("Idempotency-Key", ""))
 
 
 @router.get("/{purchase_id}", response_model=PurchaseDetailRead)
@@ -85,37 +112,37 @@ def get_purchase_document_preview(purchase_id: UUID, db: Session = Depends(get_d
 
 
 @router.patch("/{purchase_id}", response_model=PurchaseRead)
-def patch_purchase(purchase_id: UUID, payload: PurchasePatch, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> PurchaseRead:
+def patch_purchase(purchase_id: UUID, payload: PurchasePatch, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)) -> PurchaseRead:
     return PurchaseService(db).patch(purchase_id, payload, current_user)
 
 
 @router.post("/{purchase_id}/validate", response_model=PurchaseValidationRead)
-def validate_purchase(purchase_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> PurchaseValidationRead:
+def validate_purchase(purchase_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)) -> PurchaseValidationRead:
     return PurchaseService(db).validate(purchase_id, current_user)
 
 
 @router.post("/{purchase_id}/cancel", response_model=PurchaseRead)
-def cancel_purchase(purchase_id: UUID, payload: PurchaseCancelRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> PurchaseRead:
+def cancel_purchase(purchase_id: UUID, payload: PurchaseCancelRequest, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)) -> PurchaseRead:
     return PurchaseService(db).cancel(purchase_id, payload.reason, payload.version, current_user)
 
 
 @router.post("/{purchase_id}/items", response_model=PurchaseRead)
-def add_purchase_item(purchase_id: UUID, payload: PurchaseItemReview, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> PurchaseRead:
+def add_purchase_item(purchase_id: UUID, payload: PurchaseItemReview, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)) -> PurchaseRead:
     return PurchaseService(db).add_item(purchase_id, payload, current_user)
 
 
 @router.patch("/{purchase_id}/items/classification", response_model=PurchaseRead)
-def patch_purchase_item_classification(purchase_id: UUID, payload: PurchaseItemClassificationPatch, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> PurchaseRead:
+def patch_purchase_item_classification(purchase_id: UUID, payload: PurchaseItemClassificationPatch, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)) -> PurchaseRead:
     return PurchaseService(db).patch_item_classification(purchase_id, payload, current_user)
 
 
 @router.patch("/{purchase_id}/items/{item_id}", response_model=PurchaseRead)
-def patch_purchase_item(purchase_id: UUID, item_id: UUID, payload: PurchaseItemPatch, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> PurchaseRead:
+def patch_purchase_item(purchase_id: UUID, item_id: UUID, payload: PurchaseItemPatch, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)) -> PurchaseRead:
     return PurchaseService(db).patch_item(purchase_id, item_id, payload, current_user)
 
 
 @router.delete("/{purchase_id}/items/{item_id}", response_model=PurchaseRead)
-def delete_purchase_item(purchase_id: UUID, item_id: UUID, version: Optional[int] = Query(default=None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> PurchaseRead:
+def delete_purchase_item(purchase_id: UUID, item_id: UUID, version: Optional[int] = Query(default=None), db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)) -> PurchaseRead:
     return PurchaseService(db).delete_item(purchase_id, item_id, version, current_user)
 
 
@@ -124,7 +151,7 @@ def update_purchase_review(
     purchase_id: UUID,
     payload: PurchaseReviewUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_purchase_staff),
 ):
     return PurchaseService(db).update_review(purchase_id, payload, current_user)
 
@@ -133,6 +160,11 @@ def update_purchase_review(
 def confirm_purchase(
     purchase_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_purchase_staff),
 ):
     return PurchaseService(db).confirm(purchase_id, current_user)
+
+
+@router.put("/{purchase_id}/draft", response_model=PurchaseRead)
+def save_complete_draft(purchase_id: UUID, payload: PurchaseDraftSave, request: Request, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)):
+    return PurchaseService(db).save_complete_draft(purchase_id, payload, current_user, request.headers.get("Idempotency-Key"))

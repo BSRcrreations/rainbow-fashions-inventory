@@ -1,0 +1,49 @@
+........................................................................ [ 22%]
+........................................................................ [ 45%]
+........................................................................ [ 68%]
+........................................................................ [ 90%]
+.............................                                            [100%]
+=============================== warnings summary ===============================
+../../../.cache/rainbow-certification/venv/lib/python3.11/site-packages/fastapi/testclient.py:1
+  /Users/subbu/.cache/rainbow-certification/venv/lib/python3.11/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+../../../.cache/rainbow-certification/venv/lib/python3.11/site-packages/starlette/testclient.py:53
+  /Users/subbu/.cache/rainbow-certification/venv/lib/python3.11/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+../../../.cache/rainbow-certification/venv/lib/python3.11/site-packages/passlib/utils/__init__.py:854
+  /Users/subbu/.cache/rainbow-certification/venv/lib/python3.11/site-packages/passlib/utils/__init__.py:854: DeprecationWarning: 'crypt' is deprecated and slated for removal in Python 3.13
+    from crypt import crypt as _crypt
+
+tests/test_barcode_deletion_service.py::test_permanent_barcode_delete_requires_explicit_confirmation
+  /Users/subbu/Documents/shop inventory/backend/tests/test_barcode_deletion_service.py:17: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    BarcodeDeletionService(SimpleNamespace()).permanently_delete("8905072571989", "", owner())
+
+tests/test_deletion_security_service.py::DeletionSecurityServiceTests::test_correct_argon2_password_succeeds_and_wrong_password_fails
+  /Users/subbu/.cache/rainbow-certification/venv/lib/python3.11/site-packages/passlib/handlers/argon2.py:716: DeprecationWarning: Accessing argon2.__version__ is deprecated and will be removed in a future release. Use importlib.metadata directly to query for structlog's packaging metadata.
+    _argon2_cffi.__version__, max_version)
+
+tests/test_destructive_action_service.py::DestructiveActionServiceTests::test_idempotency_key_error_keeps_request_id
+  /Users/subbu/Documents/shop inventory/backend/tests/test_destructive_action_service.py:58: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    service._idempotent("SALE_DELETE", [uuid4()], "", _owner(), "request-123")
+
+tests/test_product_deletion_service.py::ProductDeletionServiceTests::test_confirmation_must_match_exactly
+  /Users/subbu/Documents/shop inventory/backend/tests/test_product_deletion_service.py:146: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    ProductDeletionService._require_confirmation("delete", "DELETE", "request-1")
+
+tests/test_reports.py::test_report_summary_rejects_reversed_dates_with_safe_message
+  /Users/subbu/Documents/shop inventory/backend/tests/test_reports.py:55: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    ReportService(_EmptyReportSession()).summary(
+
+tests/test_sale_price_override_policy.py::test_manager_override_is_limited_by_mrp_and_audited
+tests/test_sale_price_override_policy.py::test_owner_override_is_allowed_and_negative_prices_fail_for_every_role
+  /Users/subbu/Documents/shop inventory/backend/tests/test_sale_price_override_policy.py:19: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    return SaleService._resolve_unit_price(Decimal("100"), submitted, mrp, _user(role), uuid4(), "request-test")
+
+tests/test_variant_management_service.py::test_variant_delete_requires_its_own_explicit_confirmation
+  /Users/subbu/Documents/shop inventory/backend/tests/test_variant_management_service.py:54: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    service.permanently_delete(uuid4(), "DELETE", SimpleNamespace(), "request-1")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+317 passed, 11 warnings in 16.68s

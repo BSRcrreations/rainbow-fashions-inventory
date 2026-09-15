@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile, statu
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import require_purchase_staff
 from app.database.session import get_db
 from app.models.user import User
 from app.models.uploaded_file import UploadedFile
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/purchase-documents", tags=["Purchase Documents"])
 
 
 @router.post("/upload", response_model=PurchaseDocumentAccepted, status_code=status.HTTP_202_ACCEPTED)
-async def upload_purchase_document(background_tasks: BackgroundTasks, file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def upload_purchase_document(background_tasks: BackgroundTasks, file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)):
     document, job, created = await PurchaseDocumentService(db).upload(file, current_user)
     if created:
         background_tasks.add_task(PurchaseDocumentService.process, job.id)
@@ -26,12 +26,12 @@ async def upload_purchase_document(background_tasks: BackgroundTasks, file: Uplo
 
 
 @router.get("/jobs/{job_id}", response_model=DocumentJobRead)
-def get_purchase_document_job(job_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def get_purchase_document_job(job_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)):
     return PurchaseDocumentService(db).get_job(job_id, current_user)
 
 
 @router.get("/{document_id}", response_model=PurchaseDocumentRead)
-def get_purchase_document(document_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> PurchaseDocumentRead:
+def get_purchase_document(document_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)) -> PurchaseDocumentRead:
     document = PurchaseDocumentService(db).get_document(document_id, current_user)
     uploaded = db.get(UploadedFile, document.uploaded_file_id)
     if not uploaded:
@@ -48,7 +48,7 @@ def get_purchase_document(document_id: UUID, db: Session = Depends(get_db), curr
 
 
 @router.get("/{document_id}/preview")
-def preview_purchase_document(document_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> FileResponse:
+def preview_purchase_document(document_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)) -> FileResponse:
     document = PurchaseDocumentService(db).get_document(document_id, current_user)
     uploaded = db.get(UploadedFile, document.uploaded_file_id)
     if not uploaded:
@@ -59,7 +59,7 @@ def preview_purchase_document(document_id: UUID, db: Session = Depends(get_db), 
 
 
 @router.post("/{document_id}/retry", response_model=DocumentJobRead, status_code=status.HTTP_202_ACCEPTED)
-def retry_purchase_document(document_id: UUID, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def retry_purchase_document(document_id: UUID, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(require_purchase_staff)):
     job, created = PurchaseDocumentService(db).retry(document_id, current_user)
     if created:
         background_tasks.add_task(PurchaseDocumentService.process, job.id)

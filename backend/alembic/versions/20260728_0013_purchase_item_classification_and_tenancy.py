@@ -21,7 +21,8 @@ def upgrade() -> None:
     # multistore backfill instead of silently exposing a shared catalog.
     op.execute("""
         DO $$ BEGIN
-          IF (SELECT count(*) FROM stores) = 0 THEN
+          IF (SELECT count(*) FROM stores) = 0 AND
+             (EXISTS (SELECT 1 FROM categories) OR EXISTS (SELECT 1 FROM brands)) THEN
             RAISE EXCEPTION 'Cannot scope catalog records without a store';
           END IF;
         END $$;

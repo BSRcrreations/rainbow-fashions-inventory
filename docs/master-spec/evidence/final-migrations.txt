@@ -1,0 +1,65 @@
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 20260715_0000, Create the original empty schema so the complete migration chain is replayable.
+INFO  [alembic.runtime.migration] Running upgrade 20260715_0000 -> 20260716_0001, add product sku and image url
+INFO  [alembic.runtime.migration] Running upgrade 20260716_0001 -> 20260718_0002, add sales and category-owned product hierarchy
+INFO  [alembic.runtime.migration] Running upgrade 20260718_0002 -> 20260718_0003, add explicit inventory movement reasons
+INFO  [alembic.runtime.migration] Running upgrade 20260718_0003 -> 20260718_0004, backfill references for legacy stock movements
+INFO  [alembic.runtime.migration] Running upgrade 20260718_0004 -> 20260718_0005, add optional product color and size variants
+INFO  [alembic.runtime.migration] Running upgrade 20260718_0005 -> 20260724_0006, add sale edit, return, void, and audit workflow
+INFO  [alembic.runtime.migration] Running upgrade 20260724_0006 -> 20260724_0007, add sale correction movement values
+INFO  [alembic.runtime.migration] Running upgrade 20260724_0007 -> 20260727_0008, add purchase dates and review metadata
+INFO  [alembic.runtime.migration] Running upgrade 20260727_0008 -> 20260727_0009, add async purchase document jobs
+INFO  [alembic.runtime.migration] Running upgrade 20260727_0009 -> 20260727_0010, add purchase details workflow fields and audit history
+INFO  [alembic.runtime.migration] Running upgrade 20260727_0010 -> 20260727_0011, remove historical mock OCR purchase records
+INFO  [alembic.runtime.migration] Running upgrade 20260727_0011 -> 20260727_0012, add product date for barcode labels and POS scanning
+INFO  [alembic.runtime.migration] Running upgrade 20260727_0012 -> 20260728_0013_classification, persist purchase classification and scope catalog records to stores
+INFO  [alembic.runtime.migration] Running upgrade 20260727_0012 -> 20260728_0013, add auditable purchase discount management
+INFO  [alembic.runtime.migration] Running upgrade 20260728_0013, 20260728_0013_classification -> 20260728_0013_merge, merge purchase discount and classification migrations
+INFO  [alembic.runtime.migration] Running upgrade 20260728_0013_merge -> 20260728_0014, add safe product bulk deletion controls
+INFO  [alembic.runtime.migration] Running upgrade 20260728_0014 -> 20260728_0015, add explicit product store scope
+INFO  [alembic.runtime.migration] Running upgrade 20260728_0015 -> 20260728_0016, reconcile purchase discount columns missed by a stamped revision
+INFO  [alembic.runtime.migration] Running upgrade 20260728_0016 -> 20260728_0017, add secure owner-confirmed transaction deletion controls
+INFO  [alembic.runtime.migration] Running upgrade 20260728_0017 -> 20260728_0018, reconcile store-scoped catalog schema
+INFO  [alembic.runtime.migration] Running upgrade 20260728_0018 -> 20260728_0019, add invoice-level purchase tax rate
+INFO  [alembic.runtime.migration] Running upgrade 20260728_0019 -> 20260728_0020, repair store scope columns for stamped legacy schemas
+INFO  [alembic.runtime.migration] Running upgrade 20260728_0020 -> 20260728_0021, repair product test-data flag for stamped legacy schemas
+INFO  [alembic.runtime.migration] Running upgrade 20260728_0021 -> 20260729_0022, add variant-level inventory, pricing, and cost lots
+INFO  [alembic.runtime.migration] Running upgrade 20260729_0022 -> 20260729_0023, backfill sellable variants for legacy product stock
+INFO  [alembic.runtime.migration] Running upgrade 20260729_0023 -> 20260729_0024, allocate legacy aggregate stock to sellable variants
+INFO  [alembic.runtime.migration] Running upgrade 20260729_0024 -> 20260729_0025, add persistent barcode stock scan sessions
+INFO  [alembic.runtime.migration] Running upgrade 20260729_0025 -> 20260729_0026, add barcode mappings and package conversion
+INFO  [alembic.runtime.migration] Running upgrade 20260729_0026 -> 20260729_0027, key scan review rows by their barcode
+INFO  [alembic.runtime.migration] Running upgrade 20260729_0027 -> 20260729_0028, add stock scan onboarding defaults and barcode sale mode
+INFO  [alembic.runtime.migration] Running upgrade 20260729_0028 -> 20260729_0029, repair stamped classification and purchase discount schema
+INFO  [alembic.runtime.migration] Running upgrade 20260729_0029 -> 20260717_0002, Add GST rate and HSN code to products
+INFO  [alembic.runtime.migration] Running upgrade 20260717_0002 -> 20260729_0030, Retired historical stock seed; opening stock requires an operator-confirmed import.
+INFO  [alembic.runtime.migration] Running upgrade 20260729_0030 -> 20260730_0031, add logo storage to brands
+INFO  [alembic.runtime.migration] Running upgrade 20260730_0031 -> 20260730_0032, repair product variant timestamps
+INFO  [alembic.runtime.migration] Running upgrade 20260730_0032 -> 20260802_0033, link corrective stock movements to immutable originals
+INFO  [alembic.runtime.migration] Running upgrade 20260802_0033 -> 20260802_0034, store explicit checkout discount type and value
+INFO  [alembic.runtime.migration] Running upgrade 20260802_0034 -> 20260802_0035, add owner stock reset audit trail
+INFO  [alembic.runtime.migration] Running upgrade 20260802_0035 -> 20260803_0036, add barcode transfer audit metadata
+INFO  [alembic.runtime.migration] Running upgrade 20260803_0036 -> 20260803_0037
+INFO  [alembic.runtime.migration] Running upgrade 20260803_0037 -> 20260804_0038, Add strict audited opening-stock import lifecycle tables.
+INFO  [alembic.runtime.migration] Running upgrade 20260804_0038 -> 20260804_0039, Add immutable audit evidence for reconciliation aggregate repairs.
+INFO  [alembic.runtime.migration] Running upgrade 20260803_0037 -> 20260803_0038
+INFO  [alembic.runtime.migration] Running upgrade 20260803_0038 -> 20260803_0039
+INFO  [alembic.runtime.migration] Running upgrade 20260803_0039, 20260804_0039 -> 20260804_0040, Merge deployment stock-import and repository-hardening migration heads.
+INFO  [alembic.runtime.migration] Running upgrade 20260804_0040 -> 20260814_0041, support shared barcodes with explicit variant targets
+INFO  [alembic.runtime.migration] Running upgrade 20260814_0041 -> 20260814_0042, allow one scan session to stage shared-barcode sizes separately
+INFO  [alembic.runtime.migration] Running upgrade 20260814_0042 -> 20260815_0043, add owner-reviewed opening-stock shared barcode groups
+INFO  [alembic.runtime.migration] Running upgrade 20260815_0043 -> 20260824_0044, Add idempotent TEST-to-production catalog migration evidence.
+INFO  [alembic.runtime.migration] Running upgrade 20260824_0044 -> 20260825_0045, Repair missing audited destructive-action schema on databases stamped through 0044.
+INFO  [alembic.runtime.migration] Running upgrade 20260825_0045 -> 20260825_0046, Repair missing store purge-guard schema on databases stamped through 0045.
+INFO  [alembic.runtime.migration] Running upgrade 20260825_0046 -> 20260901_0047, Repair the missing VOIDED label on production purchase_status.
+INFO  [alembic.runtime.migration] Running upgrade 20260901_0047 -> 20260904_0048, Add customer lifecycle and SMS-suppression readiness fields.
+INFO  [alembic.runtime.migration] Running upgrade 20260904_0048 -> 20260909_0049, Add specific staff roles, shop settings, audit trail and daily cash closing.
+INFO  [alembic.runtime.migration] Running upgrade 20260909_0049 -> 20260909_0050, Persist quick purchases, item discounts, accepted returns and exchanges.
+INFO  [alembic.runtime.migration] Running upgrade 20260909_0050 -> 20260909_0051, Separate daily positive stock entries from opening inventory and corrections.
+INFO  [alembic.runtime.migration] Running upgrade 20260909_0051 -> 20260910_0052, Record receipt tax details at the time of sale; retain historical bills.
+INFO  [alembic.runtime.migration] Running upgrade 20260910_0052 -> 20260910_0053, Optional per-size low-stock thresholds; null inherits the product setting.
+
+{"check": "fresh", "result": "PASS", "one_head": "20260910_0053", "retained_rows": {"stores": 0, "products": 0, "product_variants": 0, "stock_history": 0}, "date": "2026-09-15"}
+
+{"check": "upgrade_from_0048", "result": "PASS", "one_head": "20260910_0053", "retained_rows": {"stores": 1, "products": 0, "product_variants": 0, "stock_history": 0}, "date": "2026-09-15"}

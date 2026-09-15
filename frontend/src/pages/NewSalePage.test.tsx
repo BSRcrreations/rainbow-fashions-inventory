@@ -1,11 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { CurrentSalePanel, ProductGroupCard, ProductVisual } from "./NewSalePage";
+import { CompactCartPreview, CurrentSalePanel, ProductGroupCard, ProductVisual } from "./NewSalePage";
 import { orderVariantsBySize, productCardMrpText, productCardVariantSummary } from "./newSaleCard";
+import { checkoutCustomerPayload, isCurrentCustomerLookup } from "./newSaleCustomer";
 import { catalogItemFromBarcode, firstSellableProduct, isQuickAddProduct, mergeCartVariant, productForVariant } from "./newSaleLogic";
 import type { CartLine } from "./newSaleLogic";
 import { previewSaleDiscount } from "./saleDiscount";
 import type { ProductVariantBarcode, SaleCatalogProduct, SaleCatalogVariant } from "../types";
+import type { Customer } from "../types";
 
 const baseProduct: SaleCatalogProduct = {
   product_id: "prisma-leggings",
@@ -38,6 +40,7 @@ describe("ProductVisual", () => {
 
 const smallVariant: SaleCatalogVariant = { variant_id: "variant-small", product_id: "prisma-leggings", size: "S", color: "Black", sku: "LEG-S", barcode: "8901", selling_price: "499", available_stock: 2, classification_review_required: false, is_active: true };
 const largeVariant: SaleCatalogVariant = { ...smallVariant, variant_id: "variant-large", size: "L", barcode: "8902" };
+const existingCustomer: Customer = { id: "customer-a", store_id: "store-1", name: "a", phone: "9000000001", opening_credit: "0", is_active: true, sms_opt_out: false, credit_sales_total: "0", paid_total: "0", balance_due: "0", created_at: "2026-09-05T00:00:00Z", updated_at: "2026-09-05T00:00:00Z" };
 
 function renderProductCard(product: SaleCatalogProduct) {
   return renderToStaticMarkup(<ProductGroupCard product={product} selected={false} onChoose={() => undefined} />);
@@ -92,6 +95,30 @@ describe("New Sale cart behavior", () => {
     const exactVariant = { ...largeVariant, product_id: "separate-product" };
 
     expect(productForVariant(baseProduct, exactVariant).product_id).toBe("separate-product");
+  });
+});
+
+describe("Checkout customer lookup safety", () => {
+  it("does not reuse an existing customer while a newly typed phone is waiting for lookup", () => {
+    const payload = checkoutCustomerPayload({ customerPhone: "9000000099", customerName: "UAT New Customer 20260906", customerDetails: "", lookupPhone: "9000000001", lookupCustomer: existingCustomer });
+
+    expect(isCurrentCustomerLookup("9000000099", "9000000001")).toBe(false);
+    expect(payload).toEqual({ customer_id: null, customer_name: "UAT New Customer 20260906", customer_phone: "9000000099", customer_details: null });
+  });
+
+  it("uses the matching existing customer only after the lookup belongs to the current phone", () => {
+    const payload = checkoutCustomerPayload({ customerPhone: "+91 90000-00001", customerName: "", customerDetails: "", lookupPhone: "9000000001", lookupCustomer: existingCustomer });
+
+    expect(isCurrentCustomerLookup("+91 90000-00001", "9000000001")).toBe(true);
+    expect(payload.customer_id).toBe("customer-a");
+    expect(payload.customer_name).toBe("a");
+    expect(payload.customer_phone).toBe("9000000001");
+  });
+
+  it("builds a fresh walk-in draft without carrying a cancelled checkout customer into the next sale", () => {
+    const payload = checkoutCustomerPayload({ customerPhone: "", customerName: "", customerDetails: "", lookupPhone: "9000000001", lookupCustomer: existingCustomer });
+
+    expect(payload).toEqual({ customer_id: null, customer_name: null, customer_phone: null, customer_details: null });
   });
 });
 
@@ -210,16 +237,17 @@ const cartLine: CartLine = {
   quantity: 3,
 };
 
-function renderCart(cart: CartLine[]) {
+function renderCart(cart: CartLine[], discountType: "NONE" | "PERCENTAGE" | "FIXED_AMOUNT" = "PERCENTAGE", discountValue = "10") {
   const subtotal = cart.reduce((total, line) => total + Number(line.variant.selling_price) * line.quantity, 0);
+  const previewType = discountType === "NONE" ? "PERCENTAGE" : discountType;
   return renderToStaticMarkup(<CurrentSalePanel
     cart={cart}
     customerName=""
     paymentMode="CASH"
-    discountType="PERCENTAGE"
-    discountValue="10"
+    discountType={discountType}
+    discountValue={discountValue}
     subtotal={subtotal}
-    preview={previewSaleDiscount(subtotal, "PERCENTAGE", "10")}
+    preview={previewSaleDiscount(subtotal, previewType, discountType === "NONE" ? "0" : discountValue)}
     pending={false}
     onCustomer={() => undefined}
     onPayment={() => undefined}
@@ -233,6 +261,31 @@ function renderCart(cart: CartLine[]) {
   />);
 }
 
+function renderCompactCart(cart: CartLine[]) {
+  return renderToStaticMarkup(<CompactCartPreview cart={cart} onCheckout={() => undefined} onChangeQuantity={() => undefined} onRemove={() => undefined} onClear={() => undefined} />);
+}
+
+describe("Compact sale cart", () => {
+  it("keeps every cart line editable before checkout", () => {
+    const secondLine = { ...cartLine, product: { ...cartLine.product, name: "Flexi Kurthi Pant" }, variant: { ...cartLine.variant, variant_id: "flexi-medium", size: "M", selling_price: "599", available_stock: 3 }, quantity: 2 };
+    const markup = renderCompactCart([cartLine, secondLine]);
+
+    expect(markup).toContain('data-testid="compact-cart-line-softa-34"');
+    expect(markup).toContain('data-testid="compact-cart-line-flexi-medium"');
+    expect(markup).toContain("Softa Padded Bra");
+    expect(markup).toContain("Size: 34");
+    expect(markup).toContain("Flexi Kurthi Pant");
+    expect(markup).toContain("M");
+    expect(markup).toContain("₹599.00");
+    expect(markup).toContain("₹1,198.00");
+    expect(markup).toContain("Increase Flexi Kurthi Pant in cart");
+    expect(markup).toContain("Decrease Flexi Kurthi Pant in cart");
+    expect(markup).toContain("Remove Flexi Kurthi Pant from cart");
+    expect(markup).toContain("Clear Cart");
+    expect(markup).toContain("Checkout");
+  });
+});
+
 describe("Current Sale cart panel", () => {
   it("shows the empty state only when the cart has no lines", () => {
     const markup = renderCart([]);
@@ -241,14 +294,13 @@ describe("Current Sale cart panel", () => {
     expect(markup).not.toContain("Softa Padded Bra");
   });
 
-  it("renders the cart line before customer, payment, discount, and totals", () => {
+  it("renders the checkout review with cart items on the left and one payment action", () => {
     const markup = renderCart([cartLine]);
 
     expect(markup).not.toContain("Your cart is empty");
     expect(markup).toContain('data-testid="cart-item-list"');
     expect(markup).toContain("min-h-0");
     expect(markup).toContain("flex-1");
-    expect(markup).toContain("overflow-x-hidden");
     expect(markup).toContain("overflow-y-auto");
     expect(markup).toContain("Softa Padded Bra");
     expect(markup).toContain("Brand: WithIn");
@@ -257,19 +309,36 @@ describe("Current Sale cart panel", () => {
     expect(markup).toContain("MRP ₹395.00 · ₹395.00 × 3");
     expect(markup).toContain("Available stock: 8 · Stock after sale: 5");
     expect(markup).toContain("₹1,185.00");
-    expect(markup).toContain("1 line · 3 units");
+    expect(markup).toContain("Product lines");
+    expect(markup).toContain("Total units");
+    expect(markup).toContain("Cart subtotal");
     expect(markup).toContain("Decrease Softa Padded Bra");
     expect(markup).toContain("Increase Softa Padded Bra");
-    expect(markup).toContain(">Remove<");
+    expect(markup).toContain('aria-label="Remove Softa Padded Bra"');
     expect(markup.indexOf("Softa Padded Bra")).toBeLessThan(markup.indexOf("Customer"));
-    expect(markup.indexOf("Customer")).toBeLessThan(markup.indexOf("Payment method"));
-    expect(markup.indexOf("Payment method")).toBeLessThan(markup.indexOf("Discount type"));
+    expect(markup.indexOf("Customer")).toBeLessThan(markup.indexOf("Payment"));
+    expect(markup.indexOf("Payment")).toBeLessThan(markup.indexOf("Discount type"));
     expect(markup.indexOf("Discount type")).toBeLessThan(markup.indexOf("Subtotal"));
     expect(markup).toContain('data-testid="checkout-footer"');
     expect(markup).toContain("sticky bottom-0");
     expect(markup).toContain("Grand Total");
-    expect(markup).toContain("Complete Sale");
-    expect(markup).toContain("Save Bill");
-    expect(markup).toContain("Save &amp; Print Bill");
+    expect(markup).toContain("Confirm Sale");
+    expect(markup).toContain("Phone number");
+    expect(markup).toContain("Address / Notes");
+    expect(markup).toContain("Cash");
+    expect(markup).toContain("UPI");
+    expect(markup).toContain(">Card<");
+    expect(markup).toContain(">Bank<");
+    expect(markup).not.toContain("Save Bill");
+    expect(markup).not.toContain("Save &amp; Print Bill");
+  });
+
+  it("hides irrelevant discount inputs when no discount is selected", () => {
+    const markup = renderCart([cartLine], "NONE", "0");
+
+    expect(markup).toContain('<option value="NONE" selected="">None</option>');
+    expect(markup).not.toContain("Discount value");
+    expect(markup).not.toContain(">5%<");
+    expect(markup).not.toContain(">10%<");
   });
 });

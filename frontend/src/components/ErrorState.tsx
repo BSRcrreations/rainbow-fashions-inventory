@@ -15,7 +15,7 @@ export default function ErrorState({ message, code, requestId, fields }: ErrorSt
     <div className="break-words whitespace-pre-wrap rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-error" role="alert">
       <div>{message}</div>
       {fields?.length ? <ul className="mt-2 list-disc space-y-1 pl-5">{fields.map((field, index) => <li key={`${field.field}-${index}`}>{field.message}</li>)}</ul> : null}
-      {code || requestId ? <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-red-700">{code ? <span>Code: {code}</span> : null}{requestId ? <span>Reference: {requestId}</span> : null}</div> : null}
+      {code || requestId ? <details className="mt-3 text-sm text-red-800"><summary className="cursor-pointer font-semibold">Details for support</summary><div className="mt-2">{code ? <div>Code: {code}</div> : null}{requestId ? <div>Reference: {requestId}</div> : null}</div></details> : null}
     </div>
   );
 }

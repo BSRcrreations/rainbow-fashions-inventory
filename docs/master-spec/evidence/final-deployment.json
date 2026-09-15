@@ -1,0 +1,40 @@
+{
+  "scope": "isolated local synthetic TEST only",
+  "compose_project": "rainbow_master_verification",
+  "base_commit": "1eb44105c6ef52e339acfe5195990e08fdb479ef",
+  "candidate": "uncommitted working tree",
+  "remote_test": "NOT DEPLOYED",
+  "production": "NOT TOUCHED",
+  "health/live": {
+    "status": "ok",
+    "service": "backend"
+  },
+  "health/ready": {
+    "status": "ready",
+    "service": "backend"
+  },
+  "version": {
+    "git_sha": "unknown",
+    "environment": "testing"
+  },
+  "containers": [
+    {
+      "service": "backend",
+      "status": "running",
+      "health": "healthy",
+      "image_id": "sha256:3c4f935959e3308c62b89d477c1fa11207d604fc08372d8f5f6d15631b84adca"
+    },
+    {
+      "service": "frontend",
+      "status": "running",
+      "health": "healthy",
+      "image_id": "sha256:4b61e184e92481479ad181f40d53f224d03d7fde310466b6aadc7c047482fded"
+    },
+    {
+      "service": "postgres",
+      "status": "running",
+      "health": "healthy",
+      "image_id": "sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777"
+    }
+  ]
+}

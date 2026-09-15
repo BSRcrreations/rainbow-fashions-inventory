@@ -1,0 +1,16 @@
+{
+  "last_piece_race": [
+    {
+      "status": 201,
+      "id": "d0a4e77a-9607-4328-a55c-21c1c885ae1c"
+    },
+    {
+      "status": 400
+    }
+  ],
+  "same_draft_confirmation": "one stock effect",
+  "same_sale_key": "one invoice",
+  "integrity": "HEALTHY",
+  "movement_count": 5,
+  "database": "new disposable database removed after check"
+}

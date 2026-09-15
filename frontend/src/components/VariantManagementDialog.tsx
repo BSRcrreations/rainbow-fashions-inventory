@@ -23,6 +23,7 @@ type ExistingVariant = { id: string; size?: string | null; color?: string | null
 
 export default function VariantManagementDialog({ open, product, variant, canPermanentlyDelete, onClose, onSaved, onEditProduct, onUseExistingVariant }: Props) {
   const toast = useToast();
+  const [minimum, setMinimum] = useState(variant.minimum_stock == null ? "" : String(variant.minimum_stock));
   const [size, setSize] = useState(variant.size ?? "");
   const [color, setColor] = useState(variant.color ?? "");
   const [styleCode, setStyleCode] = useState(variant.style_code ?? "");
@@ -44,7 +45,7 @@ export default function VariantManagementDialog({ open, product, variant, canPer
     event.preventDefault();
     setPending(true); setError(""); setExistingVariant(null);
     try {
-      await api.patch(`/product-variants/${variant.id}`, { size: size || null, color: color || null, style_code: styleCode || null, manufacturer_sku: manufacturerSku || null, mrp: mrp || null, selling_price: sellingPrice, purchase_cost: purchaseCost, internal_sku: sku, barcode, scan_unit: scanUnit, pieces_per_pack: scanUnit === "PACK" ? Number(piecesPerPack) : 1 });
+      await api.patch(`/product-variants/${variant.id}`, { minimum_stock: minimum === "" ? null : Number(minimum), size: size || null, color: color || null, style_code: styleCode || null, manufacturer_sku: manufacturerSku || null, mrp: mrp || null, selling_price: sellingPrice, purchase_cost: purchaseCost, internal_sku: sku, barcode, scan_unit: scanUnit, pieces_per_pack: scanUnit === "PACK" ? Number(piecesPerPack) : 1 });
       toast.success("Variant updated"); onSaved(); onClose();
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === "VARIANT_ALREADY_EXISTS") {
@@ -88,7 +89,7 @@ export default function VariantManagementDialog({ open, product, variant, canPer
         <label className="field-label">MRP<input className="field-input mt-1" type="number" min="0" step="0.01" value={mrp} onChange={(event) => setMrp(event.target.value)} /></label>
         <label className="field-label">Selling price<input className="field-input mt-1" required type="number" min="0" step="0.01" value={sellingPrice} onChange={(event) => setSellingPrice(event.target.value)} /></label>
         <label className="field-label">Purchase cost<input className="field-input mt-1" required type="number" min="0" step="0.01" value={purchaseCost} onChange={(event) => setPurchaseCost(event.target.value)} /></label>
-        <label className="field-label">SKU<input className="field-input mt-1" required value={sku} onChange={(event) => setSku(event.target.value)} /></label>
+        <label className="field-label">Minimum stock for this size<input className="field-input mt-1" type="number" min="0" step="1" value={minimum} placeholder="Use product minimum" onChange={(event) => setMinimum(event.target.value)} /></label><label className="field-label">SKU<input className="field-input mt-1" required value={sku} onChange={(event) => setSku(event.target.value)} /></label>
         <label className="field-label sm:col-span-2">Barcode<input className="field-input mt-1 font-mono" required value={barcode} onChange={(event) => setBarcode(event.target.value)} /></label>
       </div>
       <section className="rounded-lg border border-line bg-slate-50 p-4"><h3 className="font-semibold text-slate-900">Scan method</h3><div className="mt-3 grid gap-4 sm:grid-cols-2"><label className="field-label">Scan as<select className="field-input mt-1" value={scanUnit} onChange={(event) => setScanUnit(event.target.value as "PIECE" | "PACK")}><option value="PIECE">Piece</option><option value="PACK">Pack</option></select></label>{scanUnit === "PACK" ? <label className="field-label">Pieces per pack<input className="field-input mt-1" required type="number" min="2" value={piecesPerPack} onChange={(event) => setPiecesPerPack(event.target.value)} /></label> : <p className="self-end text-sm text-slate-600">Inventory stays in individual pieces.</p>}</div><p className="mt-3 text-xs text-slate-500">Future scans use this conversion; previously staged scans keep their recorded package quantity.</p></section>

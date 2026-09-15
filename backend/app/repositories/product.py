@@ -21,6 +21,13 @@ from app.repositories.base import BaseRepository
 class ProductRepository(BaseRepository[Product]):
     model = Product
 
+    def __init__(self, db, store_id: Optional[UUID] = None):
+        super().__init__(db)
+        self.store_id = store_id
+
+    def _scope(self, query):
+        return query.filter(Product.store_id == self.store_id) if self.store_id is not None else query
+
     def has_stock_history(self, product_id: UUID) -> bool:
         return self.db.query(StockHistory.id).filter(StockHistory.product_id == product_id).first() is not None
 
@@ -123,7 +130,7 @@ class ProductRepository(BaseRepository[Product]):
             query = query.filter(Product.created_at >= datetime.combine(created_from, time.min))
         if created_to:
             query = query.filter(Product.created_at <= datetime.combine(created_to, time.max))
-        return query
+        return self._scope(query)
 
     def _apply_sort(self, query, sort_by: str, sort_dir: str):
         sort_columns = {
@@ -141,7 +148,7 @@ class ProductRepository(BaseRepository[Product]):
 
     def get_with_relations(self, product_id: UUID) -> Optional[Product]:
         return (
-            self.db.query(Product)
+            self._scope(self.db.query(Product))
             .options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand), selectinload(Product.variants).selectinload(ProductVariant.barcode_mappings))
             .filter(Product.id == product_id)
             .first()
@@ -191,7 +198,7 @@ class ProductRepository(BaseRepository[Product]):
         if store_id is not None:
             filters = and_(filters, Product.store_id == store_id)
         return (
-            self.db.query(Product)
+            self._scope(self.db.query(Product))
             .options(joinedload(Product.category), joinedload(Product.subcategory), joinedload(Product.brand), selectinload(Product.variants))
             .filter(filters)
             .first()
@@ -204,4 +211,4 @@ class ProductRepository(BaseRepository[Product]):
         return query.first()
 
     def list_by_ids(self, product_ids: list[UUID]) -> list[Product]:
-        return self.db.query(Product).filter(Product.id.in_(product_ids)).all()
+        return self._scope(self.db.query(Product)).filter(Product.id.in_(product_ids)).all()

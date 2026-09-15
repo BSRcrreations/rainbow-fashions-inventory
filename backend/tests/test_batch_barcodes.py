@@ -109,7 +109,7 @@ def test_confirmation_is_idempotent_after_it_has_already_applied_stock():
     store_id = uuid4()
     session = SimpleNamespace(id=uuid4(), store_id=store_id, status=StockScanStatus.CONFIRMED)
     db = MagicMock()
-    db.query.return_value.filter.return_value.with_for_update.return_value.first.return_value = session
+    db.query.return_value.filter.return_value.populate_existing.return_value.with_for_update.return_value.first.return_value = session
     service = StockScanService(db)
     service._store_id = MagicMock(return_value=store_id)
     service.get_session = MagicMock(return_value=session)

@@ -10,8 +10,8 @@ from uuid import UUID, uuid4
 
 from fastapi import HTTPException, UploadFile, status
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy import func, text
+from sqlalchemy.orm import Session, selectinload
 from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 
@@ -27,6 +27,7 @@ from app.models.product_inventory import ProductInventory
 from app.models.subcategory import SubCategory
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.models.purchase_return import PurchaseReturn, PurchaseReturnItem
 from app.models.purchase_audit import PurchaseAudit
 from app.models.stock_history import StockHistory
 from app.models.supplier import Supplier
@@ -36,6 +37,7 @@ from app.models.purchase_document import DocumentProcessingJob, PurchaseDocument
 from app.repositories.product import ProductRepository
 from app.repositories.purchase import PurchaseRepository
 from app.schemas.purchase import (
+    QuickPurchaseCreate, PurchaseReturnCreate,
     DocumentJobRead,
     ExtractedInvoice,
     PurchaseDetailRead,
@@ -47,6 +49,7 @@ from app.schemas.purchase import (
     PurchaseUploadResponse,
     PurchaseValidationRead,
 )
+from app.services.transaction_idempotency import reserve
 from app.services.file_service import FileService
 from app.services.discount_calculator import (
     DiscountCalculationError,
@@ -65,13 +68,143 @@ class PurchaseService:
         self.repo = PurchaseRepository(db)
         self.product_repo = ProductRepository(db)
 
+    def _locked_purchase(self, purchase_id, current_user):
+        purchase = self.db.query(Purchase).options(selectinload(Purchase.items)).filter(Purchase.id == purchase_id, Purchase.store_id == self._store_id(current_user)).with_for_update().populate_existing().first()
+        if not purchase:
+            raise not_found("Purchase")
+        return purchase
+
+    def quick_purchase(self, payload: QuickPurchaseCreate, current_user: User, idempotency_key: str, purchase_id: UUID | None = None):
+        try:
+            record = None
+            if purchase_id:
+                purchase = self._locked_purchase(purchase_id, current_user)
+                self._ensure_editable(purchase)
+                if purchase.entry_type != "QUICK":
+                    raise bad_request("Open this invoice in Purchase Review.")
+                self._validate_version(purchase, payload.version)
+            else:
+                record, repeated = reserve(self.db, current_user, "QUICK_PURCHASE_DRAFT", idempotency_key, payload.model_dump(mode="json"))
+                if repeated:
+                    return self.get(UUID(record.response_snapshot["purchase_id"]), current_user)
+                purchase = Purchase(store_id=self._store_id(current_user), entry_type="QUICK", purchase_date=payload.purchase_date or date.today(), status=PurchaseStatus.DRAFT, created_by=current_user.id)
+                self.db.add(purchase)
+                self.db.flush()
+            before = self._snapshot(purchase)
+            supplier = None
+            if payload.supplier_id:
+                supplier = self.db.query(Supplier).filter(Supplier.id == payload.supplier_id, Supplier.store_id == self._store_id(current_user), Supplier.is_active.is_(True)).first()
+                if not supplier:
+                    raise bad_request("Select a supplier from this store.")
+            purchase.supplier_id = supplier.id if supplier else None
+            purchase.supplier_name = supplier.name if supplier else payload.supplier_name or "Local Wholesale"
+            purchase.invoice_number = (payload.invoice_number or "").strip() or None
+            purchase.purchase_date = payload.purchase_date or date.today()
+            purchase.received_date = purchase.purchase_date
+            purchase.notes = payload.notes
+            purchase.payment_mode = payload.payment_mode
+            purchase.amount_paid = payload.amount_paid
+            self._assert_unique_invoice(purchase, self._store_id(current_user))
+            ids = [item.product_variant_id for item in payload.items]
+            if len(ids) != len(set(ids)):
+                raise bad_request("Combine quantities for the same size in one line.")
+            variants = {variant.id: variant for variant in self.db.query(ProductVariant).filter(ProductVariant.id.in_(ids), ProductVariant.store_id == self._store_id(current_user), ProductVariant.is_active.is_(True)).all()}
+            if len(variants) != len(ids) or any(not variant.product.is_active for variant in variants.values()):
+                raise bad_request("One selected product or size is no longer available.")
+            purchase.items.clear()
+            self.db.flush()
+            for item in payload.items:
+                variant = variants[item.product_variant_id]
+                purchase.items.append(self._create_purchase_item(purchase.id, PurchaseItemReview(product_id=variant.product_id, product_variant_id=variant.id, product_name=variant.product.name, size=variant.size or "", color=variant.color or "", quantity=item.quantity, purchase_price=item.purchase_cost, selling_price=item.selling_price, mrp=item.mrp, line_total=money(item.purchase_cost * item.quantity), user_verified=True, discount_verified=True)))
+            self._recalculate_totals(purchase)
+            if purchase.amount_paid > purchase.total_amount:
+                raise bad_request("Amount paid cannot exceed the purchase total.")
+            purchase.version += 1
+            self._audit(purchase, "QUICK_DRAFT_SAVED", None, before, self._snapshot(purchase), current_user)
+            if record:
+                record.response_snapshot = {"purchase_id": str(purchase.id)}
+            self.db.commit()
+            return self.get(purchase.id, current_user)
+        except Exception:
+            self.db.rollback()
+            raise
+
+    async def attach_photo(self, purchase_id, file, current_user):
+        purchase = self._locked_purchase(purchase_id, current_user)
+        self._ensure_editable(purchase)
+        uploaded = await FileService(self.db).save_invoice_file(file, current_user.id)
+        purchase.uploaded_file_id = uploaded.id
+        self._audit(purchase, "PHOTO_ATTACHED", None, {}, {"filename": uploaded.original_filename}, current_user)
+        self.db.commit()
+        return self.get(purchase.id, current_user)
+
+    def list_returns(self, purchase_id, current_user):
+        self.get(purchase_id, current_user)
+        return self.db.query(PurchaseReturn).options(selectinload(PurchaseReturn.items)).filter(PurchaseReturn.purchase_id == purchase_id, PurchaseReturn.store_id == self._store_id(current_user)).order_by(PurchaseReturn.created_at.desc()).all()
+
+    def create_return(self, purchase_id, payload: PurchaseReturnCreate, current_user, idempotency_key):
+        try:
+            record, repeated = reserve(self.db, current_user, "PURCHASE_RETURN", idempotency_key, {"purchase_id": str(purchase_id), **payload.model_dump(mode="json")})
+            if repeated:
+                return self.db.query(PurchaseReturn).filter_by(id=UUID(record.response_snapshot["return_id"]), store_id=self._store_id(current_user)).one()
+            purchase = self._locked_purchase(purchase_id, current_user)
+            if purchase.status != PurchaseStatus.CONFIRMED:
+                raise bad_request("Only confirmed purchases can be returned.")
+            item_map = {item.id: item for item in purchase.items}
+            ids = [item.purchase_item_id for item in payload.items]
+            if len(ids) != len(set(ids)) or not set(ids).issubset(item_map):
+                raise bad_request("Select each received purchase item once.")
+            previous = dict(self.db.query(PurchaseReturnItem.purchase_item_id, func.sum(PurchaseReturnItem.quantity)).join(PurchaseReturn).filter(PurchaseReturn.purchase_id == purchase.id, PurchaseReturn.store_id == self._store_id(current_user)).group_by(PurchaseReturnItem.purchase_item_id).all())
+            result = PurchaseReturn(store_id=self._store_id(current_user), purchase_id=purchase.id, supplier_id=purchase.supplier_id, reason=payload.reason.strip(), credit_note=payload.credit_note, credit_amount=0, created_by=current_user.id)
+            self.db.add(result)
+            self.db.flush()
+            from app.services.sale_service import SaleService
+            stock = SaleService(self.db)
+            for product_id in sorted({item_map[item_id].product_id for item_id in ids}, key=str):
+                stock._locked_product_inventory(product_id, self._store_id(current_user))
+            credit = Decimal("0")
+            for requested in sorted(payload.items, key=lambda item: str(item_map[item.purchase_item_id].product_variant_id)):
+                item = item_map[requested.purchase_item_id]
+                if requested.quantity > int(item.accepted_quantity) - int(previous.get(item.id, 0)):
+                    raise bad_request(f"Return quantity exceeds the received quantity for {item.product_name}.")
+                variant = self.db.query(ProductVariant).filter_by(id=item.product_variant_id, store_id=self._store_id(current_user)).with_for_update().first()
+                if not variant or variant.current_stock < requested.quantity:
+                    raise bad_request(f"There is not enough stock to return {item.product_name}.")
+                product, inventory = stock._locked_product_inventory(variant.product_id, self._store_id(current_user))
+                before = variant.current_stock
+                remaining = requested.quantity
+                lots = self.db.query(InventoryCostLot).filter(InventoryCostLot.product_variant_id == variant.id, InventoryCostLot.store_id == self._store_id(current_user), InventoryCostLot.remaining_quantity > 0).order_by((InventoryCostLot.purchase_item_id == item.id).desc(), InventoryCostLot.received_date, InventoryCostLot.id).with_for_update().all()
+                for lot in lots:
+                    used = min(remaining, lot.remaining_quantity)
+                    lot.remaining_quantity -= used
+                    remaining -= used
+                    if not remaining:
+                        break
+                if remaining:
+                    raise conflict("Cost history is incomplete for this size. Reconcile inventory before returning stock.", "COST_LOT_SHORTAGE")
+                variant.current_stock -= requested.quantity
+                stock._sync_variant_total(product, inventory)
+                amount = money(item.net_line_amount * (previous.get(item.id, 0) + requested.quantity) / item.accepted_quantity) - money(item.net_line_amount * previous.get(item.id, 0) / item.accepted_quantity)
+                credit += amount
+                self.db.add(PurchaseReturnItem(purchase_return_id=result.id, purchase_item_id=item.id, product_variant_id=variant.id, quantity=requested.quantity, credit_amount=amount))
+                self.db.add(StockHistory(store_id=self._store_id(current_user), product_id=product.id, product_variant_id=variant.id, movement_type=StockMovementType.SUPPLIER_RETURN, qty=requested.quantity, before_stock=before, after_stock=variant.current_stock, reference=f"Purchase return {result.id}", purchase_id=purchase.id, purchase_item_id=item.id, created_by=current_user.id, unit_cost=item.landed_unit_cost))
+            result.credit_amount = credit
+            purchase.version += 1
+            self._audit(purchase, "RETURNED", payload.reason, {}, {"return_id": str(result.id), "credit_note": payload.credit_note, "credit_amount": str(credit)}, current_user)
+            record.response_snapshot = {"return_id": str(result.id)}
+            self.db.commit()
+            return result
+        except Exception:
+            self.db.rollback()
+            raise
+
     async def upload_invoice(self, file: UploadFile, current_user: User) -> PurchaseUploadResponse:
         store_id = self._store_id(current_user)
         uploaded_file = await FileService(self.db).save_invoice_file(file, current_user.id)
         raw_text = get_ocr_service().extract_text(Path(uploaded_file.storage_path))
         extracted_invoice = InvoiceParser().parse(raw_text)
         review_items = self._build_review_items(extracted_invoice, store_id)
-        supplier = self._find_supplier(extracted_invoice.supplier)
+        supplier = self._find_supplier(extracted_invoice.supplier, store_id)
 
         purchase_date = extracted_invoice.date or date.today()
         image_hash = sha256(Path(uploaded_file.storage_path).read_bytes()).hexdigest()
@@ -126,7 +259,7 @@ class PurchaseService:
             )
         extracted_invoice = ExtractedInvoice.model_validate(job.result["extracted_invoice"])
         review_items = [PurchaseItemReview.model_validate(item) for item in job.result["review_items"]]
-        supplier = self._find_supplier(extracted_invoice.supplier)
+        supplier = self._find_supplier(extracted_invoice.supplier, store_id)
         purchase = Purchase(
             store_id=store_id,
             supplier_id=supplier.id if supplier else None,
@@ -148,6 +281,9 @@ class PurchaseService:
         )
         self.db.add(purchase)
         self.db.flush()
+        for review_item in review_items:
+            purchase.items.append(self._create_purchase_item(purchase.id, review_item))
+        self._recalculate_totals(purchase)
         self._audit(purchase, "CREATED_FROM_DOCUMENT", None, {}, self._snapshot(purchase), current_user)
         self.db.commit()
         purchase = self.repo.get_with_items(purchase.id, store_id)
@@ -156,8 +292,8 @@ class PurchaseService:
         warning = self._duplicate_warning(purchase, store_id)
         return PurchaseUploadResponse(purchase=purchase, extracted_invoice=extracted_invoice, review_items=review_items, duplicate_warning=warning)
 
-    def list(self, current_user: User, skip: int = 0, limit: int = 50, status_filter: Optional[str] = None) -> list[Purchase]:
-        return self.repo.list_recent(self._store_id(current_user), skip, limit, status_filter)
+    def list(self, current_user: User, skip: int = 0, limit: int = 50, status_filter: Optional[str] = None, search: Optional[str] = None) -> list[Purchase]:
+        return self.repo.list_recent(self._store_id(current_user), skip, limit, status_filter, search)
 
     def get(self, purchase_id: UUID, current_user: User) -> Purchase:
         purchase = self.repo.get_with_items(purchase_id, self._store_id(current_user))
@@ -166,7 +302,7 @@ class PurchaseService:
         return purchase
 
     def detail(self, purchase_id: UUID, current_user: User) -> PurchaseDetailRead:
-        purchase = self.get(purchase_id, current_user)
+        purchase = self._locked_purchase(purchase_id, current_user)
         base = PurchaseRead.model_validate(purchase).model_dump()
         supplier = purchase.supplier
         document = self.db.get(PurchaseDocument, purchase.purchase_document_id) if purchase.purchase_document_id else None
@@ -218,7 +354,7 @@ class PurchaseService:
         return PurchaseDetailRead.model_validate(base)
 
     def invoice_file(self, purchase_id: UUID, current_user: User):
-        purchase = self.get(purchase_id, current_user)
+        purchase = self._locked_purchase(purchase_id, current_user)
         if not purchase.uploaded_file:
             raise not_found("Invoice document")
         return purchase.uploaded_file
@@ -238,8 +374,54 @@ class PurchaseService:
         except (OSError, ValueError) as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error_payload("The HEIC invoice image could not be prepared for preview.", "INVOICE_PREVIEW_UNAVAILABLE")) from exc
 
+    def save_complete_draft(self, purchase_id, payload, current_user, idempotency_key):
+        if not idempotency_key:
+            raise bad_request("Save this draft again with a new request reference.")
+        try:
+            record, repeated = reserve(self.db, current_user, "PURCHASE_DRAFT_SAVE", idempotency_key,
+                                       {"purchase_id": str(purchase_id), **payload.model_dump(mode="json")})
+            if repeated:
+                return self.get(purchase_id, current_user)
+            purchase = self._locked_purchase(purchase_id, current_user)
+            self._ensure_editable(purchase)
+            if payload.header.version is None:
+                raise bad_request("Refresh the purchase before saving changes.")
+            self._validate_version(purchase, payload.header.version)
+            before = self._snapshot(purchase)
+            changes = payload.header.model_dump(exclude_unset=True, exclude={"version", "reason"})
+            if changes.get("supplier_id"):
+                supplier = self.db.query(Supplier).filter_by(id=changes["supplier_id"], store_id=self._store_id(current_user), is_active=True).first()
+                if not supplier:
+                    raise bad_request("Select a supplier from this store.")
+                changes["supplier_name"] = supplier.name
+            for field, value in changes.items():
+                setattr(purchase, field, value.upper() if field == "currency" and value else value)
+            # Only editable draft rows are replaced; posted evidence cannot enter this path.
+            purchase.items.clear()
+            self.db.flush()
+            for entry in payload.items:
+                if entry.product_variant_id:
+                    variant = self.db.query(ProductVariant).filter_by(id=entry.product_variant_id, store_id=self._store_id(current_user), is_active=True).first()
+                    if not variant:
+                        raise bad_request("Select an active size from this store.")
+                    if entry.product_id and entry.product_id != variant.product_id:
+                        raise bad_request("The selected size does not belong to this product.")
+                item = self._create_purchase_item(purchase.id, entry)
+                self._synchronize_item_catalog(item, current_user)
+                purchase.items.append(item)
+            self._recalculate_totals(purchase)
+            self._assert_unique_invoice(purchase, self._store_id(current_user))
+            purchase.version += 1
+            self._audit(purchase, "DRAFT_SAVED", payload.header.reason, before, self._snapshot(purchase), current_user)
+            record.response_snapshot = {"purchase_id": str(purchase.id)}
+            self.db.commit()
+            return self.get(purchase.id, current_user)
+        except Exception:
+            self.db.rollback()
+            raise
+
     def patch(self, purchase_id: UUID, payload: PurchasePatch, current_user: User) -> Purchase:
-        purchase = self.get(purchase_id, current_user)
+        purchase = self._locked_purchase(purchase_id, current_user)
         self._ensure_editable(purchase)
         self._validate_version(purchase, payload.version)
         before = self._snapshot(purchase)
@@ -263,7 +445,7 @@ class PurchaseService:
         return self.get(purchase.id, current_user)
 
     def add_item(self, purchase_id: UUID, item: PurchaseItemReview, current_user: User) -> Purchase:
-        purchase = self.get(purchase_id, current_user)
+        purchase = self._locked_purchase(purchase_id, current_user)
         self._ensure_editable(purchase)
         before = self._snapshot(purchase)
         purchase_item = self._create_purchase_item(purchase.id, item)
@@ -276,7 +458,7 @@ class PurchaseService:
         return self.get(purchase.id, current_user)
 
     def patch_item(self, purchase_id: UUID, item_id: UUID, payload: PurchaseItemPatch, current_user: User) -> Purchase:
-        purchase = self.get(purchase_id, current_user)
+        purchase = self._locked_purchase(purchase_id, current_user)
         self._ensure_editable(purchase)
         self._validate_version(purchase, payload.version)
         item = next((candidate for candidate in purchase.items if candidate.id == item_id), None)
@@ -302,7 +484,7 @@ class PurchaseService:
         return self.get(purchase.id, current_user)
 
     def delete_item(self, purchase_id: UUID, item_id: UUID, version: Optional[int], current_user: User) -> Purchase:
-        purchase = self.get(purchase_id, current_user)
+        purchase = self._locked_purchase(purchase_id, current_user)
         self._ensure_editable(purchase)
         self._validate_version(purchase, version)
         item = next((candidate for candidate in purchase.items if candidate.id == item_id), None)
@@ -317,9 +499,9 @@ class PurchaseService:
         return self.get(purchase.id, current_user)
 
     def validate(self, purchase_id: UUID, current_user: User) -> PurchaseValidationRead:
-        purchase = self.get(purchase_id, current_user)
+        purchase = self._locked_purchase(purchase_id, current_user)
         messages: list[str] = []
-        if not purchase.invoice_number or not purchase.invoice_number.strip():
+        if purchase.entry_type != "QUICK" and (not purchase.invoice_number or not purchase.invoice_number.strip()):
             messages.append("Enter the supplier invoice number.")
         if not purchase.items and not purchase.reviewed_payload.get("items"):
             messages.append("Add at least one purchase item.")
@@ -328,6 +510,8 @@ class PurchaseService:
                 messages.append(f"Quantity must be greater than zero on line {index}.")
             if not item.product_name.strip():
                 messages.append(f"Select a product for line {index}.")
+        if purchase.amount_paid > purchase.total_amount:
+            messages.append("Amount paid cannot exceed the purchase total.")
         return PurchaseValidationRead(
             valid=not messages,
             messages=messages,
@@ -338,7 +522,7 @@ class PurchaseService:
         )
 
     def cancel(self, purchase_id: UUID, reason: str, version: Optional[int], current_user: User) -> Purchase:
-        purchase = self.get(purchase_id, current_user)
+        purchase = self._locked_purchase(purchase_id, current_user)
         if purchase.status == PurchaseStatus.CONFIRMED:
             raise bad_request("This purchase is already confirmed. Use the correction workflow.")
         if purchase.status == PurchaseStatus.CANCELLED:
@@ -352,7 +536,7 @@ class PurchaseService:
 
     def update_review(self, purchase_id: UUID, payload: PurchaseReviewUpdate, current_user: User) -> Purchase:
         store_id = self._store_id(current_user)
-        purchase = self.get(purchase_id, current_user)
+        purchase = self._locked_purchase(purchase_id, current_user)
         self._ensure_editable(purchase)
         before = self._snapshot(purchase)
         purchase.supplier_name = payload.supplier_name
@@ -376,11 +560,21 @@ class PurchaseService:
         return self.get(purchase_id, current_user)
 
     def confirm(self, purchase_id: UUID, current_user: User) -> Purchase:
-        purchase = self.get(purchase_id, current_user)
+        try:
+            result = self._confirm(purchase_id, current_user)
+            self.db.commit()
+            return result
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def _confirm(self, purchase_id: UUID, current_user: User) -> Purchase:
+        purchase = self._locked_purchase(purchase_id, current_user)
         if purchase.status == PurchaseStatus.CONFIRMED:
-            raise bad_request("Purchase is already confirmed")
-        if purchase.status == PurchaseStatus.CANCELLED:
+            return purchase
+        if purchase.status in {PurchaseStatus.CANCELLED, PurchaseStatus.VOIDED}:
             raise bad_request("Cancelled purchases cannot be confirmed")
+        self._assert_unique_invoice(purchase, self._store_id(current_user))
 
         validation = self.validate(purchase_id, current_user)
         if not validation.valid:
@@ -395,10 +589,14 @@ class PurchaseService:
                 purchase.items.append(self._create_purchase_item(purchase.id, item))
             self.db.flush()
 
-        for purchase_item in purchase.items:
+        for product_id in sorted({item.product_id or item.matched_product_id for item in purchase.items if item.product_id or item.matched_product_id}, key=str):
+            self.db.query(Product).filter(Product.id == product_id, Product.store_id == self._store_id(current_user)).with_for_update().first()
+        for purchase_item in sorted(purchase.items, key=lambda item: str(item.product_variant_id or item.id)):
             product = self._resolve_product_for_item(purchase_item, current_user)
             variant = self._resolve_variant_for_purchase_item(product, purchase_item, current_user)
             received_quantity = purchase_item.accepted_quantity
+            if received_quantity <= 0:
+                raise bad_request("Received quantity must be greater than zero.")
             if received_quantity != received_quantity.to_integral_value():
                 raise bad_request("Inventory quantities must be whole units for this store.")
             stock_quantity = int(received_quantity)
@@ -415,7 +613,13 @@ class PurchaseService:
             variant.average_cost = (existing_value + received_value) / variant.current_stock if variant.current_stock else Decimal("0")
 
             inventory = self._get_or_create_inventory(product.id, current_user.store_id)
-            inventory.current_stock += stock_quantity
+            self.db.flush()
+            total = self.db.query(func.coalesce(func.sum(ProductVariant.current_stock), 0)).filter(ProductVariant.product_id == product.id, ProductVariant.store_id == current_user.store_id).scalar()
+            inventory.current_stock = product.current_stock = int(total)
+            if purchase_item.selling_price is not None:
+                variant.selling_price = purchase_item.selling_price
+            if purchase_item.mrp is not None:
+                variant.mrp = purchase_item.mrp
 
             purchase_item.product_id = product.id
             purchase_item.product_variant_id = variant.id
@@ -458,13 +662,13 @@ class PurchaseService:
         purchase.ai_processing_status = "CONFIRMED"
         purchase.version += 1
         self._audit(purchase, "CONFIRMED", None, before, self._snapshot(purchase), current_user)
-        self.db.commit()
+        self.db.flush()
         return self.get(purchase.id, current_user)
 
     def _build_review_items(self, extracted_invoice: ExtractedInvoice, store_id: UUID) -> list[PurchaseItemReview]:
         review_items: list[PurchaseItemReview] = []
         for item in extracted_invoice.items:
-            matched, match_status = self._match_product(item.barcode, item.product_name, item.size, item.color)
+            matched, match_status = self._match_product(item.barcode, item.product_name, item.size, item.color, store_id)
             category = self._find_category(item.category, store_id)
             brand = self._find_brand(category.id, item.brand, store_id) if category else None
             review_items.append(
@@ -614,6 +818,7 @@ class PurchaseService:
             product = self.db.get(Product, product_id)
             if product and product.store_id == store_id:
                 return product
+            raise bad_request("The selected product is not available in this store.")
 
         category = self.db.query(Category).filter(Category.id == item.category_id, Category.store_id == store_id).first() if item.category_id else self._get_or_create_category(item.category_name, store_id)
         brand = self.db.query(Brand).filter(Brand.id == item.brand_id, Brand.store_id == store_id).first() if item.brand_id else self._get_or_create_brand(category.id if category else None, item.brand_name, store_id)
@@ -659,11 +864,19 @@ class PurchaseService:
                     ProductVariant.product_id == product.id,
                     ProductVariant.store_id == store_id,
                 )
+                .with_for_update()
                 .first()
             )
             if not variant:
                 raise bad_request("Selected product variant does not belong to this product or store")
             return variant
+
+        candidates = self.db.query(ProductVariant).filter(ProductVariant.product_id == product.id, ProductVariant.store_id == store_id, ProductVariant.is_active.is_(True)).with_for_update().all()
+        if candidates and not item.create_new_product:
+            matches = [variant for variant in candidates if (variant.size or "").strip().casefold() == (item.size or "").strip().casefold() and (variant.color or "").strip().casefold() == (item.color or "").strip().casefold()]
+            if len(matches) == 1:
+                return matches[0]
+            raise bad_request(f"Choose the exact size for {product.name} before confirming the purchase.")
 
         def normalized(value: Optional[str]) -> str:
             return (value or "").strip().casefold()
@@ -758,6 +971,7 @@ class PurchaseService:
         inventory = (
             self.db.query(ProductInventory)
             .filter(ProductInventory.product_id == product_id, ProductInventory.store_id == store_id)
+            .with_for_update()
             .first()
         )
         if inventory:
@@ -767,12 +981,12 @@ class PurchaseService:
         self.db.flush()
         return inventory
 
-    def _match_product(self, barcode: Optional[str], name: str, size: str, color: str) -> tuple[Optional[Product], str]:
+    def _match_product(self, barcode: Optional[str], name: str, size: str, color: str, store_id: UUID) -> tuple[Optional[Product], str]:
         if barcode:
-            product = self.db.query(Product).filter(Product.barcode == barcode.strip()).first()
+            product = self.db.query(Product).filter(Product.store_id == store_id, Product.barcode == barcode.strip()).first()
             if product:
                 return product, "EXACT_BARCODE"
-        product = self.db.query(Product).filter(Product.sku == name.strip()).first()
+        product = self.db.query(Product).filter(Product.store_id == store_id, Product.sku == name.strip()).first()
         if product:
             return product, "EXACT_SKU"
         product = self.db.query(Product).filter(func.lower(Product.name) == name.strip().lower(), func.lower(Product.size) == size.strip().lower(), func.lower(Product.color) == color.strip().lower()).first()
@@ -828,10 +1042,10 @@ class PurchaseService:
         self.db.flush()
         return subcategory
 
-    def _find_supplier(self, name: Optional[str]) -> Optional[Supplier]:
+    def _find_supplier(self, name: Optional[str], store_id: UUID) -> Optional[Supplier]:
         if not name:
             return None
-        return self.db.query(Supplier).filter(func.lower(Supplier.name) == name.strip().casefold(), Supplier.is_active.is_(True)).first()
+        return self.db.query(Supplier).filter(Supplier.store_id == store_id, func.lower(Supplier.name) == name.strip().casefold(), Supplier.is_active.is_(True)).first()
 
     def _ensure_editable(self, purchase: Purchase) -> None:
         if purchase.status == PurchaseStatus.CONFIRMED:
@@ -848,6 +1062,10 @@ class PurchaseService:
             )
 
     def _assert_unique_invoice(self, purchase: Purchase, store_id: UUID) -> None:
+        if purchase.invoice_number:
+            identity = f"{store_id}:{purchase.supplier_id or (purchase.supplier_name or '').strip().casefold()}:{purchase.invoice_number.strip().casefold()}"
+            lock_id = int.from_bytes(sha256(identity.encode()).digest()[:8], "big", signed=True)
+            self.db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id})
         duplicate = self.repo.find_duplicate_invoice(store_id, purchase.supplier_id, purchase.supplier_name, purchase.invoice_number, purchase.id)
         if duplicate:
             raise conflict("This invoice number already exists for this supplier.")

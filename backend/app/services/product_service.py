@@ -39,9 +39,10 @@ from app.services.file_service import FileService
 
 
 class ProductService:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, store_id: Optional[UUID] = None) -> None:
         self.db = db
-        self.repo = ProductRepository(db)
+        self.store_id = store_id
+        self.repo = ProductRepository(db, store_id)
 
     def list(
         self,
@@ -60,8 +61,8 @@ class ProductService:
         sort_dir: str = "asc",
     ) -> list[Product]:
         return self.repo.list_with_relations(
-            skip,
-            limit,
+            max(0, skip),
+            min(100, max(1, limit)),
             search,
             category_id,
             brand_id,
@@ -134,6 +135,8 @@ class ProductService:
         return product
 
     def create(self, payload: ProductCreate, store_id: UUID | None = None) -> Product:
+        if payload.current_stock:
+            raise bad_request("Create the product first, then use Quick Stock Entry or Opening Stock Import to add its stock.")
         self._ensure_hierarchy(payload.category_id, payload.subcategory_id, payload.brand_id)
         self._validate_unique_product(payload.category_id, payload.subcategory_id, payload.brand_id, payload.name, store_id=store_id)
         if payload.sku and self.repo.get_by_sku(payload.sku):
@@ -341,29 +344,7 @@ class ProductService:
         return {"updated": len(products)}
 
     def bulk_stock_update(self, payload: ProductBulkStockUpdate, current_user: User) -> dict[str, int]:
-        products = self._products_for_bulk(payload.product_ids)
-        for product in products:
-            before_stock = product.current_stock
-            after_stock = before_stock + payload.qty if payload.direction == "INCREASE" else before_stock - payload.qty
-            if after_stock < 0:
-                raise bad_request(f"Stock cannot become negative for {product.name}")
-            product.current_stock = after_stock
-            inventory = self._get_or_create_inventory(product.id, current_user.store_id)
-            inventory.current_stock = after_stock
-            self.db.add(
-                StockHistory(
-                    product_id=product.id,
-                    store_id=current_user.store_id,
-                    movement_type=StockMovementType.MANUAL_ADJUSTMENT,
-                    qty=payload.qty,
-                    before_stock=before_stock,
-                    after_stock=after_stock,
-                    reference=payload.reference or "Bulk stock update",
-                    created_by=current_user.id,
-                )
-            )
-        self.db.commit()
-        return {"updated": len(products)}
+        raise bad_request("Choose an exact size in Stock Adjustment. Stock cannot be changed from the Products page.", "STOCK_FIELDS_READ_ONLY")
 
     def export_csv(self, product_ids: Optional[list[UUID]] = None) -> str:
         products = self.repo.list_by_ids(product_ids) if product_ids else self.repo.list_with_relations(0, 10000)
@@ -456,17 +437,18 @@ class ProductService:
         output = StringIO()
         writer = csv.writer(output)
         writer.writerow(["sku", "barcode", "product_date", "name", "brand", "category", "subcategory", "size", "color", "purchase_price", "selling_price", "stock", "minimum_stock", "active"])
-        writer.writerow(["RF-SKU-SAMPLE", "RF00000000000001", date.today().isoformat(), "Cotton Kurti", "Rainbow", "Kurtis", "General", "M", "Blue", "500", "799", "10", "2", "true"])
+        writer.writerow(["RF-SKU-SAMPLE", "RF00000000000001", date.today().isoformat(), "Cotton Kurti", "Rainbow", "Kurtis", "General", "M", "Blue", "500", "799", "0", "2", "true"])
         return output.getvalue()
 
     def _ensure_hierarchy(self, category_id: UUID, subcategory_id: UUID, brand_id: UUID) -> None:
-        if not self.db.get(Category, category_id):
+        category = self.db.get(Category, category_id)
+        if not category or (self.store_id is not None and category.store_id != self.store_id):
             raise not_found("Category")
         subcategory = self.db.get(SubCategory, subcategory_id)
-        if not subcategory:
+        if not subcategory or (self.store_id is not None and subcategory.store_id != self.store_id):
             raise not_found("Subcategory")
         brand = self.db.get(Brand, brand_id)
-        if not brand:
+        if not brand or (self.store_id is not None and brand.store_id != self.store_id):
             raise not_found("Brand")
         if subcategory.category_id != category_id:
             raise bad_request("Subcategory does not belong to the selected category")
@@ -590,14 +572,14 @@ class ProductService:
     def _find_category_by_name(self, name: str) -> Optional[Category]:
         if not name:
             return None
-        return self.db.query(Category).filter(Category.name.ilike(name.strip())).first()
+        return self.db.query(Category).filter(Category.name.ilike(name.strip()), Category.store_id == self.store_id).first()
 
     def _find_brand_by_name(self, category_id: UUID, name: str) -> Optional[Brand]:
         if not name:
             return None
-        return self.db.query(Brand).filter(Brand.category_id == category_id, Brand.name.ilike(name.strip())).first()
+        return self.db.query(Brand).filter(Brand.category_id == category_id, Brand.name.ilike(name.strip()), Brand.store_id == self.store_id).first()
 
     def _find_subcategory_by_name(self, category_id: UUID, name: str) -> Optional[SubCategory]:
         if not name:
             return None
-        return self.db.query(SubCategory).filter(SubCategory.category_id == category_id, SubCategory.name.ilike(name.strip())).first()
+        return self.db.query(SubCategory).filter(SubCategory.category_id == category_id, SubCategory.name.ilike(name.strip()), SubCategory.store_id == self.store_id).first()

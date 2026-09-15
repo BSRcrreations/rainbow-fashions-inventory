@@ -13,6 +13,7 @@ from app.schemas.common import ORMBaseModel
 
 
 class StockScanSessionCreate(BaseModel):
+    session_id: Optional[UUID] = None
     mode: StockScanMode = StockScanMode.PHYSICAL_COUNT
     quantity_mode: StockScanQuantityMode = StockScanQuantityMode.INCREMENT
     purchase_id: Optional[UUID] = None
@@ -70,6 +71,13 @@ class VariantStockStageRequest(StockScanRequest):
 
     product_variant_id: UUID
     confirm_shared_barcode: bool = False
+
+
+class QuickStockItemSet(BaseModel):
+    """Absolute quantity for one consciously selected variant; safe to retry."""
+    product_variant_id: UUID
+    quantity: int = Field(ge=1, le=100000)
+    unit_cost: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
 
 
 class SharedBarcodeTargetRead(BaseModel):

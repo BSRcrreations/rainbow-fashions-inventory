@@ -4,6 +4,7 @@ from datetime import datetime, time, timezone
 from decimal import Decimal
 
 from sqlalchemy import func
+from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.brand import Brand
@@ -22,15 +23,18 @@ class DashboardService:
         self.db = db
 
     def summary(self, current_user: User | None = None) -> DashboardSummary:
-        total_products = self.db.query(func.count(Product.id)).scalar() or 0
-        total_stock = self.db.query(func.coalesce(func.sum(Product.current_stock), 0)).scalar() or 0
+        if current_user is None or current_user.store_id is None:
+            raise HTTPException(status_code=403, detail="A store is required.")
+        store_id = current_user.store_id
+        total_products = self.db.query(func.count(Product.id)).filter(Product.store_id == store_id).scalar() or 0
+        total_stock = self.db.query(func.coalesce(func.sum(Product.current_stock), 0)).filter(Product.store_id == store_id).scalar() or 0
         inventory_value = (
             InventoryValuationService(self.db).current_value(current_user.store_id)
             if current_user and current_user.store_id
             else Decimal("0")
         )
         low_stock_products = (
-            self.db.query(Product)
+            self.db.query(Product).filter(Product.store_id == store_id)
             .options(joinedload(Product.brand), joinedload(Product.category))
             .filter(Product.current_stock <= Product.minimum_stock)
             .order_by(Product.current_stock.asc())
@@ -38,36 +42,37 @@ class DashboardService:
             .all()
         )
         recent_purchases = (
-            self.db.query(Purchase)
+            self.db.query(Purchase).filter(Purchase.store_id == store_id)
             .options(joinedload(Purchase.items))
             .order_by(Purchase.created_at.desc())
             .limit(5)
             .all()
         )
         recent_stock_changes = (
-            self.db.query(StockHistory)
+            self.db.query(StockHistory).filter(StockHistory.store_id == store_id)
             .order_by(StockHistory.movement_date.desc())
             .limit(10)
             .all()
         )
         latest_products = (
-            self.db.query(Product)
+            self.db.query(Product).filter(Product.store_id == store_id)
             .options(joinedload(Product.brand), joinedload(Product.category))
             .order_by(Product.created_at.desc())
             .limit(5)
             .all()
         )
-        out_of_stock = self.db.query(func.count(Product.id)).filter(Product.current_stock == 0).scalar() or 0
+        out_of_stock = self.db.query(func.count(Product.id)).filter(Product.store_id == store_id).filter(Product.current_stock == 0).scalar() or 0
         low_stock = (
-            self.db.query(func.count(Product.id))
+            self.db.query(func.count(Product.id)).filter(Product.store_id == store_id)
             .filter(Product.current_stock > 0, Product.current_stock <= Product.minimum_stock)
             .scalar()
             or 0
         )
-        in_stock = self.db.query(func.count(Product.id)).filter(Product.current_stock > Product.minimum_stock).scalar() or 0
+        in_stock = self.db.query(func.count(Product.id)).filter(Product.store_id == store_id).filter(Product.current_stock > Product.minimum_stock).scalar() or 0
         category_distribution = (
             self.db.query(Category.name, func.count(Product.id))
             .join(Product, Product.category_id == Category.id)
+            .filter(Product.store_id == store_id)
             .group_by(Category.name)
             .order_by(func.count(Product.id).desc())
             .limit(8)
@@ -76,6 +81,7 @@ class DashboardService:
         brand_distribution = (
             self.db.query(Brand.name, func.count(Product.id))
             .join(Product, Product.brand_id == Brand.id)
+            .filter(Product.store_id == store_id)
             .group_by(Brand.name)
             .order_by(func.count(Product.id).desc())
             .limit(8)
@@ -87,7 +93,7 @@ class DashboardService:
             start_of_day = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
             end_of_day = datetime.combine(now.date(), time.max, tzinfo=timezone.utc)
             sale_movements = (
-                self.db.query(StockHistory)
+                self.db.query(StockHistory).filter(StockHistory.store_id == store_id)
                 .options(joinedload(StockHistory.product))
                 .filter(
                     StockHistory.movement_type == StockMovementType.SALE,

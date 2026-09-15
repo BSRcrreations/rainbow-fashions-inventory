@@ -44,7 +44,7 @@ class VariantManagementService:
         if not sku:
             raise bad_request("SKU is required for every variant.", "VARIANT_SKU_REQUIRED")
         self._validate_unique(variant, barcode, sku, values.get("size", variant.size), values.get("color", variant.color))
-        for field, source in (("size", "size"), ("color", "color"), ("style_code", "style_code"), ("manufacturer_sku", "manufacturer_sku"), ("mrp", "mrp"), ("selling_price", "selling_price"), ("internal_sku", "internal_sku"), ("is_active", "is_active")):
+        for field, source in (("minimum_stock", "minimum_stock"), ("size", "size"), ("color", "color"), ("style_code", "style_code"), ("manufacturer_sku", "manufacturer_sku"), ("mrp", "mrp"), ("selling_price", "selling_price"), ("internal_sku", "internal_sku"), ("is_active", "is_active")):
             if source in values:
                 setattr(variant, field, values[source])
         if "purchase_cost" in values:
@@ -291,4 +291,4 @@ class VariantManagementService:
 
     @staticmethod
     def _snapshot(variant: ProductVariant) -> dict:
-        return {"id": str(variant.id), "size": variant.size, "color": variant.color, "mrp": str(variant.mrp) if variant.mrp is not None else None, "selling_price": str(variant.selling_price), "purchase_cost": str(variant.last_purchase_cost), "barcode": variant.barcode, "internal_sku": variant.internal_sku, "scan_unit": variant.scan_unit, "pieces_per_pack": variant.pieces_per_pack, "is_active": variant.is_active}
+        return {"minimum_stock": getattr(variant, "minimum_stock", None), "id": str(variant.id), "size": variant.size, "color": variant.color, "mrp": str(variant.mrp) if variant.mrp is not None else None, "selling_price": str(variant.selling_price), "purchase_cost": str(variant.last_purchase_cost), "barcode": variant.barcode, "internal_sku": variant.internal_sku, "scan_unit": variant.scan_unit, "pieces_per_pack": variant.pieces_per_pack, "is_active": variant.is_active}
