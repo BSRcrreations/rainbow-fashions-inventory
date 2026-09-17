@@ -413,6 +413,34 @@ def test_formal_purchase_atomic_save_retry_stale_version_and_failed_line(shop):
     assert [v.current_stock for v in variants]==[0,3]
 
 
+def test_formal_purchase_exact_barcode_reuses_existing_product_and_variant(shop):
+    from app.schemas.purchase import PurchaseDraftSave
+    db,owner,product,variants=shop; service=PurchaseService(db)
+    draft=service.quick_purchase(QuickPurchaseCreate(items=[{'product_variant_id':variants[0].id,'quantity':1,'purchase_cost':10}]),owner,str(uuid4()))
+    payload=PurchaseDraftSave(
+        header={'version':draft.version,'invoice_number':'CERT-FORMAL-EXACT-ID'},
+        items=[{
+            'product_name':product.name,
+            'category_id':product.category_id,
+            'brand_id':product.brand_id,
+            'barcode':variants[1].barcode,
+            'internal_sku':variants[1].internal_sku,
+            'size':'L',
+            'color':'Black',
+            'quantity':2,
+            'purchase_price':10,
+            'line_total':20,
+            'user_verified':True,
+        }],
+    )
+    saved=service.save_complete_draft(draft.id,payload,owner,str(uuid4()))
+    service.confirm(saved.id,owner)
+    db.expire_all()
+    assert db.query(Product).filter(Product.store_id==owner.store_id,Product.name==product.name).count()==1
+    assert db.query(ProductVariant).filter(ProductVariant.product_id==product.id).count()==2
+    assert [variant.current_stock for variant in variants]==[0,2]
+
+
 @pytest.mark.parametrize('role', ['MANAGER','CASHIER','STOCK_STAFF','ACCOUNTANT','VIEWER'])
 def test_all_nonowners_denied_direct_owner_apis(shop,role):
     from app.main import app

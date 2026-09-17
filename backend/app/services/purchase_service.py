@@ -813,6 +813,16 @@ class PurchaseService:
 
     def _resolve_product_for_item(self, item: PurchaseItem, current_user: User) -> Product:
         store_id = self._store_id(current_user)
+        identified_variant = self._variant_from_exact_item_identifiers(item, store_id)
+        if identified_variant:
+            product_id = item.product_id or item.matched_product_id
+            if product_id and product_id != identified_variant.product_id:
+                raise bad_request("The purchase barcode or internal SKU belongs to a different product.")
+            product = self.db.get(Product, identified_variant.product_id)
+            if not product or product.store_id != store_id:
+                raise bad_request("The identified purchase product is not available in this store.")
+            return product
+
         product_id = item.product_id or item.matched_product_id
         if product_id:
             product = self.db.get(Product, product_id)
@@ -856,6 +866,12 @@ class PurchaseService:
     def _resolve_variant_for_purchase_item(self, product: Product, item: PurchaseItem, current_user: User) -> ProductVariant:
         """Return the precise sellable variant for a reviewed purchase line."""
         store_id = self._store_id(current_user)
+        identified_variant = self._variant_from_exact_item_identifiers(item, store_id)
+        if identified_variant:
+            if identified_variant.product_id != product.id:
+                raise bad_request("The purchase barcode or internal SKU belongs to a different product.")
+            return identified_variant
+
         if item.product_variant_id:
             variant = (
                 self.db.query(ProductVariant)
@@ -944,6 +960,31 @@ class PurchaseService:
         self.db.add(variant)
         self.db.flush()
         return variant
+
+    def _variant_from_exact_item_identifiers(self, item: PurchaseItem, store_id: UUID) -> Optional[ProductVariant]:
+        """Resolve reviewed invoice identifiers before any new catalogue record is created."""
+        matches: list[ProductVariant] = []
+        for field, raw_value in ((ProductVariant.barcode, item.barcode), (ProductVariant.internal_sku, item.internal_sku)):
+            value = (raw_value or "").strip()
+            if not value:
+                continue
+            match = (
+                self.db.query(ProductVariant)
+                .filter(
+                    ProductVariant.store_id == store_id,
+                    ProductVariant.is_active.is_(True),
+                    func.lower(field) == value.casefold(),
+                )
+                .with_for_update()
+                .first()
+            )
+            if match:
+                matches.append(match)
+        if not matches:
+            return None
+        if any(match.id != matches[0].id for match in matches[1:]):
+            raise bad_request("The purchase barcode and internal SKU identify different variants.")
+        return matches[0]
 
     def _synchronize_item_catalog(self, item: PurchaseItem, current_user: User) -> None:
         store_id = self._store_id(current_user)
