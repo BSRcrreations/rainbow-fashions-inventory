@@ -23,4 +23,4 @@ An owner may reverse an import only by typing `REVERSE OPENING STOCK` and provid
 
 ## Operations
 
-Set `OPENING_STOCK_IMPORT_DIR` to a host-mounted directory outside the application release checkout and restrict it to the service account. Do not serve it over HTTP. `ALLOW_TEST_OPENING_STOCK_IMPORT_BYPASS` is only honored in a `test` environment and must remain false elsewhere.
+Set `OPENING_STOCK_IMPORT_DIR` to a host-mounted directory outside the application release checkout and restrict it to the service account. Do not serve it over HTTP. `ALLOW_TEST_OPENING_STOCK_IMPORT_BYPASS` is only honored in explicit `test`, `testing`, or TEST-site `staging` environments and must remain false elsewhere.

@@ -194,6 +194,17 @@ def test_opening_stock_atomic_validation_idempotency_shared_sizes_and_reversal(s
     db.expire_all(); assert sum(t.current_stock for t in db.query(ProductVariant).filter(ProductVariant.internal_sku.in_(["NEW-M","NEW-L"])))==0
 
 
+def test_opening_stock_invalid_rows_are_retained_without_posting(shop, tmp_path):
+    db, owner, _, _ = shop
+    service = OpeningStockImportService(db, Settings(app_env="staging", allow_test_opening_stock_import_bypass=True, opening_stock_import_dir=tmp_path))
+    csv = b"product_name,category,subcategory,brand,sku,barcode,quantity,purchase_cost,selling_price\nInvalid Legging,Leggings,Ankle,Test Brand,INVALID-S,INVALID-BARCODE,-2,10,20\n"
+    batch = asyncio.run(service.upload_and_validate(UploadFile(filename="invalid.csv", file=BytesIO(csv)), owner, "invalid-import"))
+    assert batch.status == "REVIEW_REQUIRED"
+    assert batch.row_count == 1 and batch.valid_row_count == 0 and batch.error_count == 1
+    assert batch.total_quantity == 0
+    assert db.query(StockHistory).filter_by(store_id=owner.store_id).count() == 0
+
+
 def test_backup_proof_rejects_stale_success_and_requires_restore(tmp_path):
     files=["latest-database-backup.json","latest-upload-manifest.json","latest-offsite-backup.json","latest-database-restore-test.json","latest-upload-restore-test.json"]
     for name in files:
