@@ -4,6 +4,9 @@ services:
     environment:
       # CI exports the exact commit SHA for TEST. Local runs remain usable.
       GIT_SHA: ${GIT_SHA:-unknown}
+      # TEST may exercise Opening Stock without production-grade backup proof.
+      # The application ignores this switch outside test/testing/staging.
+      ALLOW_TEST_OPENING_STOCK_IMPORT_BYPASS: "true"
   frontend:
     ports:
       - "127.0.0.1:8081:80"

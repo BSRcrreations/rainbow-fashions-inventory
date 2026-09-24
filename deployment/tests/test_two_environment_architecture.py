@@ -17,6 +17,8 @@ def test_compose_overrides_bind_only_loopback_and_use_different_ports() -> None:
     assert "8000" not in test_compose
     assert "8000" not in production_compose
     assert "GIT_SHA: ${GIT_SHA:-unknown}" in test_compose
+    assert 'ALLOW_TEST_OPENING_STOCK_IMPORT_BYPASS: "true"' in test_compose
+    assert "ALLOW_TEST_OPENING_STOCK_IMPORT_BYPASS" not in production_compose
 
 
 def test_common_compose_requires_explicit_environment_paths() -> None:
