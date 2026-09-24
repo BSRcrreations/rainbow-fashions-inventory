@@ -205,7 +205,7 @@ class OpeningStockImportService:
                 raise conflict("The import changed while it was being reversed. Refresh the preview.", "OPENING_STOCK_REVERSAL_STALE")
             rows = self.db.query(OpeningStockImportRow).filter_by(opening_stock_import_id=batch.id).order_by(OpeningStockImportRow.row_number).with_for_update().all()
             for row in rows:
-                if not row.product_variant_id or not row.stock_history_id:
+                if not row.product_variant_id or not row.stock_history_id or not row.cost_lot_id:
                     raise conflict("Import evidence is incomplete; reversal requires manual investigation.", "OPENING_STOCK_REVERSAL_EVIDENCE_MISSING")
                 later = self.db.query(StockHistory.id).filter(
                     StockHistory.product_variant_id == row.product_variant_id,
@@ -218,14 +218,18 @@ class OpeningStockImportService:
                 quantity = int(row.normalized_data["quantity"])
                 if variant.current_stock < quantity:
                     raise conflict("Current stock is below the imported quantity; automatic reversal is unsafe.", "OPENING_STOCK_REVERSAL_NEGATIVE_STOCK")
+                lot = self.db.query(InventoryCostLot).filter_by(id=row.cost_lot_id, product_variant_id=variant.id, store_id=batch.store_id).with_for_update().one_or_none()
+                if lot is None or lot.remaining_quantity < quantity:
+                    raise conflict("Opening-stock cost-lot evidence cannot be reversed safely.", "OPENING_STOCK_REVERSAL_COST_LOT_MISMATCH")
                 before = variant.current_stock
                 variant.current_stock -= quantity
+                lot.remaining_quantity -= quantity
                 product = self.db.query(Product).filter_by(id=variant.product_id).with_for_update().one()
                 product.current_stock = max(0, product.current_stock - quantity)
                 inventory = self.db.query(ProductInventory).filter_by(product_id=product.id, store_id=batch.store_id).with_for_update().first()
                 if inventory:
                     inventory.current_stock = max(0, inventory.current_stock - quantity)
-                self.db.add(StockHistory(product_id=product.id, product_variant_id=variant.id, store_id=batch.store_id, movement_type=StockMovementType.STOCK_RESET_OUT, qty=quantity, before_stock=before, after_stock=variant.current_stock, unit_cost=variant.average_cost, reference=f"Opening stock reversal {batch.id}", request_id=request_id, correction_of_id=row.stock_history_id, correction_reason="DUPLICATE_OPENING_STOCK", correction_notes=payload.reason, created_by=current_user.id))
+                self.db.add(StockHistory(product_id=product.id, product_variant_id=variant.id, purchase_cost_lot_id=lot.id, store_id=batch.store_id, movement_type=StockMovementType.STOCK_RESET_OUT, qty=quantity, before_stock=before, after_stock=variant.current_stock, unit_cost=lot.effective_unit_cost, reference=f"Opening stock reversal {batch.id}", request_id=request_id, correction_of_id=row.stock_history_id, correction_reason="DUPLICATE_OPENING_STOCK", correction_notes=payload.reason, created_by=current_user.id))
             batch.status = OpeningStockImportStatus.REVERSED
             batch.reversed_by = current_user.id
             batch.reversed_at = datetime.now(timezone.utc)

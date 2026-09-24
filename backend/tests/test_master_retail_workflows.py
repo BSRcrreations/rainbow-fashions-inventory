@@ -192,6 +192,11 @@ def test_opening_stock_atomic_validation_idempotency_shared_sizes_and_reversal(s
     with pytest.raises(HTTPException): StockScanService(db).resolve_barcode("TEST-SHARED",owner)
     service.reverse(batch.id,OpeningStockImportReverse(confirmation="REVERSE OPENING STOCK",reason="Test reversal only"),owner,"reverse-test")
     db.expire_all(); assert sum(t.current_stock for t in db.query(ProductVariant).filter(ProductVariant.internal_sku.in_(["NEW-M","NEW-L"])))==0
+    imported_lots = db.query(InventoryCostLot).filter(InventoryCostLot.product_variant_id.in_([target.variant_id for target in targets])).all()
+    assert imported_lots and all(lot.remaining_quantity == 0 for lot in imported_lots)
+    imported_products = {target.product_id for target in targets}
+    findings = [row for row in InventoryReconciliationService(db).report(owner) if row.product_id in imported_products]
+    assert findings and all(row.category == "HEALTHY" for row in findings)
 
 
 def test_opening_stock_invalid_rows_are_retained_without_posting(shop, tmp_path):
